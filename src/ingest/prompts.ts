@@ -150,11 +150,25 @@ export const OMIT_REASONS = [
   "administrative",
 ] as const;
 
+/** What a block does on its topic page, in the order a topic page shows them. */
+export const BLOCK_KINDS = [
+  "definition",
+  "theorem",
+  "technique",
+  "example",
+  "notation",
+  "intuition",
+  "warning",
+  "explanation",
+] as const;
+export type BlockKind = (typeof BLOCK_KINDS)[number];
+
 export const AUTHOR_SYSTEM = [
   "You write a reviewed study wiki for one lecture of a university course, from what readers found on every page.",
   SOURCE_RULES,
   "Write in plain English that is easy to digest, for a smart friend who missed the lecture: an intuition first, then the precise statement, then the lecture's examples. Keep the lecture's own notation and its exact versus approximate conditions. Keep an important Hebrew term in parentheses at its first introduction in a page.",
-  "Pages: one concept or technique page per named thing you would find in a textbook index (err coarser); extend an existing page of the course when one fits instead of duplicating it.",
+  "Pages: one concept or technique page per named thing you would find in a textbook index (err coarser). Pages are topics shared by the whole course: when you are shown the topics the course already has and this lecture teaches one of them, use that topic's slug exactly, even when this lecture names it differently, writes it in other notation or in Hebrew; start a new topic only for something none of them covers, and list in similar_to the existing topics it comes close to.",
+  "Give every block its kind: definition, theorem (or property), technique (steps of a method), example, notation, intuition, warning (a common mistake) or explanation. A block that restates a definition the course already has names that definition's handle in restates; otherwise restates is empty.",
   "Each page is made of evidence blocks. Every block cites the regions it draws on (page and region ID) and carries English and Hebrew keywords, aliases a student might use, questions the block answers, and its atomic claims each tied to a region.",
   "Every region you were given must be cited by a block, or omitted only when it is page furniture, with a reason from the allowed list. Write up everything that teaches something, however small: an aside, a figure, a table, a worked step. A region that is hard to read still gets a block saying what the slide shows. Never add anything from general knowledge, and never cite homework or anything not on these pages.",
   "Reply with one JSON object only.",
@@ -187,9 +201,12 @@ export const authorSchema = Type.Object({
       type: Type.Union([Type.Literal("concept"), Type.Literal("technique")]),
       prerequisites: Type.Array(Type.String()),
       intuition: Type.String(),
+      similar_to: Type.Array(Type.String()),
       blocks: Type.Array(
         Type.Object({
           id: Type.String({ pattern: "^[a-z0-9]+(-[a-z0-9]+)*$" }),
+          kind: Type.Union(BLOCK_KINDS.map((kind) => Type.Literal(kind))),
+          restates: Type.String(),
           title: Type.String(),
           body: Type.String(),
           locators: Type.Array(locatorSchema, { minItems: 1 }),
@@ -223,6 +240,10 @@ export interface DraftBlock {
   questions: string[];
   claims: { text: string; region: string }[];
   interpretations: string[];
+  /** What the block does on its topic page; studies before 2026-10-29 have none. */
+  kind?: BlockKind;
+  /** The handle of an existing definition this block restates, or "" when it restates none. */
+  restates?: string;
   /** Studies before 2026-10-29 could list what a block left out; newer ones never do. */
   gaps?: string[];
   /** Written by Folio from the slide itself after every revision missed this part. */
@@ -236,6 +257,8 @@ export interface DraftPage {
   type: "concept" | "technique";
   prerequisites: string[];
   intuition: string;
+  /** Existing topics of the course this new one comes close to; drafts before 2026-10-29 have none. */
+  similar_to?: string[];
   blocks: DraftBlock[];
 }
 export interface AuthorDraft {

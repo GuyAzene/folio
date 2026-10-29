@@ -116,9 +116,12 @@ function draft(complete: boolean): AuthorDraft {
         type: "concept",
         prerequisites: [],
         intuition: "Think of ripples spreading out from a stone.",
+        similar_to: [],
         blocks: [
           {
             id: "bfs-marking",
+            kind: "explanation",
+            restates: "",
             title: "Marking on enqueue",
             body: "Breadth-first search marks each vertex visited when it enters the queue, so the running time is O(V + E).",
             locators: [

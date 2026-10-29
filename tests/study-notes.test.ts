@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 import { studyNotesView } from "../src/desktop/study-notes.ts";
-import type { Knowledge, KnowledgeBlock, KnowledgePage } from "../src/kb/knowledge.ts";
+import {
+  upgradeKnowledge,
+  type Knowledge,
+  type KnowledgeBlock,
+  type KnowledgePage,
+} from "../src/kb/knowledge.ts";
 
 // Synthetic knowledge; no course material.
 const block = (handle: string, pages: number[], session = "alg-L01"): KnowledgeBlock => ({
@@ -89,7 +94,8 @@ const knowledge: Knowledge = {
 };
 
 describe("study notes view", () => {
-  const view = studyNotesView(knowledge, {
+  // As the app reads it: a stored version 1 generation, upgraded with its derived fields.
+  const view = studyNotesView(upgradeKnowledge(knowledge), {
     courseId: "course",
     generation: 3,
     publishedAt: "2026-10-28T10:00:00.000Z",

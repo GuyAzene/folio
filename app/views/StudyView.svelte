@@ -10,15 +10,18 @@
   import { renderMarkdown } from "../lib/markdown.ts";
   import { MATH_SPAN } from "../lib/math-syntax.ts";
   import { folio } from "../lib/state.svelte.ts";
-  import { splitTitle } from "../lib/study.ts";
+  import { splitTitle, topicsInOrder } from "../lib/study.ts";
 
   /**
-   * The study notes Folio wrote from a course's lectures, as published: an outline of sessions
-   * and their topics beside the open topic, whose sections cite the slide pages they came from.
-   * A session's overview says what it covers, its worked examples and what is worth keeping.
+   * The study notes Folio wrote from a course's lectures, as published, organised by topic: a
+   * topic gathers what every lecture and recitation says about it, each section citing the
+   * slide pages it came from. Each document keeps an anchor page in slide order that points into
+   * the topics it feeds, with what only it teaches and its notation.
    */
   let { courseId, item }: { courseId: string; item: string | null } = $props();
   let filter = $state("");
+  /** The outline beside the page: every topic, or each document with the topics it feeds. */
+  let mode = $state<"topics" | "documents">("topics");
 
   const course = $derived(folio.course(courseId));
   const notes = $derived(folio.studyNotes[courseId]);
@@ -68,6 +71,27 @@
           session.title.toLocaleLowerCase().includes(query),
       );
   });
+
+  /** Every topic, in the order the course teaches them, narrowed by the filter. */
+  const topicList = $derived.by(() => {
+    const query = filter.trim().toLocaleLowerCase();
+    return (notes ? topicsInOrder(notes) : []).filter(
+      (topic) =>
+        !query ||
+        topic.title.toLocaleLowerCase().includes(query) ||
+        topic.sections.some((section) =>
+          section.title.toLocaleLowerCase().includes(query),
+        ),
+    );
+  });
+
+  /** "Pages 2–3" for a run of pages. */
+  function pageRange(pages: number[]): string {
+    if (!pages.length) return "";
+    const first = pages[0]!;
+    const last = pages.at(-1)!;
+    return first === last ? `Page ${first}` : `Pages ${first}–${last}`;
+  }
 
   function sessionOf(slug: string): StudySessionView | undefined {
     return notes?.sessions.find((session) => session.slug === slug);
@@ -159,6 +183,48 @@
           class="min-w-0 flex-1 bg-transparent text-[13px] text-text outline-none placeholder:text-text-4"
         />
       </label>
+      <div
+        class="mb-2 grid grid-cols-2 gap-0.5 rounded-md bg-sunken p-0.5 text-[12px] font-medium dark:bg-raised"
+        role="tablist"
+      >
+        {#each [["topics", "Topics"], ["documents", "By document"]] as const as [value, label] (value)}
+          <button
+            role="tab"
+            aria-selected={mode === value}
+            class="h-7 rounded-[5px] transition-colors {mode === value
+              ? 'bg-surface text-text shadow-1 dark:bg-hover'
+              : 'text-text-3 hover:text-text'}"
+            onclick={() => (mode = value)}>{label}</button
+          >
+        {/each}
+      </div>
+      {#if mode === "topics"}
+        {#each topicList as topic (topic.slug)}
+          {@const current = selected?.topic?.slug === topic.slug}
+          <button
+            class="flex flex-col rounded-md px-2 py-1.5 text-left transition-colors {current
+              ? 'bg-selected shadow-1'
+              : 'hover:bg-hover'}"
+            onclick={(event) => open(`topic:${topic.slug}`, event)}
+          >
+            <span
+              class="truncate text-[13px] {current
+                ? 'font-medium text-text'
+                : 'text-text-2'}"
+              dir="auto">{topic.title}</span
+            >
+            <span class="truncate text-[11px] text-text-3" dir="auto"
+              >{topic.taughtIn
+                .map((place) => documentLabel(place.documentId))
+                .join(" · ")}</span
+            >
+          </button>
+        {:else}
+          <span class="px-2 py-1 text-[13px] text-text-3">
+            {notes ? "No topics match." : ""}
+          </span>
+        {/each}
+      {:else}
       {#each outline as group (group.session.slug)}
         {@const active = selected?.session?.slug === group.session.slug}
         <button
@@ -190,6 +256,7 @@
           {notes ? "No topics match." : ""}
         </span>
       {/each}
+      {/if}
     </nav>
 
     <div class="scroll-quiet min-w-0 flex-1 overflow-y-auto">
@@ -205,24 +272,35 @@
         </div>
       {:else if selected?.topic}
         {@const topic = selected.topic}
-        {@const from = sessionOf(topic.introducedIn)}
         <article
           class="prose-folio prose-reading mx-auto max-w-[784px] px-8 pt-10 pb-24 font-serif text-[17px] leading-7 max-sm:px-4"
         >
-          <p class="font-sans !text-[12px] !leading-4 text-text-3">
+          <p
+            class="flex flex-wrap items-center gap-x-1.5 gap-y-1 font-sans !text-[12px] !leading-4 text-text-3"
+          >
             {topic.type === "technique" ? "Technique" : "Concept"}
-            {#if from}
-              · from
-              <button
-                class="font-medium text-text-2 hover:text-text"
-                dir="auto"
-                onclick={(event) => open(`session:${from.slug}`, event)}
-                >{documentLabel(from.documentId)}</button
-              >
+            {#if topic.taughtIn.length}
+              <span>· taught in</span>
+              {#each topic.taughtIn as place, index (place.session)}
+                <button
+                  class="font-medium text-text-2 hover:text-text"
+                  dir="auto"
+                  onclick={(event) => open(`session:${place.session}`, event)}
+                  >{documentLabel(place.documentId)}</button
+                >{#if index < topic.taughtIn.length - 1}<span
+                    class="text-text-4">·</span
+                  >{/if}
+              {/each}
             {/if}
           </p>
           <h1 class="!mt-2 font-sans" dir="auto">{topic.title}</h1>
-          {#if topic.intuition}
+          {#if topic.overview}
+            <div class="text-text-2">
+              <!-- Sanitized by DOMPurify in renderMarkdown. -->
+              <!-- eslint-disable-next-line svelte/no-at-html-tags -->
+              {@html md(topic.overview.text)}
+            </div>
+          {:else if topic.intuition}
             <div class="text-text-2">
               <!-- Sanitized by DOMPurify in renderMarkdown. -->
               <!-- eslint-disable-next-line svelte/no-at-html-tags -->
@@ -249,13 +327,30 @@
                 <!-- eslint-disable-next-line svelte/no-at-html-tags -->
                 {@html md(section.body)}
               </div>
-              {#if section.pages.length}
+              {#if section.pages.length || section.alsoIn.length}
                 <div class="flex flex-wrap gap-1.5">
                   {#each section.pages as page (page)}
                     {@render pageChip(section.documentId, page)}
                   {/each}
+                  {#each section.alsoIn as other (other.handle)}
+                    {#each other.pages as page (page)}
+                      {@render pageChip(other.documentId, page)}
+                    {/each}
+                  {/each}
                 </div>
               {/if}
+              {#each section.alsoIn as other (other.handle)}
+                <details class="font-sans text-[14px] leading-6">
+                  <summary class="cursor-default text-text-3 hover:text-text-2">
+                    How {documentLabel(other.documentId)} puts it
+                  </summary>
+                  <div class="mt-2 font-serif text-[16px] text-text-2">
+                    <!-- Sanitized by DOMPurify in renderMarkdown. -->
+                    <!-- eslint-disable-next-line svelte/no-at-html-tags -->
+                    {@html md(other.body)}
+                  </div>
+                </details>
+              {/each}
               {#if section.questions.length}
                 <div
                   class="rounded-lg border border-line-subtle bg-sunken px-4 py-3 font-sans text-[14px] leading-6 dark:bg-raised"
@@ -287,6 +382,14 @@
               {/each}
             </div>
           {/if}
+          {#if topic.related.length}
+            {@render heading("Related")}
+            <div class="flex flex-wrap gap-1.5">
+              {#each topic.related as link (link.slug)}
+                {@render topicLink(link.slug, link.title)}
+              {/each}
+            </div>
+          {/if}
         </article>
       {:else if selected?.session}
         {@const session = selected.session}
@@ -307,28 +410,77 @@
             {@render pageChip(session.documentId, 1)}
           </div>
 
-          {#if session.topics.length}
-            {@render heading("Topics")}
+          {#if session.outline.length}
+            {@render heading("In slide order")}
             <div class="flex flex-col">
-              {#each session.topics as slug (slug)}
-                {@const topic = topics.get(slug)}
+              {#each session.outline as row, index (`${index}:${row.topic}`)}
+                {@const topic = topics.get(row.topic)}
                 {#if topic}
                   <button
-                    class="-mx-2 flex flex-col rounded-md px-2 py-2 text-left font-sans hover:bg-hover"
-                    onclick={(event) => open(`topic:${slug}`, event)}
+                    class="-mx-2 flex items-baseline gap-3 rounded-md px-2 py-2 text-left font-sans hover:bg-hover"
+                    onclick={(event) => open(`topic:${row.topic}`, event)}
                   >
-                    <span class="text-[15px] font-medium text-text" dir="auto"
-                      >{topic.title}</span
+                    <span
+                      class="w-[84px] shrink-0 text-[12px] whitespace-nowrap text-text-3 tabular-nums"
+                      >{pageRange(row.pages)}</span
                     >
-                    {#if topic.intuition}
-                      <span class="text-[13px] text-text-3" dir="auto"
-                        >{topic.intuition}</span
+                    <span class="flex min-w-0 flex-1 flex-col">
+                      <span class="text-[15px] font-medium text-text" dir="auto"
+                        >{topic.title}</span
                       >
-                    {/if}
+                      {#if topic.taughtIn.length > 1}
+                        <span class="text-[12px] text-text-3" dir="auto"
+                          >Also in {topic.taughtIn
+                            .filter((place) => place.session !== session.slug)
+                            .map((place) => documentLabel(place.documentId))
+                            .join(", ")}</span
+                        >
+                      {/if}
+                    </span>
                   </button>
                 {/if}
               {/each}
             </div>
+          {/if}
+
+          {#if session.onlyHere.length && notes && notes.sessions.length > 1}
+            {@render heading(
+              session.type === "recitation"
+                ? "Only in this recitation"
+                : "Only in this lecture",
+            )}
+            <div class="flex flex-wrap gap-1.5">
+              {#each session.onlyHere as slug (slug)}
+                {@const topic = topics.get(slug)}
+                {#if topic}{@render topicLink(slug, topic.title)}{/if}
+              {/each}
+            </div>
+          {/if}
+
+          {#if session.notation.length}
+            {@render heading("Notation")}
+            <table class="font-sans text-[14px]">
+              <tbody>
+                {#each session.notation as entry (entry.symbol)}
+                  <tr>
+                    <td class="pr-4 align-top whitespace-nowrap">
+                      <!-- Sanitized by DOMPurify in renderMarkdown. -->
+                      <!-- eslint-disable-next-line svelte/no-at-html-tags -->
+                      {@html md(entry.symbol)
+                        .replace(/^<p[^>]*>/, "")
+                        .replace(/<\/p>\s*$/, "")}
+                    </td>
+                    <td class="text-text-2" dir="auto">
+                      <!-- Sanitized by DOMPurify in renderMarkdown. -->
+                      <!-- eslint-disable-next-line svelte/no-at-html-tags -->
+                      {@html md(entry.meaning)
+                        .replace(/^<p[^>]*>/, "")
+                        .replace(/<\/p>\s*$/, "")}
+                    </td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
           {/if}
 
           {#if session.workedExamples.length}

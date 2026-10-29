@@ -19,9 +19,12 @@ export function authorDraft(session: string, extra = ""): AuthorDraft {
         type: "concept",
         prerequisites: ["graphs", "Queues and stacks"],
         intuition: "Ripples spreading from a stone.",
+        similar_to: [],
         blocks: [
           {
             id: `bfs-marking-${session.toLowerCase()}`,
+            kind: "explanation",
+            restates: "",
             title: "Marking on enqueue",
             body: `Each vertex is marked visited when it enters the queue (התור), so it is enqueued once.${extra}`,
             locators: [{ page: 2, region: "p2.r2", location: "middle" }],
@@ -41,9 +44,12 @@ export function authorDraft(session: string, extra = ""): AuthorDraft {
         type: "concept",
         prerequisites: [],
         intuition: "Dots and lines.",
+        similar_to: [],
         blocks: [
           {
             id: `graph-definition-${session.toLowerCase()}`,
+            kind: "explanation",
+            restates: "",
             title: "Definition",
             body: "A graph is a set of vertices joined by edges (קשתות).",
             locators: [{ page: 1, region: "p1.r1", location: "top" }],

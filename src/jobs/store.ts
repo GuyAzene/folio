@@ -19,7 +19,7 @@ export class JobError extends Error {}
 /** The job's own record; nodes and coverage live in their own tables. */
 export interface JobRecord {
   id: string;
-  kind: "ingest";
+  kind: "ingest" | "regroup";
   origin: JobOrigin;
   /** Queued, but held until ChatGPT is connected. */
   waitingFor: "connection" | null;
@@ -152,11 +152,14 @@ export class JobStore {
   }
 
   createJob(
-    input: Pick<JobRecord, "courseId" | "documentIds" | "title"> & { origin?: JobOrigin },
+    input: Pick<JobRecord, "courseId" | "documentIds" | "title"> & {
+      origin?: JobOrigin;
+      kind?: JobRecord["kind"];
+    },
   ): JobRecord {
     const job: JobRecord = {
       id: randomUUID(),
-      kind: "ingest",
+      kind: input.kind ?? "ingest",
       origin: input.origin ?? "student",
       waitingFor: null,
       courseId: input.courseId,
@@ -477,7 +480,7 @@ function isEnded(status: AgentStatus): boolean {
 function jobRecord(row: Record<string, unknown>): JobRecord {
   return {
     id: row.id as string,
-    kind: "ingest",
+    kind: row.kind === "regroup" ? "regroup" : "ingest",
     origin: ((row.origin as JobOrigin | null) ?? "student") as JobOrigin,
     waitingFor: (row.waiting_for as "connection" | null) ?? null,
     courseId: row.course_id as string,

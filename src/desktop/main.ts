@@ -23,6 +23,7 @@ import { prepareSource } from "../ingest/source.ts";
 import { JobStore } from "../jobs/store.ts";
 import { withoutDocuments } from "../kb/knowledge.ts";
 import { KnowledgeStore } from "../kb/store.ts";
+import { topicModel } from "../kb/topics.ts";
 import { createAttach } from "../library/attachments.ts";
 import { createRuntimes } from "../library/course-tools.ts";
 import { CourseNotes, type ProposalRecord } from "../library/notes.ts";
@@ -118,7 +119,12 @@ const library = LibraryStore.open({ home });
 const notes = library.then((store) => new CourseNotes(store));
 // One reader of course PDFs for the tutor: page text, and pages as images.
 const pageReader = library.then((store) => new PageReader(store));
-const knowledgeStore = library.then((store) => KnowledgeStore.open(store));
+// Topics are compared and given overviews by GPT-6.1 Terra at low effort.
+const knowledgeStore = library.then((store) =>
+  KnowledgeStore.open(store, {
+    topics: topicModel(piComplete(async () => (await connection).models, resolveModel)),
+  }),
+);
 const jobs = Promise.all([JobStore.open(home), library]).then(([store, courses]) => {
   const runner = new IngestRunner({
     store,
@@ -133,6 +139,12 @@ const jobs = Promise.all([JobStore.open(home), library]).then(([store, courses])
     },
     removed: (id) => emit({ type: "jobRemoved", id }),
     connected: async () => (await connectionView()).connected,
+    knowledge: async (courseId) => (await knowledgeStore).knowledge(courseId),
+    async regroup(courseId) {
+      const result = await (await knowledgeStore).regroup(courseId);
+      emit({ type: "library" });
+      return result ? { merged: result.merged.length } : null;
+    },
   });
   // Jobs interrupted by a quit go back in the queue and continue where they stopped.
   runner.recover();
@@ -176,6 +188,17 @@ setTimeout(() => {
           ]);
       }
       const { runner } = await jobs;
+      // Notes written before topics were shared are regrouped once, ahead of the backlog.
+      for (const course of await courses.listCourses()) {
+        const published = await knowledge.knowledge(course.id);
+        const pending = runner
+          .list()
+          .some(
+            (job) => job.kind === "regroup" && job.courseId === course.id && job.status !== "done",
+          );
+        if (published?.pages.length && !published.grouped && !pending)
+          await runner.regroup(course.id);
+      }
       for (const [courseId, ids] of byCourse) await runner.queue(courseId, ids, "backlog");
     })
     .catch((error: unknown) => console.error("Folio could not queue unstudied lectures:", error));

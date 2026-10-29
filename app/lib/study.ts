@@ -4,6 +4,8 @@ import type {
   JobView,
   PageCoverageView,
   StepOutcome,
+  StudyNotesView,
+  StudyTopicView,
 } from "../../src/desktop/api.ts";
 import { DROPPED } from "../../src/dropped.ts";
 import { agentTree, type AgentCard } from "./agent-tree.ts";
@@ -56,6 +58,21 @@ export interface StudyDocument {
   problem: { message: string; detail: string } | null;
   activity: StudyActivity[];
   tokens: number;
+}
+
+/** A course's topics in the order it first teaches them: by session, then by slide. */
+export function topicsInOrder(notes: StudyNotesView): StudyTopicView[] {
+  const rank = new Map<string, number>();
+  notes.sessions.forEach((session, at) =>
+    session.topics.forEach((slug, index) => {
+      if (!rank.has(slug)) rank.set(slug, at * 1000 + index);
+    }),
+  );
+  return [...notes.topics].sort(
+    (a, b) =>
+      (rank.get(a.slug) ?? Number.MAX_SAFE_INTEGER) -
+        (rank.get(b.slug) ?? Number.MAX_SAFE_INTEGER) || a.title.localeCompare(b.title),
+  );
 }
 
 export function splitTitle(title: string): { title: string; subtitle: string } {

@@ -989,16 +989,19 @@ function previewStudyNotes(courseId: string): StudyNotesView {
     pages: number[],
     session = "alg-L01",
     questions: string[] = [],
+    kind = "explanation",
   ) => ({
     handle,
     title,
+    kind,
     body,
     session,
     documentId: session === "alg-L01" ? id(11) : id(12),
     pages,
     questions,
+    alsoIn: [] as StudyNotesView["topics"][number]["sections"][number]["alsoIn"],
   });
-  return {
+  return sharedTopics({
     courseId,
     generation: 2,
     publishedAt: ago(3),
@@ -1016,7 +1019,7 @@ function previewStudyNotes(courseId: string): StudyNotesView {
         ],
         openThreads: ["The lecture mentions depth-first search but leaves it for next week."],
         workedExamples: [{ title: "BFS on a six-vertex graph", page: 3 }],
-        topics: ["alg-graphs", "alg-bfs", "alg-shortest-paths"],
+        topics: [],
       },
       {
         slug: "alg-R01",
@@ -1027,7 +1030,7 @@ function previewStudyNotes(courseId: string): StudyNotesView {
         worthRemembering: [],
         openThreads: [],
         workedExamples: [{ title: "Tracing the queue", page: 2 }],
-        topics: ["alg-bfs-tree"],
+        topics: [],
       },
     ],
     topics: [
@@ -1079,8 +1082,20 @@ function previewStudyNotes(courseId: string): StudyNotesView {
           section(
             "alg-bfs-time",
             "Running time",
-            'BFS runs in $O(V + E)$: every vertex is dequeued once, and every edge is looked at a constant number of times.\n\n> Not confirmed against the slides: "each edge is examined exactly twice"',
+            "BFS runs in $O(V + E)$: every vertex is dequeued once, and every edge is looked at a constant number of times.",
             [2, 3],
+            "alg-L01",
+            [],
+            "theorem",
+          ),
+          section(
+            "alg-bfs-queue-trace",
+            "Tracing the queue",
+            "The recitation traces the queue on a six-vertex graph: after $s$, its two neighbours enter together, then their neighbours, so the queue always holds at most two layers.",
+            [2],
+            "alg-R01",
+            [],
+            "example",
           ),
           section(
             "alg-bfs-layers",
@@ -1128,6 +1143,69 @@ function previewStudyNotes(courseId: string): StudyNotesView {
         ],
       },
     ],
+  });
+}
+
+/**
+ * The preview's notes with what the app derives from blocks: where each topic is taught, each
+ * session's slide-order outline and what only it teaches, and an overview of a shared topic.
+ */
+function sharedTopics(
+  notes: Omit<StudyNotesView, "sessions" | "topics"> & {
+    sessions: Omit<StudyNotesView["sessions"][number], "outline" | "onlyHere" | "notation">[];
+    topics: Omit<StudyNotesView["topics"][number], "overview" | "taughtIn" | "related">[];
+  },
+): StudyNotesView {
+  const sessions = new Map(notes.sessions.map((session) => [session.slug, session]));
+  const topics = notes.topics.map((topic) => {
+    const taught = [...new Set(topic.sections.map((section) => section.session))];
+    return {
+      ...topic,
+      overview:
+        taught.length > 1
+          ? {
+              text: "Breadth-first search explores a graph layer by layer from $s$. The lecture gives the rule and its running time; the recitation traces the queue on an example.",
+              handles: topic.sections.map((section) => section.handle),
+            }
+          : null,
+      taughtIn: taught.map((slug) => ({
+        session: slug,
+        documentId: sessions.get(slug)!.documentId,
+        type: sessions.get(slug)!.type,
+      })),
+      related: [],
+    };
+  });
+  return {
+    ...notes,
+    topics,
+    sessions: notes.sessions.map((session) => {
+      const outline = topics.flatMap((topic) => {
+        const pages = topic.sections
+          .filter((section) => section.session === session.slug)
+          .flatMap((section) => section.pages);
+        return pages.length
+          ? [{ topic: topic.slug, pages: [...new Set(pages)].sort((a, b) => a - b) }]
+          : [];
+      });
+      return {
+        ...session,
+        topics: outline.map((row) => row.topic),
+        outline,
+        onlyHere: topics
+          .filter(
+            (topic) => topic.taughtIn.length === 1 && topic.taughtIn[0]!.session === session.slug,
+          )
+          .map((topic) => topic.slug),
+        notation:
+          session.slug === "alg-L01"
+            ? [
+                { symbol: "$d(s, v)$", meaning: "the distance from $s$ to $v$" },
+                { symbol: "$\\pi(v)$", meaning: "the vertex that discovered $v$" },
+              ]
+            : [],
+      };
+    }),
   };
 }
 

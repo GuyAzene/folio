@@ -143,7 +143,9 @@ describe("knowledge base", () => {
     const one = await map.execute("call_2", { session: "alg-L02" });
     const oneText = (one.content[0] as { text: string }).text;
     expect(oneText).toContain("alg-L02");
-    expect(oneText).not.toContain("alg-L01");
+    // Only that session's topics, each saying where else it is taught.
+    expect(oneText).not.toContain("alg-L01 ·");
+    expect(oneText).toContain("Breadth-first search [alg-bfs] (also in alg-L01)");
     await expect(map.execute("call_3", { session: "alg-L99" })).rejects.toThrow(
       "not in this course's topic map",
     );

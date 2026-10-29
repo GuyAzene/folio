@@ -11,9 +11,11 @@ import {
   emptyKnowledge,
   mergeDraft,
   renderKnowledge,
+  upgradeKnowledge,
   type Acknowledgement,
   type Knowledge,
 } from "./knowledge.ts";
+import { settleTopics, topicProblems, type TopicModel } from "./topics.ts";
 
 export interface GenerationInfo {
   courseId: string;
@@ -36,13 +38,22 @@ export class KnowledgeStore {
   readonly #publishing = new Map<string, Promise<unknown>>();
   readonly #indexes = new Map<string, { generation: number; index: KnowledgeIndex }>();
   readonly #knowledge = new Map<string, { generation: number; knowledge: Knowledge }>();
+  readonly #topics: TopicModel | undefined;
 
-  private constructor(library: LibraryStore, db: DatabaseSync) {
+  private constructor(library: LibraryStore, db: DatabaseSync, topics?: TopicModel) {
     this.#library = library;
     this.#db = db;
+    this.#topics = topics;
   }
 
-  static async open(library: LibraryStore): Promise<KnowledgeStore> {
+  /**
+   * `topics` judges whether a new topic duplicates one the course has and writes overviews of
+   * shared topics; without it, topics are shared only when the author names an existing one.
+   */
+  static async open(
+    library: LibraryStore,
+    options: { topics?: TopicModel } = {},
+  ): Promise<KnowledgeStore> {
     const db = new DatabaseSync(resolve(library.root, "kb.sqlite"));
     db.exec(`PRAGMA journal_mode = WAL;
       CREATE TABLE IF NOT EXISTS generations (
@@ -50,7 +61,7 @@ export class KnowledgeStore {
         created_at TEXT NOT NULL, job_id TEXT, summary TEXT NOT NULL,
         PRIMARY KEY (course_id, generation));
       CREATE TABLE IF NOT EXISTS current (course_id TEXT PRIMARY KEY, generation INTEGER NOT NULL);`);
-    const store = new KnowledgeStore(library, db);
+    const store = new KnowledgeStore(library, db, options.topics);
     await store.#recover();
     return store;
   }
@@ -85,12 +96,14 @@ export class KnowledgeStore {
     if (!current) return null;
     const cached = this.#knowledge.get(courseId);
     if (cached?.generation === current.generation) return cached.knowledge;
-    const knowledge = JSON.parse(
-      await readFile(
-        resolve(this.#generationDir(courseId, current.generation), "knowledge.json"),
-        "utf8",
+    const knowledge = upgradeKnowledge(
+      JSON.parse(
+        await readFile(
+          resolve(this.#generationDir(courseId, current.generation), "knowledge.json"),
+          "utf8",
+        ),
       ),
-    ) as Knowledge;
+    );
     this.#knowledge.set(courseId, { generation: current.generation, knowledge });
     return knowledge;
   }
@@ -132,9 +145,53 @@ export class KnowledgeStore {
     const course = await this.#library.course(courseId);
     const previous =
       (await this.knowledge(courseId)) ?? emptyKnowledge(courseId, coursePrefix(course.name));
-    const knowledge = mergeDraft(previous, bundle, acknowledgements);
-    const summary = `${bundle.documents.map((document) => document.session.slug).join(", ")}: ${knowledge.pages.length} pages, ${knowledge.pages.reduce((sum, page) => sum + page.blocks.length, 0)} blocks`;
+    const merged = mergeDraft(previous, bundle, acknowledgements);
+    // Topics this publish started are compared with the course's other topics.
+    const before = new Set(previous.pages.map((page) => page.slug));
+    const started = merged.pages.filter((page) => !before.has(page.slug)).map((page) => page.slug);
+    const { knowledge, merged: absorbed } = await settleTopics(
+      merged,
+      this.index(courseId),
+      this.#topics,
+      started,
+    );
+    // A course whose first notes are written this way is grouped by topic from the start.
+    if (!previous.pages.length && !knowledge.grouped) knowledge.grouped = new Date().toISOString();
+    const summary = `${bundle.documents.map((document) => document.session.slug).join(", ")}: ${knowledge.pages.length} topics, ${knowledge.pages.reduce((sum, page) => sum + page.blocks.length, 0)} sections${absorbed.length ? `, ${absorbed.length} merged into shared topics` : ""}`;
     return this.#write(courseId, knowledge, bundle.jobId, summary);
+  }
+
+  /**
+   * Regroups a course's published notes into shared topics: every topic is compared with the
+   * topics of the course's other sessions, duplicates merge, and shared topics get overviews.
+   * Queued like a publish; null when the course has nothing published.
+   */
+  regroup(courseId: string): Promise<{ info: GenerationInfo; merged: string[] } | null> {
+    checkId(courseId);
+    const previous = this.#publishing.get(courseId) ?? Promise.resolve();
+    const next = previous
+      .catch(() => undefined)
+      .then(async () => {
+        const current = await this.knowledge(courseId);
+        if (!current) return null;
+        const { knowledge, merged } = await settleTopics(
+          current,
+          this.index(courseId),
+          this.#topics,
+          current.pages.map((page) => page.slug),
+        );
+        const info = await this.#write(
+          courseId,
+          { ...knowledge, grouped: new Date().toISOString() },
+          null,
+          merged.length
+            ? `Regrouped by topic: ${merged.length} merged into shared topics`
+            : "Regrouped by topic",
+        );
+        return { info, merged };
+      });
+    this.#publishing.set(courseId, next);
+    return next;
   }
 
   /**
@@ -162,12 +219,14 @@ export class KnowledgeStore {
   async knowledgeAt(courseId: string, generation: number): Promise<Knowledge | null> {
     checkId(courseId);
     try {
-      return JSON.parse(
-        await readFile(
-          resolve(this.#generationDir(courseId, generation), "knowledge.json"),
-          "utf8",
+      return upgradeKnowledge(
+        JSON.parse(
+          await readFile(
+            resolve(this.#generationDir(courseId, generation), "knowledge.json"),
+            "utf8",
+          ),
         ),
-      ) as Knowledge;
+      );
     } catch {
       return null;
     }
@@ -194,6 +253,12 @@ export class KnowledgeStore {
           max: number | null;
         }
       ).max ?? 0) + 1;
+    // Every block in one session and one topic, every link live: or the version is not written.
+    const problems = topicProblems(knowledge);
+    if (problems.length)
+      throw new LibraryError(
+        `These study notes are inconsistent: ${problems.slice(0, 3).join(" ")}`,
+      );
     const createdAt = new Date().toISOString();
     this.#db
       .prepare(

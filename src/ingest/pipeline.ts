@@ -7,6 +7,8 @@ import type {
   StepOutcome,
 } from "../desktop/api.ts";
 import type { JobStore, NodeInput } from "../jobs/store.ts";
+import type { Knowledge } from "../kb/knowledge.ts";
+import { topicInventory } from "../kb/topics.ts";
 import type { CourseRecord, DocumentRecord, LibraryStore } from "../library/store.ts";
 import type { SessionInfo } from "./draft.ts";
 import {
@@ -90,6 +92,10 @@ export interface IngestOptions {
   parallelJobs?: number;
   /** Whether ChatGPT is connected. Queued jobs wait for it; without this, it always is. */
   connected?: () => Promise<boolean>;
+  /** The course's published knowledge, so the author writes into the topics it already has. */
+  knowledge?: (courseId: string) => Promise<Knowledge | null>;
+  /** Regroups a course's published notes into shared topics; says how many topics merged. */
+  regroup?: (courseId: string) => Promise<{ merged: number } | null>;
 }
 
 /** The order queued jobs start in: what the student asked for, new files, the rest, redos. */
@@ -268,6 +274,25 @@ export class IngestRunner {
   }
 
   /**
+   * Regroups a course's existing study notes into shared topics, once, then queues each studied
+   * document to be studied again with the stronger pipeline, behind everything else.
+   */
+  async regroup(courseId: string): Promise<JobView> {
+    const { library, store } = this.#options;
+    const course = await library.course(courseId);
+    const job = store.createJob({
+      courseId: course.id,
+      documentIds: [],
+      title: `Group ${course.name}'s study notes by topic`,
+      origin: "backlog",
+      kind: "regroup",
+    });
+    this.#emit(job.id);
+    this.#fill();
+    return store.view(job.id);
+  }
+
+  /**
    * Stops and forgets every unfinished job that matches, and resolves once each has really
    * stopped: a document that is moving to the Trash or stops being a lecture is no longer read
    * or published while its files change.
@@ -396,10 +421,13 @@ export class IngestRunner {
     });
     store.setNode(root.id, { status: "running" });
     this.#emit(jobId);
+    if (store.job(jobId).kind === "regroup") return this.#regroup(jobId, root.id, signal);
     try {
       const job = store.job(jobId);
       const course = await library.course(job.courseId);
       const documents = await Promise.all(job.documentIds.map((id) => library.document(id)));
+      // The topics the course has as this job starts: every document of the job sees the same.
+      const known = (await this.#options.knowledge?.(course.id).catch(() => null)) ?? null;
       // Sessions are numbered and paired across the whole course, not only this job's files.
       const studied = (await library.listDocuments({ courseId: course.id }))
         .filter((document) => document.role === "lecture" || document.role === "recitation")
@@ -408,7 +436,7 @@ export class IngestRunner {
       // finished is added to the course. Resume redoes only what did not finish.
       const results = await Promise.allSettled(
         documents.map((document) =>
-          this.#document(jobId, root.id, course, document, studied, signal),
+          this.#document(jobId, root.id, course, document, studied, known, signal),
         ),
       );
       signal.throwIfAborted();
@@ -470,12 +498,52 @@ export class IngestRunner {
     }
   }
 
+  /** A regroup: compare and merge the course's topics, then queue its documents for re-study. */
+  async #regroup(jobId: string, rootId: string, signal: AbortSignal): Promise<void> {
+    const { store } = this.#options;
+    const job = store.job(jobId);
+    try {
+      const node = this.#node(jobId, rootId, "regroup", {
+        role: "publish",
+        title: "Group by topic",
+        task: "Compare the course's topics and merge the ones that are the same",
+        model: "gpt-6.1-terra",
+      });
+      store.setNode(node.id, { status: "running" });
+      this.#emit(jobId);
+      const result = await this.#options.regroup?.(job.courseId);
+      signal.throwIfAborted();
+      store.setNode(node.id, {
+        status: "done",
+        task: result?.merged
+          ? `${result.merged} topic${result.merged === 1 ? "" : "s"} merged into shared topics`
+          : "Every topic was already its own",
+      });
+      const studied = (await this.#options.knowledge?.(job.courseId))?.sessions ?? [];
+      await this.queue(
+        job.courseId,
+        studied.map((session) => session.documentId),
+        "restudy",
+      );
+      store.setNode(rootId, { status: "done", note: null });
+      store.updateJob(jobId, { status: "done" });
+    } catch (error) {
+      if (signal.aborted) return;
+      store.settleNodes(jobId, "stopped", null);
+      store.setNode(rootId, { status: "failed", note: (error as Error).message });
+      store.updateJob(jobId, { status: "failed" });
+    } finally {
+      this.#emit(jobId);
+    }
+  }
+
   async #document(
     jobId: string,
     rootId: string,
     course: CourseRecord,
     document: DocumentRecord,
     courseDocuments: DocumentRecord[],
+    known: Knowledge | null,
     signal: AbortSignal,
   ): Promise<DocumentDraft> {
     const { store, library, prepare } = this.#options;
@@ -515,6 +583,10 @@ export class IngestRunner {
 
       const session = sessionInfo(course, document, courseDocuments);
       const brief = await this.#brief(jobId, branch.id, document, source, signal);
+      const topics = topicInventory(known, [
+        ...brief.outline.map((item) => item.title),
+        ...brief.terms.flatMap((term) => [term.english, term.hebrew]),
+      ]);
       const regions = await this.#read(jobId, branch.id, document, source, brief, signal);
       let draft = await this.#author(
         jobId,
@@ -525,6 +597,7 @@ export class IngestRunner {
         brief,
         regions,
         session,
+        topics,
         signal,
         null,
       );
@@ -561,6 +634,7 @@ export class IngestRunner {
           brief,
           regions,
           session,
+          topics,
           signal,
           { draft, issues, round, reasoning },
         );
@@ -883,6 +957,7 @@ export class IngestRunner {
     brief: Brief,
     regions: DocumentDraft["regions"],
     session: SessionInfo,
+    topics: string,
     signal: AbortSignal,
     revision: {
       draft: AuthorDraft;
@@ -901,6 +976,7 @@ export class IngestRunner {
       hash(regions),
       hash(brief),
       revision ? hash(revision) : null,
+      topics ? hash(topics) : null,
     ]);
     return this.#step(
       jobId,
@@ -928,6 +1004,11 @@ export class IngestRunner {
               `Course: ${course.name}${course.code ? ` (${course.code})` : ""}. Wiki page slugs are written without the course prefix "${session.prefix}"; Folio adds it.`,
               `Session: ${session.slug}, ${session.type} "${document.title}".`,
               briefContext(brief),
+              ...(topics
+                ? [
+                    `Topics this course already has (slug · title · Hebrew · aliases · meaning · where it is taught). When this lecture teaches one of them, write its page under that slug:\n${topics}`,
+                  ]
+                : []),
               `Regions found on every page (account for each one):\n${regionLines.join("\n")}`,
               `Allowed omission reasons: ${OMIT_REASONS.join(", ")}.`,
             ].join("\n\n"),

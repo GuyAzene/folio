@@ -57,6 +57,12 @@
 
   function heading(job: JobView): string {
     const course = folio.course(job.courseId)?.name ?? "your course";
+    if (job.kind === "regroup")
+      return job.status === "done"
+        ? `${course}'s notes are grouped by topic`
+        : job.status === "failed"
+          ? "Couldn't group the notes"
+          : `Grouping ${course}'s notes by topic`;
     switch (job.status) {
       case "running":
         return `Studying for ${course}`;
@@ -74,6 +80,16 @@
   }
 
   function subline(job: JobView): string {
+    if (job.kind === "regroup") {
+      const result = job.nodes.find((node) => node.role === "publish")?.task;
+      if (job.status === "done")
+        return `${result ?? "Grouped"} · Each lecture and recitation is studied again after new files.`;
+      if (job.status === "failed") {
+        const note = job.nodes.find((node) => node.parentId === null)?.note;
+        return note ? explain(note) : "Resume tries again.";
+      }
+      return "A lecture and a recitation that teach the same thing will share one topic.";
+    }
     switch (job.status) {
       case "queued":
         if (job.waitingFor === "connection")

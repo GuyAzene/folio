@@ -1,6 +1,7 @@
 import { topicSlug, yaml, type WikiFile } from "../ingest/draft.ts";
 import type { DraftBundle, LedgerEntry } from "../ingest/pipeline.ts";
 import type { DraftBlock } from "../ingest/prompts.ts";
+import { finishKnowledge } from "./topics.ts";
 
 /**
  * A course's published knowledge: the structured source every generation's Markdown and search
@@ -19,10 +20,18 @@ export interface KnowledgePage {
   slug: string;
   title: string;
   type: "concept" | "technique";
+  /** The first session, in course order, that writes into this topic. */
   introducedIn: string;
   prerequisites: string[];
   intuition: string;
   blocks: KnowledgeBlock[];
+  /** Topics this one is part of, has as parts, or is taught with; judged when they were compared. */
+  related?: { slug: string; relation: "part_of" | "has_part" | "related" }[];
+  /**
+   * For a topic taught in several sessions: a short overview citing the sections it draws on,
+   * written for the sections it was written for (`basis`, their handles) and dropped when they change.
+   */
+  overview?: { text: string; handles: string[]; basis: string };
 }
 
 export interface KnowledgeSession {
@@ -43,18 +52,55 @@ export interface KnowledgeSession {
   sourcePages: { page: number; text: string }[];
   studiedAt: string;
   jobId: string;
+  /** The document in slide order: which topic each run of pages feeds, and its sections. */
+  outline?: { topic: string; pages: number[]; handles: string[] }[];
+  /** Topics no other session of the course teaches. */
+  onlyHere?: string[];
+  /** The document's own symbols and what they mean, from its brief. */
+  notation?: { symbol: string; meaning: string }[];
 }
 
+/**
+ * Version 2 (2026-10-29) shares topics across a course's sessions: retired topic slugs redirect
+ * to the topic that absorbed them, and anchor-page fields are derived from the blocks. A version 1
+ * generation is upgraded as it is read, so rollback and the Trash keep working across versions.
+ */
 export interface Knowledge {
-  version: 1;
+  version: 1 | 2;
   courseId: string;
   prefix: string;
   sessions: KnowledgeSession[];
   pages: KnowledgePage[];
+  redirects?: Record<string, string>;
+  /** When the course's existing notes were last regrouped into shared topics. */
+  grouped?: string;
 }
 
 export function emptyKnowledge(courseId: string, prefix: string): Knowledge {
-  return { version: 1, courseId, prefix, sessions: [], pages: [] };
+  return { version: 2, courseId, prefix, sessions: [], pages: [], redirects: {} };
+}
+
+/** A stored generation as today's knowledge: checked for its shape, and upgraded if older. */
+export function upgradeKnowledge(raw: unknown): Knowledge {
+  const value = raw as Partial<Knowledge> | null;
+  if (
+    !value ||
+    (value.version !== 1 && value.version !== 2) ||
+    typeof value.courseId !== "string" ||
+    typeof value.prefix !== "string" ||
+    !Array.isArray(value.sessions) ||
+    !Array.isArray(value.pages)
+  )
+    throw new Error("This version of the study notes is not one Folio can read.");
+  return finishKnowledge(value as Knowledge);
+}
+
+/** A topic slug as it is now, following redirects left by merges. */
+export function liveSlug(knowledge: Knowledge, slug: string): string {
+  let current = slug;
+  for (let hops = 0; knowledge.redirects?.[current] && hops < 20; hops++)
+    current = knowledge.redirects[current]!;
+  return current;
 }
 
 /** A region the student accepted as a gap when it was left unaccounted. */
@@ -112,7 +158,8 @@ export function mergeDraft(
     const handles = new Set(next.pages.flatMap((page) => page.blocks.map((block) => block.handle)));
     const newConcepts: string[] = [];
     for (const page of draft.pages) {
-      const slug = topicSlug(session.prefix, page.slug);
+      // An author shown an older inventory may name a topic that has since been merged.
+      const slug = liveSlug(next, topicSlug(session.prefix, page.slug));
       let target = next.pages.find((existing) => existing.slug === slug);
       if (!target) {
         target = {
@@ -131,7 +178,7 @@ export function mergeDraft(
       target.prerequisites = [
         ...new Set([
           ...target.prerequisites,
-          ...page.prerequisites.map((item) => topicSlug(session.prefix, item)),
+          ...page.prerequisites.map((item) => liveSlug(next, topicSlug(session.prefix, item))),
         ]),
       ];
       for (const block of page.blocks) {
@@ -178,12 +225,13 @@ export function mergeDraft(
       })),
       studiedAt: bundle.createdAt,
       jobId: bundle.jobId,
+      notation: document.brief.notation,
     });
   }
   next.pages = next.pages.filter((page) => page.blocks.length);
   next.sessions.sort((a, b) => a.slug.localeCompare(b.slug, undefined, { numeric: true }));
   next.pages.sort((a, b) => a.slug.localeCompare(b.slug));
-  return next;
+  return finishKnowledge(next);
 }
 
 /**
@@ -202,7 +250,7 @@ export function withoutDocuments(knowledge: Knowledge, documentIds: string[]): K
       page.introducedIn = page.blocks[0]!.session;
   }
   next.pages = next.pages.filter((page) => page.blocks.length);
-  return next;
+  return finishKnowledge(next);
 }
 
 /**
@@ -229,14 +277,15 @@ export function withDocumentsFrom(
       (block) => slugs.has(block.session) && !handles.has(block.handle),
     );
     if (!blocks.length) continue;
-    const target = next.pages.find((candidate) => candidate.slug === page.slug);
+    const live = liveSlug(next, page.slug);
+    const target = next.pages.find((candidate) => candidate.slug === live);
     if (target) target.blocks.push(...structuredClone(blocks));
     else next.pages.push({ ...structuredClone(page), blocks: structuredClone(blocks) });
   }
   next.sessions.push(...structuredClone(sessions));
   next.sessions.sort((a, b) => a.slug.localeCompare(b.slug, undefined, { numeric: true }));
   next.pages.sort((a, b) => a.slug.localeCompare(b.slug));
-  return next;
+  return finishKnowledge(next);
 }
 
 /**

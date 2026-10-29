@@ -267,7 +267,8 @@ export type JobOrigin = "student" | "upload" | "backlog" | "restudy";
 
 export interface JobView {
   id: string;
-  kind: "ingest";
+  /** Studying documents, or regrouping a course's existing notes into shared topics. */
+  kind: "ingest" | "regroup";
   origin: JobOrigin;
   /** A queued job that is waiting for ChatGPT to be connected before it can start. */
   waitingFor: "connection" | null;
@@ -319,8 +320,14 @@ export interface StudySessionView {
   worthRemembering: string[];
   openThreads: string[];
   workedExamples: { title: string; page: number }[];
-  /** Topics this session introduced, in order. */
+  /** Every topic this session writes into, in slide order: its anchor page's outline. */
   topics: string[];
+  /** The slide-order outline: which topic each run of pages feeds. */
+  outline: { topic: string; pages: number[] }[];
+  /** Topics no other session of the course teaches. */
+  onlyHere: string[];
+  /** The document's own symbols and what they mean. */
+  notation: { symbol: string; meaning: string }[];
 }
 
 export interface StudyTopicView {
@@ -328,21 +335,31 @@ export interface StudyTopicView {
   title: string;
   type: "concept" | "technique";
   intuition: string;
+  /** For a topic taught in several sessions: a short overview that cites the sections it uses. */
+  overview: { text: string; handles: string[] } | null;
   /** The session that introduced the topic. */
   introducedIn: string;
+  /** Every session that teaches it, in course order. */
+  taughtIn: { session: string; documentId: string; type: "lecture" | "recitation" }[];
   /** Topics this one builds on, and topics that build on it; only ones the course has. */
   prerequisites: { slug: string; title: string }[];
   usedBy: { slug: string; title: string }[];
+  /** Topics this one is part of, has as parts, or is taught alongside. */
+  related: { slug: string; title: string; relation: "part_of" | "has_part" | "related" }[];
+  /** In teaching order: definitions, properties, technique, examples, the rest. */
   sections: StudySectionView[];
 }
 
 export interface StudySectionView {
   handle: string;
   title: string;
+  kind: string;
   /** Markdown, possibly with TeX math. */
   body: string;
   session: string;
   documentId: string;
+  /** The same statement in other sessions, folded into this one with their own pages. */
+  alsoIn: { handle: string; documentId: string; pages: number[]; body: string }[];
   /** Slide pages the section was written from. */
   pages: number[];
   questions: string[];

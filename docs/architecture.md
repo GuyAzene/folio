@@ -160,6 +160,28 @@ lectures), and a re-studied document replaces its own session. Each step's outpu
 job interrupted by a quit or a plan limit resumes where it stopped instead of starting over;
 after a quit, interrupted studies go back in the queue on their own.
 
+### Topics shared across a course
+
+Study notes are organised by topic, not by file. A topic page gathers what every lecture and
+recitation says about one concept or technique; each document keeps an anchor page in slide
+order that points into the topics it feeds, with what only it teaches and its notation. Three
+things keep a topic shared:
+
+- The author of a new document is shown the course's topics as they were when its job started
+  (slug, titles in both languages, aliases, a one-line meaning and where each is taught) and
+  writes into an existing topic when the document teaches it.
+- When a publish starts a new topic, code looks for topics it may duplicate (the same title or
+  alias, or the course's search index ranking another topic's sections first), and GPT-6.1 Terra
+  judges each pair: only "same" merges, leaving a redirect so old links keep resolving; "part of"
+  and "related" become links. Block handles never change.
+- A topic taught in several sessions gets a short overview citing the sections it draws on,
+  written again only when those sections change.
+
+Everything else on topic and anchor pages is derived from the blocks by code, and a version is
+not written unless every block belongs to one session and one topic and every link is live.
+Generations written before this (version 1) are upgraded as they are read, and their courses are
+regrouped once, then each document is studied again behind new files.
+
 ## Notes
 
 The student's notes are Markdown files. The editor (CodeMirror 6) renders Markdown, math (KaTeX),

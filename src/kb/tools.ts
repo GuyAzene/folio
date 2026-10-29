@@ -1,8 +1,9 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type, type TSchema } from "typebox";
 import { checkId, LibraryError, type LibraryStore } from "../library/store.ts";
-import type { Knowledge } from "./knowledge.ts";
+import { liveSlug, type Knowledge } from "./knowledge.ts";
 import type { KnowledgeStore } from "./store.ts";
+import { sessionsOf } from "./topics.ts";
 
 const MAX_READ = 5;
 const READ_BUDGET = 16_000;
@@ -165,7 +166,8 @@ export function knowledgeTools(
               block.handle === handle ||
               published.pages.some(
                 (page) =>
-                  page.slug === handle && page.blocks.some((item) => item.handle === block.handle),
+                  page.slug === liveSlug(published, handle) &&
+                  page.blocks.some((item) => item.handle === block.handle),
               ),
           ),
       );
@@ -252,7 +254,9 @@ function pageWord(pages: number[]): string {
  */
 function withTopics(handles: string[], knowledge: Knowledge, sessions: string[]): string[] {
   const out = handles.flatMap((handle) => {
-    const page = knowledge.pages.find((candidate) => candidate.slug === handle);
+    // A topic merged into another since the handle was given reads as the topic it joined.
+    const slug = liveSlug(knowledge, handle);
+    const page = knowledge.pages.find((candidate) => candidate.slug === slug);
     return page
       ? page.blocks.filter((block) => sessions.includes(block.session)).map((block) => block.handle)
       : [handle];
@@ -261,20 +265,27 @@ function withTopics(handles: string[], knowledge: Knowledge, sessions: string[])
 }
 
 /**
- * The course's studied topics as an indented outline for the prompt. A long course lists topics
+ * The course's studied topics as an indented outline for the prompt: each session's topics in
+ * slide order, with the other sessions that teach a shared topic. A long course lists topics
  * without their sections, and one too long even for that stops at a whole line and says so.
  */
 export function topicMap(knowledge: Knowledge, limit = 24_000): string {
+  const teachers = new Map(knowledge.pages.map((page) => [page.slug, sessionsOf(page)]));
   const full = (withBlocks: boolean) =>
     knowledge.sessions
       .map((session) => {
-        const pages = knowledge.pages.filter((page) =>
-          page.blocks.some((block) => block.session === session.slug),
-        );
+        const order = [...new Set((session.outline ?? []).map((row) => row.topic))];
+        const pages = knowledge.pages
+          .filter((page) => page.blocks.some((block) => block.session === session.slug))
+          .sort((a, b) => order.indexOf(a.slug) - order.indexOf(b.slug));
+        const also = (slug: string) => {
+          const others = (teachers.get(slug) ?? []).filter((other) => other !== session.slug);
+          return others.length ? ` (also in ${others.join(", ")})` : "";
+        };
         return [
           `${session.slug} · ${session.title}`,
           ...pages.flatMap((page) => [
-            `  ${page.title} [${page.slug}]`,
+            `  ${page.title} [${page.slug}]${also(page.slug)}`,
             ...(withBlocks
               ? page.blocks
                   .filter((block) => block.session === session.slug)
