@@ -56,6 +56,8 @@ export interface CourseRuntime {
   prompt(): Promise<string>;
   /** Throws unless the document belongs to this course and the page exists. */
   checkFocus(focus: SessionFocus): Promise<FocusAbout>;
+  /** Called as each question is sent, before any tool runs: a reply's own limits start over. */
+  beforeSend?(question: { webSearch: boolean }): void;
 }
 
 /** What the tutor is told about a page the student is reading. */
@@ -155,6 +157,8 @@ export interface SendExtras {
   thinking?: Thinking;
   /** Answer on OpenAI's priority tier: faster, and uses more of the plan. Only this question. */
   fast?: boolean;
+  /** False when the student turned web search off; the tutor may search otherwise. */
+  webSearch?: boolean;
 }
 
 /** Every course and document the student added in a chat, read from their own messages only. */
@@ -485,6 +489,7 @@ export class Conversation {
     if (extras.thinking) this.#agent.state.thinkingLevel = extras.thinking;
     // Set on every question, so a fast question never leaves the next one fast.
     this.#agent.onPayload = extras.fast ? priorityTier : undefined;
+    this.#runtime?.beforeSend?.({ webSearch: extras.webSearch !== false });
     const summarize = this.#trim(input);
     if (focus !== undefined)
       this.#record.focus = focus ? { documentId: focus.documentId, page: focus.page } : null;

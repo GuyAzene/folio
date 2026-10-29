@@ -81,8 +81,18 @@ export class ChatService {
 
   /** Accepts a message and returns its chat ID; the reply and any failure arrive as events. */
   async send(input: unknown): Promise<{ chatId: string }> {
-    const { chatId, text, submissionId, courseId, focus, modelId, attachments, thinking, fast } =
-      validSend(input);
+    const {
+      chatId,
+      text,
+      submissionId,
+      courseId,
+      focus,
+      modelId,
+      attachments,
+      thinking,
+      fast,
+      webSearch,
+    } = validSend(input);
     const models = this.#options.models ?? [this.#options.modelId];
     if (modelId && !models.includes(modelId)) throw new Error("That model is not available.");
     if (!(await this.#options.connected()))
@@ -108,13 +118,15 @@ export class ChatService {
     const id = conversation.snapshot.id;
     // A course chat's question carries the page in view, so the tutor's prompt stays the same.
     const extras = conversation.kind === "course" ? { focus: focus ?? null } : {};
-    conversation.send(text, submissionId, { attachments: added, thinking, fast, ...extras }).then(
-      () => this.#settled(conversation),
-      (error: unknown) => {
-        this.#options.emit({ type: "error", chatId: id, message: errorMessage(error) });
-        this.#settled(conversation);
-      },
-    );
+    conversation
+      .send(text, submissionId, { attachments: added, thinking, fast, webSearch, ...extras })
+      .then(
+        () => this.#settled(conversation),
+        (error: unknown) => {
+          this.#options.emit({ type: "error", chatId: id, message: errorMessage(error) });
+          this.#settled(conversation);
+        },
+      );
     return { chatId: id };
   }
 
@@ -280,8 +292,18 @@ export class ChatService {
 
 function validSend(input: unknown): SendInput & { attachments: AttachmentInput[] } {
   if (typeof input !== "object" || input === null) throw new Error("Invalid message.");
-  const { chatId, text, submissionId, courseId, focus, modelId, attachments, thinking, fast } =
-    input as Record<string, unknown>;
+  const {
+    chatId,
+    text,
+    submissionId,
+    courseId,
+    focus,
+    modelId,
+    attachments,
+    thinking,
+    fast,
+    webSearch,
+  } = input as Record<string, unknown>;
   if (chatId !== null && (typeof chatId !== "string" || !UUID.test(chatId)))
     throw new Error("Unknown chat.");
   if (typeof text !== "string" || !text.trim()) throw new Error("Enter a message first.");
@@ -299,6 +321,8 @@ function validSend(input: unknown): SendInput & { attachments: AttachmentInput[]
   if (thinking !== undefined && !THINKING_LEVELS.includes(thinking as Thinking))
     throw new Error("That thinking level is not available.");
   if (fast !== undefined && typeof fast !== "boolean") throw new Error("Invalid speed.");
+  if (webSearch !== undefined && typeof webSearch !== "boolean")
+    throw new Error("Invalid web search setting.");
   return {
     chatId,
     text,
@@ -309,6 +333,7 @@ function validSend(input: unknown): SendInput & { attachments: AttachmentInput[]
     attachments: validAttachments(attachments),
     ...(thinking !== undefined ? { thinking: thinking as Thinking } : {}),
     ...(fast ? { fast: true } : {}),
+    ...(webSearch === false ? { webSearch: false } : {}),
   };
 }
 

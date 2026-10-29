@@ -62,6 +62,33 @@
 
         <div class="mx-5 h-px bg-line-subtle"></div>
 
+        <section class="flex items-center justify-between gap-4 px-5 py-4">
+          <div class="flex min-w-0 flex-col gap-0.5">
+            <span class="font-medium">Web search</span>
+            <span class="text-[12px] text-text-3"
+              >The tutor may search the internet when you want more than your
+              course material. Only a short query leaves Folio.</span
+            >
+          </div>
+          <ToggleGroup.Root
+            type="single"
+            value={folio.webSearch ? "on" : "off"}
+            onValueChange={(value) => value && folio.setWebSearch(value === "on")}
+            class="flex shrink-0 rounded-lg border border-line-subtle bg-bg p-0.5"
+          >
+            {#each [{ value: "on", label: "On" }, { value: "off", label: "Off" }] as option (option.value)}
+              <ToggleGroup.Item
+                value={option.value}
+                class="h-[26px] rounded-md px-2.5 text-[12px] font-medium text-text-2 transition-colors data-[state=on]:bg-surface data-[state=on]:text-text data-[state=on]:shadow-[0_1px_2px_#18181b14,0_0_0_1px_#18181b0a] dark:data-[state=on]:bg-selected"
+              >
+                {option.label}
+              </ToggleGroup.Item>
+            {/each}
+          </ToggleGroup.Root>
+        </section>
+
+        <div class="mx-5 h-px bg-line-subtle"></div>
+
         <section class="flex flex-col gap-1 px-5 py-4">
           <span class="mb-1 font-medium">Subscriptions</span>
           <div class="flex items-center justify-between gap-4 py-1">

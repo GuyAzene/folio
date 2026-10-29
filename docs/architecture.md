@@ -133,6 +133,20 @@ to it alone, so a fast question never leaves the next one fast. Models the plan 
 Pi's catalog lists them (GPT-6.1 Terra) are declared in `src/model-catalog.ts` as copies of a
 listed sibling, and Pi's own entry replaces the declaration once it ships.
 
+### Searching the web
+
+Course and library chats can search the web with `search_web`, when the student asks or wants
+more than the course material gives. The course comes first: the web never changes its notation
+or definitions, and what comes from the web is labelled and linked. Each search is its own
+request through the same connection (GPT-6.1 Terra with OpenAI's hosted web search), carrying a
+fixed instruction and the query and nothing else: no chat, course material, notes or Folio tools,
+so a web page cannot reach what the student wrote or act through Folio. The query is checked in
+code before it leaves (short, with no email, phone or ID numbers), a reply searches at most three
+times, and the student can turn search off in Settings; the tool then refuses, so the prompt
+stays the same. Pi drops the search's sources and citations; Folio reads them from the raw
+stream, keeps only https links, saves them with the tool's result, and lists them under the
+reply apart from course sources. Links open in the system browser.
+
 ## Studying a lecture
 
 Adding a lecture or recitation to a course is what starts its study; reading or explaining a

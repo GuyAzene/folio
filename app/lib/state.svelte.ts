@@ -116,6 +116,8 @@ class FolioState {
   thinking = $state<Thinking>(DEFAULT_THINKING);
   /** Questions go on OpenAI's faster tier, which uses more of the plan. */
   fast = $state(false);
+  /** The tutor may search the web; off only when the student turns it off in Settings. */
+  webSearch = $state(true);
   connection = $state<ConnectionView>({ connected: false, signingIn: false });
   error = $state<string | null>(null);
   notice = $state<string | null>(null);
@@ -183,6 +185,7 @@ class FolioState {
       this.modelChoice = this.#savedModel() ?? boot.model.id;
       this.thinking = this.#savedThinking() ?? DEFAULT_THINKING;
       this.fast = this.#savedFast();
+      this.webSearch = this.#savedFlag("folio.webSearch") ?? true;
       this.chats = boot.chats;
       this.unavailableChats = boot.unavailableChats;
       this.connection = boot.connection;
@@ -458,6 +461,7 @@ class FolioState {
         modelId: context.chatId ? null : this.modelChoice,
         thinking: this.thinking,
         ...(this.fast ? { fast: true } : {}),
+        ...(this.webSearch ? {} : { webSearch: false }),
         ...(added.length ? { attachments: added.map((item) => item.input) } : {}),
       });
       if (!context.chatId) this.#adopt(context.tabId, chatId);
@@ -898,6 +902,24 @@ class FolioState {
       localStorage.setItem("folio.thinking", level);
     } catch {
       // A per-device convenience; chats fall back to the default level.
+    }
+  }
+
+  setWebSearch(on: boolean): void {
+    this.webSearch = on;
+    try {
+      localStorage.setItem("folio.webSearch", on ? "1" : "0");
+    } catch {
+      // A per-device convenience; the tutor may search until it is set again.
+    }
+  }
+
+  #savedFlag(key: string): boolean | undefined {
+    try {
+      const saved = localStorage.getItem(key);
+      return saved === null ? undefined : saved === "1";
+    } catch {
+      return undefined;
     }
   }
 

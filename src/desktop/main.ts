@@ -26,6 +26,7 @@ import { KnowledgeStore } from "../kb/store.ts";
 import { topicModel } from "../kb/topics.ts";
 import { createAttach } from "../library/attachments.ts";
 import { createRuntimes } from "../library/course-tools.ts";
+import { hostedSearch } from "../library/web-search.ts";
 import { CourseNotes, noteTitle, type ProposalRecord } from "../library/notes.ts";
 import { scanFolder } from "../library/scan.ts";
 import { parseCourseDetails, SYLLABUS_PROMPT, syllabusText } from "../library/syllabus.ts";
@@ -212,6 +213,8 @@ const service = Promise.all([sessionStore, library, notes, knowledgeStore, pageR
       knowledge,
       pages,
       visuals: true,
+      // Each search is its own request on GPT-6.1 Terra, carrying the query and nothing else.
+      search: hostedSearch(streamFn, resolveModel("gpt-6.1-terra")),
     });
     return new ChatService({
       store,

@@ -37,6 +37,8 @@ export interface ChatMessageView {
   proposals?: string[];
   /** Notes the tutor created, changed or renamed in this turn. */
   noteEdits?: NoteEditView[];
+  /** Pages the tutor's web searches found in this turn, listed apart from course sources. */
+  webSources?: { url: string; title: string }[];
   /** What the student added to a question with the composer's +. */
   attachments?: AttachmentView[];
   /** Drawings and demos the tutor showed in this turn, each at its place in `text`. */
@@ -481,6 +483,8 @@ export interface SendInput {
   thinking?: Thinking;
   /** Answer this question on OpenAI's faster tier, which uses more of the plan. */
   fast?: boolean;
+  /** False when the student turned web search off in Settings. */
+  webSearch?: boolean;
 }
 
 export type DesktopEvent =

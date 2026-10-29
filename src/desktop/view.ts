@@ -37,11 +37,15 @@ export function visibleText(content: unknown): string {
 }
 
 type Step = StepView & { id: string; tool: string };
-type Turn = Omit<ChatMessageView, "steps" | "sources" | "proposals" | "noteEdits" | "visuals"> & {
+type Turn = Omit<
+  ChatMessageView,
+  "steps" | "sources" | "proposals" | "noteEdits" | "webSources" | "visuals"
+> & {
   steps: Step[];
   sources: SourceView[];
   proposals: string[];
   noteEdits: NoteEditView[];
+  webSources: { url: string; title: string }[];
   visuals: VisualView[];
 };
 
@@ -70,6 +74,10 @@ function runningLabel(name: string, args: unknown): string {
   if (name === "list_notes") return "Looking through your notes";
   if (name === "read_note") return "Reading your note";
   if (name === "propose_note_edit") return "Drafting a note edit";
+  if (name === "search_web") {
+    const query = (args as { query?: unknown } | undefined)?.query;
+    return typeof query === "string" ? `Searching the web: ${query}` : "Searching the web";
+  }
   if (name === "create_note") return "Writing a note";
   if (name === "edit_note") return "Editing your note";
   if (name === "rename_note") return "Renaming your note";
@@ -103,6 +111,11 @@ function finishedLabel(name: string, details: unknown, failed: boolean, fallback
   }
   if (name === "propose_note_edit")
     return failed ? "Couldn't draft the note edit" : "Drafted a note edit for you to review";
+  if (name === "search_web") {
+    const query = (details as { query?: unknown } | undefined)?.query;
+    if (failed) return "Couldn't search the web";
+    return typeof query === "string" ? `Searched the web: ${query}` : "Searched the web";
+  }
   const edit = (details as { noteEdit?: { title?: unknown } } | undefined)?.noteEdit;
   const title = typeof edit?.title === "string" ? ` ${edit.title}` : "";
   if (name === "create_note") return failed ? "Couldn't write the note" : `Wrote the note${title}`;
@@ -143,6 +156,7 @@ export function chatView(record: SessionRecord, streaming?: string): ChatView {
           sources: [],
           proposals: [],
           noteEdits: [],
+          webSources: [],
           visuals: [],
         };
         messages.push(turn);
@@ -209,6 +223,18 @@ export function chatView(record: SessionRecord, streaming?: string): ChatView {
         typeof proposalId === "string"
       )
         turn.proposals.push(proposalId);
+      const found = (message.details as { sources?: unknown } | undefined)?.sources;
+      if (!message.isError && message.toolName === "search_web" && Array.isArray(found))
+        for (const source of found as { url?: unknown; title?: unknown }[])
+          if (
+            typeof source.url === "string" &&
+            source.url.startsWith("https://") &&
+            !turn.webSources.some((known) => known.url === source.url)
+          )
+            turn.webSources.push({
+              url: source.url,
+              title: typeof source.title === "string" ? source.title : source.url,
+            });
       const edit = (message.details as { noteEdit?: NoteEditView & { v?: number } } | undefined)
         ?.noteEdit;
       if (!message.isError && edit && typeof edit.noteId === "string")
@@ -244,6 +270,7 @@ export function chatView(record: SessionRecord, streaming?: string): ChatView {
         sources: [],
         proposals: [],
         noteEdits: [],
+        webSources: [],
         visuals: [],
       };
       messages.push(turn);
@@ -265,13 +292,14 @@ export function chatView(record: SessionRecord, streaming?: string): ChatView {
         : null,
     messages: messages.map((view) => {
       if (view.role !== "assistant" || view.kind === "summary") return view;
-      const { visuals, noteEdits, ...turn } = view as Turn;
+      const { visuals, noteEdits, webSources, ...turn } = view as Turn;
       return {
         ...turn,
         steps: turn.steps.map(({ label, state }) => ({ label, state })),
         // Only turns that showed a visual or changed a note carry those lists.
         ...(visuals.length ? { visuals } : {}),
         ...(noteEdits.length ? { noteEdits } : {}),
+        ...(webSources.length ? { webSources } : {}),
       };
     }),
     reads:
