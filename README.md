@@ -58,6 +58,22 @@ vp run desktop                             # the app, with hot reload for the in
 
 To run the production build instead, use `vp run desktop:build`, then `vp run desktop:start`.
 
+### Installing Folio as an app
+
+```sh
+vp run desktop:package
+```
+
+This builds `Folio.app` and a disk image for Apple silicon, `release/Folio-<version>-arm64.dmg`.
+Open the disk image and drag Folio to Applications. To update, quit Folio, build again and
+replace it. The build runs in a folder of its own, so a Folio running from the checkout keeps
+going. The app keeps your data in `~/.folio`, like the development build; quit a development
+build before opening the app.
+
+The app is signed ad-hoc, so it runs on the Mac that built it. Another Mac may refuse to open it
+until builds are signed with a Developer ID and notarized; `scripts/package.ts` names the
+environment variables that turn both on.
+
 To connect, choose **Connect ChatGPT** in the composer or in Settings (⌘,). Your browser opens
 ChatGPT's sign-in. Folio never uses an `OPENAI_API_KEY` or another app's saved accounts.
 
@@ -89,6 +105,7 @@ vp check            # formatting, lint and types
 vp run check:ui     # Svelte checks for the renderer
 vp test             # deterministic tests: no network, no real accounts
 vp run test:electron # Folio in a real window: security rules, diagrams, demos
+vp run desktop:package # Folio.app and its disk image, in release/
 vp build && vp pack # renderer, CLI and Electron bundles
 vp dev              # the interface alone, in a browser, with synthetic data
 ```
@@ -96,6 +113,9 @@ vp dev              # the interface alone, in a browser, with synthetic data
 `vp dev` serves the interface against a development-only preview bridge with synthetic courses,
 which is handy for checking layouts. A terminal client with a small synthetic demo course also
 ships: run `vp run chat`, and `vp run chat --help` for its options.
+
+`FOLIO_E2E_APP=release/mac-arm64/Folio.app vp run test:electron` runs the real-window checks
+against the packaged app instead of a fresh build.
 
 Read [AGENTS.md](AGENTS.md) for how changes are made and checked, and
 [docs/architecture.md](docs/architecture.md) for how the pieces fit together.
@@ -106,7 +126,8 @@ Read [AGENTS.md](AGENTS.md) for how changes are made and checked, and
 app/        the interface (Svelte 5)
 src/        the main process: chats, library, studying, study notes, storage
 tests/      test suites and synthetic fixtures
-scripts/    development scripts
+scripts/    development and packaging scripts
+resources/  the app icon
 docs/       architecture and images
 .github/    continuous integration
 ```

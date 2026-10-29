@@ -40,7 +40,14 @@ vp run check:ui       # Svelte checks for the renderer
 vp test               # deterministic tests, no network or real accounts
 vp build && vp pack   # renderer, CLI and Electron bundles
 vp node <file>        # run a script with the project's Node
+vp run desktop:package # Folio.app and its disk image, in release/
 ```
+
+Only `dependencies` ship in the packaged app, so they are the packages the main process loads
+at run time. Build tools and the renderer's libraries, which Vite bundles, are `devDependencies`
+(`vp add -D`). `vp install --frozen-lockfile` reinstalls `node_modules` from scratch, removing
+Electron's binary: run `vp node node_modules/electron/install.js` after it, and never while a
+development Folio is open.
 
 ## Verification
 

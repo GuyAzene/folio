@@ -29,6 +29,7 @@ src/desktop/main.ts           the main process
 | `src/cli.ts` | A terminal client with a small synthetic demo course. |
 | `tests/` | Deterministic test suites; `tests/fixtures/` builds synthetic PDFs and courses; `tests/electron/` checks Folio in a real window (`vp run test:electron`). |
 | `scripts/desktop.ts` | Runs the app from the dev server or from the production build. |
+| `scripts/package.ts`, `resources/` | Builds `Folio.app` and its disk image (`vp run desktop:package`); the app icon. |
 
 ## What the window may do
 
@@ -262,3 +263,21 @@ Everything lives in `~/.folio/` (or `FOLIO_HOME`), with directories `0700` and f
 Writes are atomic. Revision and hash checks refuse edits made elsewhere instead of overwriting
 them, and a chat open in one process refuses writes from another. Session files are versioned and
 pin the Pi runtime and transcript format they were written with.
+
+## The packaged app
+
+`vp run desktop:package` builds the renderer and the main process from a copy of the source, so a
+Folio running from the checkout keeps its files, and electron-builder makes
+`release/mac-arm64/Folio.app` and a disk image for Apple silicon (`scripts/package.ts`).
+
+- The app's archive, `app.asar`, holds the main process, its preload, the renderer and only the
+  packages the main process loads: those are `dependencies` in `package.json`. The renderer's
+  libraries are `devDependencies`, since Vite already bundles them. The native canvas module sits
+  unpacked beside the archive, and pdf.js keeps its legacy build, fonts, CMaps and decoders.
+- Electron's fuses make the app run only its own archive, checked against a hash in its signed
+  `Info.plist`, and ignore `ELECTRON_RUN_AS_NODE` and `NODE_OPTIONS`. The inspector flags stay on
+  so the real-window checks can drive the packaged app (`FOLIO_E2E_APP=…/Folio.app`).
+- It is signed ad-hoc with the hardened runtime. `CSC_NAME` or `CSC_LINK` signs it with a
+  Developer ID instead, and Apple's notarization credentials in the environment notarize it.
+
+The packaged app keeps its data where the development build does, in `~/.folio` (or `FOLIO_HOME`).

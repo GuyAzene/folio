@@ -56,7 +56,7 @@ async function fingerprint(): Promise<string> {
 
 /**
  * Builds Folio from the current source once; test files running at the same time wait for the
- * same build. FOLIO_E2E_APP names a build to use instead.
+ * same build. FOLIO_E2E_APP names a build to use instead: a built folder, or a packaged Folio.app.
  */
 export function buildApp(): Promise<string> {
   built ??= (async () => {
@@ -108,11 +108,13 @@ export interface Running {
 
 export async function launch(home: string, env: Record<string, string> = {}): Promise<Running> {
   const dir = await buildApp();
+  // A packaged app runs its own executable and the code in its archive.
+  const packaged = dir.endsWith(".app");
   const connection = await mkdtemp(resolve(tmpdir(), "folio-e2e-connection-"));
   const app = await _electron.launch({
-    executablePath: electronPath,
-    args: [resolve(dir, "dist-desktop/desktop-main.mjs")],
-    cwd: dir,
+    executablePath: packaged ? resolve(dir, "Contents/MacOS/Folio") : electronPath,
+    args: packaged ? [] : [resolve(dir, "dist-desktop/desktop-main.mjs")],
+    cwd: packaged ? undefined : dir,
     env: {
       ...(process.env as Record<string, string>),
       FOLIO_HOME: home,
