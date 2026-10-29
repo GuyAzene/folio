@@ -479,6 +479,8 @@ export interface FolioApi {
   /** Moves it on to the Mac's Trash, out of Folio. */
   deleteFromTrash(id: string): Promise<void>;
   emptyTrash(): Promise<void>;
+  /** Saves a file the student made (a diagram as SVG) where they choose; false if they cancel. */
+  saveFile(file: { name: string; type: "svg"; data: string }): Promise<boolean>;
   loadWorkspace(): Promise<unknown>;
   saveWorkspace(state: unknown): Promise<void>;
   /** The file-system path of a file dropped onto the window (local, not IPC). */

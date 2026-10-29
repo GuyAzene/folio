@@ -8,14 +8,15 @@ import {
   type Direction,
   type DirectionEstimate,
 } from "./direction.ts";
+import { diagramHtml } from "./diagrams.ts";
 import { BLOCK_MATH, INLINE_MATH, MATH_SPAN } from "./math-syntax.ts";
 import { escapeHtml, renderTex } from "./tex.ts";
 
 /**
  * Model output to safe HTML: Markdown with TeX math, every block given a direction Folio decided
  * (Hebrew, English or mixed), and left-to-right islands (code, math, URLs, arithmetic) isolated
- * inside right-to-left text. Math leaves the sanitizer as inert placeholders and is filled in
- * by KaTeX afterwards, so the sanitizing policy never has to allow SVG or MathML.
+ * inside right-to-left text. Math and diagrams leave the sanitizer as inert placeholders and are
+ * filled in afterwards (KaTeX, Pele), so the sanitizing policy never has to allow SVG or MathML.
  */
 
 export interface RenderOptions {
@@ -47,11 +48,13 @@ if (DOMPurify.isSupported)
   });
 
 export function renderMarkdown(text: string, options: RenderOptions = {}): string {
-  return fillMath(
-    DOMPurify.sanitize(markdownToHtml(text, options), {
-      USE_PROFILES: { html: true },
-      FORBID_TAGS: options.note ? NOTE_FORBIDS : REPLY_FORBIDS,
-    }),
+  return fillDiagrams(
+    fillMath(
+      DOMPurify.sanitize(markdownToHtml(text, options), {
+        USE_PROFILES: { html: true },
+        FORBID_TAGS: options.note ? NOTE_FORBIDS : REPLY_FORBIDS,
+      }),
+    ),
   );
 }
 
@@ -149,6 +152,65 @@ function maskCode(text: string): string {
   return text
     .replace(/^ {0,3}(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:^ {0,3}\1[ \t]*$|(?![\s\S]))/gm, blank)
     .replace(/(`+)[^`\n]*?\1/g, blank);
+}
+
+// ── Diagrams ────────────────────────────────────────────────────────────────
+
+/**
+ * Whether a fenced block has its closing fence. Only a closed ```mermaid block is drawn: while a
+ * reply streams, an open one is still being written, and one the reply never closed stays code.
+ */
+export function closedFence(raw: string): boolean {
+  const open = /^ {0,3}(`{3,}|~{3,})/.exec(raw)?.[1];
+  const lines = raw.replace(/\n+$/, "").split("\n");
+  if (!open || lines.length < 2) return false;
+  const close = /^ {0,3}(`{3,}|~{3,})[ \t]*$/.exec(lines.at(-1)!)?.[1];
+  return !!close && close[0] === open[0] && close.length >= open.length;
+}
+
+function diagramPlaceholder(source: string): string {
+  return `<div class="diagram-source" dir="ltr"><pre dir="ltr"><code class="language-mermaid">${escapeHtml(source)}\n</code></pre></div>\n`;
+}
+
+const DIAGRAM =
+  /<div class="diagram-source" dir="ltr"><pre dir="ltr"><code class="language-mermaid">([^<]*)<\/code><\/pre><\/div>/g;
+
+/** A drawing in a note, written as SVG: shown as an image, so it is inert whatever it holds. */
+function isDrawing(text: string): boolean {
+  return /^\s*<svg[\s>][\s\S]*<\/svg>\s*$/i.test(text);
+}
+
+function drawingPlaceholder(text: string): string {
+  return `<div class="svg-source" dir="ltr">${escapeHtml(text.trim())}</div>\n`;
+}
+
+const DRAWING = /<div class="svg-source" dir="ltr">([^<]*)<\/div>/g;
+
+/**
+ * Draws each diagram placeholder that survived sanitizing, and turns a note's SVG drawing into an
+ * image: an SVG shown as an image runs no scripts and loads nothing.
+ */
+export function fillDiagrams(html: string): string {
+  return html
+    .replace(DIAGRAM, (_match, escaped: string) =>
+      diagramHtml(unescapeText(escaped).replace(/\n$/, "")),
+    )
+    .replace(
+      DRAWING,
+      (_match, escaped: string) =>
+        `<img class="note-drawing" alt="A drawing" src="data:image/svg+xml;charset=utf-8,${encodeURIComponent(unescapeText(escaped))}">`,
+    );
+}
+
+/** Text as the sanitizer writes it back out, read as text again. */
+function unescapeText(value: string): string {
+  return value
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&nbsp;/g, "\u00a0")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, "&");
 }
 
 // ── Direction ───────────────────────────────────────────────────────────────
@@ -317,6 +379,8 @@ markdown.use({
   },
   renderer: {
     paragraph(token) {
+      // An SVG on one line is a paragraph of inline tags rather than an HTML block.
+      if (context.note && isDrawing(token.text)) return drawingPlaceholder(token.text);
       const direction = decide(token.tokens, token);
       const split = context.note ? lines(token.tokens) : [];
       if (split.length < 2)
@@ -387,6 +451,12 @@ markdown.use({
     code(token) {
       const language = /^\S+/.exec(token.lang ?? "")?.[0];
       const text = token.text.replace(/\n$/, "");
+      if (language === "mermaid" && !token.escaped) {
+        if (closedFence(token.raw)) return diagramPlaceholder(text);
+        // Still being written: shown as its source, with a quiet note, until the fence closes.
+        if (context.streaming && context.tail.has(token))
+          return `<pre dir="ltr" class="diagram-drawing-soon"><code class="language-mermaid">${escapeHtml(text)}\n</code></pre>\n`;
+      }
       return `<pre dir="ltr"><code${language ? ` class="language-${escapeHtml(language)}"` : ""}>${token.escaped ? text : escapeHtml(text)}\n</code></pre>\n`;
     },
     codespan(token) {
@@ -396,6 +466,7 @@ markdown.use({
     // element, like any other block. Inline tags and comments pass through untouched.
     html(token) {
       if (!("block" in token) || !token.block) return token.text;
+      if (context.note && isDrawing(token.text)) return drawingPlaceholder(token.text);
       const direction = estimateDirection(token.text.replace(/<[^>]*>/g, " ")).direction;
       return token.text.replace(
         /^(\s*<[A-Za-z][\w-]*)(?![^>]*\sdir=)/,

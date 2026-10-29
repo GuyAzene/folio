@@ -1,4 +1,5 @@
 import { EditorView, WidgetType } from "@codemirror/view";
+import { diagramHtml, drawnHeight } from "../diagrams.ts";
 import { estimateDirection } from "../direction.ts";
 import { renderMarkdown } from "../markdown.ts";
 import { renderTex } from "../tex.ts";
@@ -78,6 +79,39 @@ export class HtmlWidget extends WidgetType {
   // Links inside rendered HTML open; anything else puts the cursor into the source.
   ignoreEvent(event: Event): boolean {
     return event.target instanceof Element && !!event.target.closest("a[href]");
+  }
+}
+
+/**
+ * A ```mermaid block drawn by Pele: in place of the block when the cursor is away, or beneath its
+ * source while it is edited. A source with a mistake says on which line, under the source.
+ */
+export class DiagramWidget extends WidgetType {
+  readonly source: string;
+  constructor(source: string) {
+    super();
+    this.source = source;
+  }
+  eq(other: DiagramWidget): boolean {
+    return other.source === this.source;
+  }
+  toDOM(): HTMLElement {
+    const element = document.createElement("div");
+    element.className = "cm-diagram";
+    element.dir = "ltr";
+    element.innerHTML = diagramHtml(this.source);
+    return element;
+  }
+  /**
+   * A drawing's height once it was drawn, so scrolling back past it does not jump. Diagrams not
+   * yet drawn get a typical height: drawing a long note's every diagram to measure it would stall.
+   */
+  get estimatedHeight(): number {
+    return (drawnHeight(this.source) ?? 220) + 34;
+  }
+  // The diagram's buttons work; a click anywhere else puts the cursor into the source.
+  ignoreEvent(event: Event): boolean {
+    return event.target instanceof Element && !!event.target.closest("button");
   }
 }
 

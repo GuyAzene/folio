@@ -440,3 +440,126 @@
   border-radius: 3px;
   padding: 0 2px;
 }
+
+/* Diagrams (Mermaid fences drawn by Pele), in replies, notes and study notes. Pele reads its
+   colors from these variables, so a theme switch needs no redraw. */
+.diagram,
+.diagram-large {
+  --pele-bg: var(--surface);
+  --pele-fg: var(--text);
+  --pele-muted: var(--text-3);
+  --pele-line: var(--text-2);
+  --pele-surface: var(--sunken);
+  --pele-surface-alt: var(--hover);
+  --pele-border: var(--line-strong);
+  --pele-accent: var(--info);
+  --pele-font: var(--font-sans);
+  --pele-font-mono: var(--font-mono);
+}
+.diagram {
+  position: relative;
+  margin-block: 14px;
+  padding: 16px;
+  border-radius: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line-subtle);
+}
+.diagram-drawing {
+  display: flex;
+  justify-content: center;
+  overflow-x: auto;
+}
+.diagram-drawing svg {
+  max-width: 100%;
+  height: auto;
+  flex-shrink: 0;
+}
+/* Each label takes its first letter's direction, as Folio's own text does: Pele draws labels
+   left to right, which scrambles a Hebrew label that has Latin letters in it. */
+.diagram svg text,
+.diagram svg tspan,
+.diagram-large svg text,
+.diagram-large svg tspan {
+  unicode-bidi: plaintext;
+}
+.diagram-tools {
+  position: absolute;
+  inset-block-start: 8px;
+  inset-inline-end: 8px;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 150ms ease;
+}
+.diagram:hover .diagram-tools,
+.diagram:focus-within .diagram-tools {
+  opacity: 1;
+}
+.diagram-tools button {
+  font: 500 12px/1 var(--font-sans);
+  padding: 6px 8px;
+  border-radius: 7px;
+  color: var(--text-2);
+  background: var(--raised);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-1);
+  cursor: pointer;
+}
+.diagram-tools button:hover {
+  color: var(--text);
+  background: var(--sunken);
+}
+.diagram.is-broken {
+  padding: 0;
+  border: 0;
+  background: none;
+}
+.diagram.is-broken pre {
+  margin: 0;
+}
+.diagram-note {
+  margin: 6px 2px 0;
+  font: 13px/1.4 var(--font-sans);
+  color: var(--text-3);
+}
+/* A diagram still being written shows as its source, with a quiet note. */
+.diagram-drawing-soon {
+  position: relative;
+  color: var(--text-3);
+}
+.diagram-drawing-soon::before {
+  content: "Drawing a diagram…";
+  display: block;
+  margin-block-end: 6px;
+  font: 500 12px/1.4 var(--font-sans);
+  color: var(--text-3);
+}
+/* The enlarged view of a diagram. */
+.diagram-dialog {
+  max-width: min(1200px, 94vw);
+  max-height: 90vh;
+  padding: 24px;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow-3);
+  overflow: auto;
+}
+.diagram-dialog::backdrop {
+  background: #0000004d;
+}
+.diagram-dialog svg {
+  display: block;
+  width: auto;
+  max-width: none;
+  height: auto;
+  min-width: min(900px, 86vw);
+}
+/* An SVG drawing in a note, shown as an image. */
+.note-drawing {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin-block: 14px;
+}

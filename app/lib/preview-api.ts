@@ -1354,8 +1354,22 @@ export const previewApi: FolioApi = {
       ...(views.length ? { attachments: views } : {}),
     });
     chats.set(key, chat);
-    const reply =
-      "This is the **preview bridge**. In the app, Folio reads your course pages and answers from them.";
+    // Asking for a diagram or a drawing shows one being written and then drawn.
+    const reply = /diagram|draw|flow|תרשים/i.test(text)
+      ? [
+          "Here is how breadth-first search moves through the queue:",
+          "",
+          "```mermaid",
+          "flowchart TD",
+          "  A[Put s in the queue and mark it] --> B{Is the queue empty?}",
+          "  B -->|yes| C[Done]",
+          "  B -->|no| D[Take u; mark and enqueue its unmarked neighbours]",
+          "  D --> B",
+          "```",
+          "",
+          "Each vertex enters the queue once, because it is marked as it enters.",
+        ].join("\n")
+      : "This is the **preview bridge**. In the app, Folio reads your course pages and answers from them.";
     queueMicrotask(async () => {
       emit({
         type: "chat",
@@ -1681,6 +1695,9 @@ export const previewApi: FolioApi = {
   async emptyTrash() {
     trashed.length = 0;
     emit({ type: "trash" });
+  },
+  async saveFile() {
+    return false;
   },
   async loadWorkspace() {
     return null;

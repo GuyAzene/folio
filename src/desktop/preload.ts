@@ -56,6 +56,7 @@ const api: FolioApi = {
   restoreFromTrash: (id) => call("restoreFromTrash", id),
   deleteFromTrash: (id) => call("deleteFromTrash", id),
   emptyTrash: () => call("emptyTrash"),
+  saveFile: (file) => call("saveFile", file),
   loadWorkspace: () => call("loadWorkspace"),
   saveWorkspace: (state) => call("saveWorkspace", state),
   pathForFile: (file) => webUtils.getPathForFile(file),

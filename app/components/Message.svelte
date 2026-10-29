@@ -13,6 +13,7 @@
     type Direction,
   } from "../lib/direction.ts";
   import { shortTitle } from "../lib/titles.ts";
+  import { diagramFence } from "../lib/diagram-actions.ts";
   import { renderMarkdown } from "../lib/markdown.ts";
   import { folio } from "../lib/state.svelte.ts";
   import CourseTile from "./CourseTile.svelte";
@@ -68,22 +69,31 @@
     $: "$",
   };
 
-  /** Copying part of a reply puts each formula back as TeX, in the delimiters it arrived in. */
+  /**
+   * Copying part of a reply puts each formula back as TeX, in the delimiters it arrived in, and
+   * each diagram back as its Mermaid source.
+   */
   function copyWithTex(event: ClipboardEvent): void {
     const selection = window.getSelection();
     if (!selection?.rangeCount || selection.isCollapsed || !event.clipboardData)
       return;
     const range = selection.getRangeAt(0).cloneRange();
-    const formulaOf = (node: Node) =>
-      (node instanceof Element ? node : node.parentElement)?.closest(".math");
-    // A selection that starts or ends inside a formula takes the whole formula.
-    const first = formulaOf(range.startContainer);
-    const last = formulaOf(range.endContainer);
+    const wholeOf = (node: Node) =>
+      (node instanceof Element ? node : node.parentElement)?.closest(".math, .diagram");
+    // A selection that starts or ends inside a formula or diagram takes the whole of it.
+    const first = wholeOf(range.startContainer);
+    const last = wholeOf(range.endContainer);
     if (first) range.setStartBefore(first);
     if (last) range.setEndAfter(last);
     const fragment = range.cloneContents();
     const formulas = fragment.querySelectorAll<HTMLElement>(".math[data-tex]");
-    if (!formulas.length) return;
+    const diagrams = fragment.querySelectorAll<HTMLElement>(".diagram[data-source]");
+    if (!formulas.length && !diagrams.length) return;
+    for (const diagram of diagrams) {
+      const source = document.createElement("pre");
+      source.textContent = diagramFence(decodeURIComponent(diagram.dataset.source ?? ""));
+      diagram.replaceWith(source);
+    }
     for (const formula of formulas) {
       const open = formula.dataset.open ?? "\\(";
       const source = document.createElement(formula.tagName.toLowerCase());

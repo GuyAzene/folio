@@ -51,6 +51,15 @@ placeholder carrying its TeX percent-encoded (the sanitizer drops attributes suc
 `-->`), and KaTeX fills it in afterwards, so the sanitizing policy never has to allow SVG or
 MathML.
 
+Diagrams work the same way. A closed ```` ```mermaid ```` block leaves the sanitizer as code and
+is drawn afterwards by Pele, which cannot run code: it escapes labels and emits only shapes and
+text, with links and images turned off, and its SVG passes an SVG-only sanitizer before it joins
+the page (`app/lib/diagrams.ts`). A block still being written, or never closed, stays code.
+Colors come from CSS variables, so a theme switch needs no redraw, and each label takes the
+direction of its first letter. In notes, the editor draws the same blocks in place
+(`DiagramWidget`), and an SVG drawing written into a note is shown as an image, which runs no
+scripts and loads nothing.
+
 ## Chats and what they may read
 
 There are three kinds of chat, fixed when a chat is created:

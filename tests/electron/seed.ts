@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { DEFAULT_MODEL } from "../../src/agents.ts";
+import { CourseNotes } from "../../src/library/notes.ts";
 import { LibraryStore } from "../../src/library/store.ts";
 import { createSessionStore } from "../../src/session-store.ts";
 import { SYNTHETIC_LECTURE, syntheticPdf } from "../fixtures/synthetic-pdf.ts";
@@ -33,6 +34,7 @@ export interface Seeded {
   courseId: string;
   lectureId: string;
   chatId: string;
+  noteId: string;
 }
 
 /**
@@ -41,7 +43,8 @@ export interface Seeded {
  */
 export async function seedHome(
   replyText: string,
-  open: "chat" | "lecture" = "chat",
+  open: "chat" | "lecture" | "note" = "chat",
+  noteText = "A synthetic note.",
 ): Promise<Seeded> {
   const home = await mkdtemp(resolve(tmpdir(), "folio-e2e-home-"));
   const library = await LibraryStore.open({ home });
@@ -49,6 +52,7 @@ export async function seedHome(
   const pdf = resolve(home, "lecture.pdf");
   await writeFile(pdf, syntheticPdf(SYNTHETIC_LECTURE));
   const lecture = (await library.importFile(course.id, pdf)).document;
+  const note = await new CourseNotes(library).create(course.id, "Synthetic note", noteText);
   const sessions = await createSessionStore({ home });
   const chat = await sessions.create({
     modelId: DEFAULT_MODEL,
@@ -63,10 +67,12 @@ export async function seedHome(
   const location =
     open === "chat"
       ? { view: "chat", chatId: chat.id, courseId: course.id }
-      : { view: "document", documentId: lecture.id, page: 1, panel: "closed", chatId: null };
+      : open === "note"
+        ? { view: "note", noteId: note.id }
+        : { view: "document", documentId: lecture.id, page: 1, panel: "closed", chatId: null };
   await writeFile(
     resolve(home, "workspace.json"),
     JSON.stringify({ version: 1, tabs: [{ id: "tab-1", location }], active: "tab-1" }),
   );
-  return { home, courseId: course.id, lectureId: lecture.id, chatId: chat.id };
+  return { home, courseId: course.id, lectureId: lecture.id, chatId: chat.id, noteId: note.id };
 }

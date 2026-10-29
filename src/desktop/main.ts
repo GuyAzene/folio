@@ -1,4 +1,4 @@
-import { lstat, readFile } from "node:fs/promises";
+import { lstat, readFile, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { StreamFn } from "@earendil-works/pi-agent-core";
@@ -77,6 +77,7 @@ const home = prepareHome();
 // A disposable test home may use an existing ChatGPT connection, read in place, never copied.
 const connectionHome = resolve(process.env.FOLIO_CONNECTION_HOME ?? home);
 const MAX_WORKSPACE_BYTES = 256 * 1024;
+const MAX_SAVED_FILE = 5 * 1024 * 1024;
 
 protocol.registerSchemesAsPrivileged([
   { scheme: "folio", privileges: { standard: true, secure: true, supportFetchAPI: true } },
@@ -607,6 +608,24 @@ const handlers: Record<InvokeMethod, (...args: unknown[]) => Promise<unknown>> =
   async emptyTrash() {
     for (const entry of await trash.list()) await trash.discard(entry.id);
     emit({ type: "trash" });
+  },
+  async saveFile(file) {
+    const { name, type, data } = (file ?? {}) as Record<string, unknown>;
+    if (type !== "svg" || typeof data !== "string" || !data.startsWith("<svg"))
+      throw new Error("Only diagrams can be saved this way.");
+    if (data.length > MAX_SAVED_FILE) throw new Error("That file is too large to save.");
+    const suggested =
+      typeof name === "string" && /^[\w .-]{1,80}\.svg$/.test(name) ? name : "diagram.svg";
+    const options = {
+      defaultPath: suggested,
+      filters: [{ name: "SVG image", extensions: ["svg"] }],
+    };
+    const chosen = window
+      ? await dialog.showSaveDialog(window, options)
+      : await dialog.showSaveDialog(options);
+    if (chosen.canceled || !chosen.filePath) return false;
+    await writeFile(chosen.filePath, data, "utf8");
+    return true;
   },
   async loadWorkspace() {
     try {

@@ -26,10 +26,12 @@ lectures into notes you can browse, and it never changes your files.
 - **Ask in your own words.** "Quiz me on this lecture", "get me ready for lecture 4", "where is
   this used later?" or "one step at a time": the tutor recognizes the request; there are no
   modes to pick.
+- **Diagrams.** The tutor draws Mermaid diagrams (flowcharts, automata, sequences) right in the
+  reply.
 - **Study notes.** Folio can study a lecture page by page and publish notes by topic, each
   section citing the slides it came from, with what it left out and why.
-- **Your own notes.** Markdown notes with live preview, math, tables, and Hebrew and English
-  lines side by side. The tutor can suggest an edit; nothing changes until you keep it.
+- **Your own notes.** Markdown notes with live preview, math, tables, diagrams, and Hebrew and
+  English lines side by side. The tutor can suggest an edit; nothing changes until you keep it.
 - **Nothing lost.** Removed files, notes, chats and courses wait 30 days in Folio's Trash.
 
 | Add context with + | A course |
@@ -79,7 +81,7 @@ else. See [docs/architecture.md](docs/architecture.md#on-disk) for the layout.
 vp check            # formatting, lint and types
 vp run check:ui     # Svelte checks for the renderer
 vp test             # deterministic tests: no network, no real accounts
-vp run test:electron # Folio in a real window: its security rules
+vp run test:electron # Folio in a real window: security rules and diagrams
 vp build && vp pack # renderer, CLI and Electron bundles
 vp dev              # the interface alone, in a browser, with synthetic data
 ```

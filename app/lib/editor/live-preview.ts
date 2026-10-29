@@ -18,6 +18,7 @@ import type { SyntaxNode } from "@lezer/common";
 import {
   BulletWidget,
   CheckboxWidget,
+  DiagramWidget,
   HtmlWidget,
   ImageWidget,
   LabelWidget,
@@ -403,6 +404,19 @@ class Preview {
     const { doc } = this.state;
     const first = doc.lineAt(node.from);
     const last = doc.lineAt(node.to);
+    const diagram = this.diagramSource(node);
+    // A closed ```mermaid block is drawn in place while the cursor is away.
+    if (diagram !== null && first.from === node.from && !this.showsLines(node.from, node.to)) {
+      this.replaceLines(first.from, last.to, new DiagramWidget(diagram));
+      return false;
+    }
+    // While it is edited (or sits in a list or quote), the drawing shows beneath its source.
+    if (diagram !== null)
+      this.ranges.push(
+        Decoration.widget({ widget: new DiagramWidget(diagram), block: true, side: 1 }).range(
+          last.to,
+        ),
+      );
     this.eachLine(node.from, node.to, (from) => this.lineClass(from, "cm-codeblock"));
     this.lineClass(first.from, "cm-codeblock-begin");
     this.lineClass(last.from, "cm-codeblock-end");
@@ -419,6 +433,22 @@ class Preview {
     const close = marks.length > 1 ? marks.at(-1)! : undefined;
     if (close && last.number > first.number) this.hide(close.from, last.to);
     return false;
+  }
+
+  /** A closed ```mermaid block's source in the live view; null for any other block. */
+  private diagramSource(node: SyntaxNode): string | null {
+    if (!this.live) return null;
+    const info = node.getChild("CodeInfo");
+    if (!info || /^\S+/.exec(this.text(info.from, info.to))?.[0] !== "mermaid") return null;
+    const marks = node.getChildren("CodeMark");
+    const { doc } = this.state;
+    const open = marks[0];
+    const close = marks.length > 1 ? marks.at(-1)! : undefined;
+    // An unclosed fence is still being written, and is never drawn.
+    if (!open || !close || doc.lineAt(close.from).number === doc.lineAt(open.from).number)
+      return null;
+    const source = this.mathSource(node, doc.lineAt(open.from).to, doc.lineAt(close.from).from);
+    return source || null;
   }
 
   /** A table or HTML block: rendered in place when it starts a line and the cursor is away. */
@@ -471,7 +501,7 @@ class Preview {
       );
   }
 
-  /** A display formula's TeX, without the quote markers of the lines it spans. */
+  /** A display formula's TeX or a diagram's source, without the quote markers of its lines. */
   private mathSource(node: SyntaxNode, from: number, to: number): string {
     let tex = "";
     let at = from;

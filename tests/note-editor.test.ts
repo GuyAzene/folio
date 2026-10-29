@@ -430,3 +430,56 @@ describe("formatting commands", () => {
     });
   });
 });
+
+describe("diagrams in notes", () => {
+  const doc = "Intro\n\n```mermaid\nflowchart LR\n  A --> B\n```\n\nAfter";
+  const drawn = (state: EditorState, focused = false) =>
+    preview(state, focused).filter((item) => item.widget === "DiagramWidget");
+
+  it("draws a closed mermaid block in place while the cursor is away", () => {
+    const state = note(doc, { cursor: 0 });
+    expect(drawn(state, true)).toEqual([
+      {
+        from: doc.indexOf("```"),
+        to: doc.lastIndexOf("```") + 3,
+        kind: "block",
+        widget: "DiagramWidget",
+      },
+    ]);
+    // Unfocused, the note shows no source at all.
+    expect(drawn(state)).toHaveLength(1);
+  });
+
+  it("shows the source with the drawing beneath it while the block is edited", () => {
+    const state = note(doc, { cursor: doc.indexOf("A -->") });
+    const seen = drawn(state, true);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.from).toBe(seen[0]!.to);
+    expect(seen[0]!.from).toBe(doc.lastIndexOf("```") + 3);
+  });
+
+  it("never draws a block still being written, another language, or in source mode", () => {
+    for (const unfinished of [
+      "```mermaid\nflowchart LR\n  A --> B",
+      "````mermaid\nflowchart LR\n  A --> B\n```",
+      "```js\nconst a = 1;\n```",
+      "```\nflowchart LR\n  A --> B\n```",
+    ])
+      expect(drawn(note(unfinished, { cursor: 0 }), true), unfinished).toEqual([]);
+    expect(drawn(note(doc, { cursor: 0, live: false }), true)).toEqual([]);
+  });
+
+  it("draws a block inside a quote beneath it, without the quote markers", () => {
+    const quoted = "> ```mermaid\n> flowchart LR\n>   A --> B\n> ```\n\nAfter";
+    const state = note(quoted, { cursor: quoted.length });
+    const seen = preview(state, true).find((item) => item.widget === "DiagramWidget");
+    expect(seen).toMatchObject({ kind: "block" });
+    const widget = buildPreview(state.update({ effects: setFocus.of(true) }).state);
+    let source = "";
+    widget.between(0, quoted.length, (_from, _to, value) => {
+      const spec = value.spec as { widget?: { source?: string } };
+      if (spec.widget?.source) source = spec.widget.source;
+    });
+    expect(source).toBe("flowchart LR\n  A --> B");
+  });
+});

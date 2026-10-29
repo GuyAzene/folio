@@ -1,6 +1,7 @@
+import fc from "fast-check";
 import { describe, expect, it } from "vite-plus/test";
 import { estimateDirection, writtenDirection } from "../app/lib/direction.ts";
-import { fillMath, markdownToHtml, splitPendingMath } from "../app/lib/markdown.ts";
+import { fillDiagrams, fillMath, markdownToHtml, splitPendingMath } from "../app/lib/markdown.ts";
 
 // Synthetic sentences in the style of Folio's replies; no course material.
 const html = (text: string, options = {}) => markdownToHtml(text, options);
@@ -170,5 +171,82 @@ describe("notes in the reading view", () => {
     expect(html("שלום עולם\nhello world", { note: true })).toBe(
       '<p dir="rtl"><span class="line" dir="rtl">שלום עולם</span><span class="line" dir="ltr">hello world</span></p>\n',
     );
+  });
+});
+
+describe("diagrams", () => {
+  const FENCE = "```mermaid\nflowchart LR\n  A[Start] --> B{Done?}\n```";
+  const rendered = (text: string, options = {}) => fillDiagrams(fillMath(html(text, options)));
+  const sources = (out: string) =>
+    [...out.matchAll(/class="diagram[^"]*" dir="ltr" data-source="([^"]*)"/g)].map((match) =>
+      decodeURIComponent(match[1]!),
+    );
+
+  it("draws a closed mermaid block, keeping its source to copy", () => {
+    const out = rendered(`Here is the flow:\n\n${FENCE}\n\nThat is all.`);
+    expect(out).toContain('<div class="diagram" dir="ltr"');
+    expect(out).toContain("<svg");
+    expect(sources(out)).toEqual(["flowchart LR\n  A[Start] --> B{Done?}"]);
+  });
+
+  it("keeps any source exactly through the page, Hebrew and markup included", () => {
+    const source = 'flowchart LR\n  A["a < b & c"] -->|"כן"| B[סוף]';
+    const out = rendered(`\`\`\`mermaid\n${source}\n\`\`\``);
+    expect(sources(out)).toEqual([source]);
+    expect(out).not.toContain("<b & c");
+  });
+
+  it("shows a diagram with a mistake as its source, saying on which line", () => {
+    const out = rendered("```mermaid\nflowchart LR\n  A[Open --> B\n```");
+    expect(out).toContain('class="diagram is-broken"');
+    expect(out).toContain("mistake on line 2");
+    expect(out).not.toContain("<svg");
+  });
+
+  it("draws only fences that are closed: open, mismatched or other blocks stay code", () => {
+    for (const text of [
+      "```mermaid\nflowchart LR\n  A --> B",
+      "````mermaid\nflowchart LR\n  A --> B\n```",
+      "```\nflowchart LR\n  A --> B\n```",
+      "```js\nflowchart LR\n```",
+    ])
+      expect(rendered(text), text).not.toContain("<svg");
+    for (const text of [
+      "~~~mermaid\nflowchart LR\n  A --> B\n~~~",
+      "````mermaid\nflowchart LR\n  A --> B\n`````",
+      `- A step:\n\n  ${FENCE.replace(/\n/g, "\n  ")}`,
+      `שלב ראשון:\n${FENCE}`,
+    ])
+      expect(rendered(text), text).toContain("<svg");
+  });
+
+  it("while a reply streams, shows an unfinished diagram as source and draws it once closed", () => {
+    const reply = `Look at this:\n\n${FENCE}\n\nIt stops when B says yes.`;
+    const close = reply.indexOf("```", reply.indexOf("```") + 3) + 3;
+    fc.assert(
+      fc.property(fc.integer({ min: 0, max: reply.length }), (cut) => {
+        const out = rendered(reply.slice(0, cut), { streaming: true });
+        expect(out.includes("<svg")).toBe(cut >= close);
+        if (cut > reply.indexOf("```") + 13 && cut < close)
+          expect(out).toContain("diagram-drawing-soon");
+      }),
+    );
+    // A reply that ends without closing its fence keeps it as code.
+    expect(rendered(reply.slice(0, close - 3))).not.toContain("<svg");
+    expect(sources(rendered(reply, { streaming: true }))).toEqual(sources(rendered(reply)));
+  });
+
+  it("shows a note's SVG drawing as an image, and leaves a reply's raw SVG to the sanitizer", () => {
+    const drawing =
+      '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><circle r="4"/></svg>';
+    const inNote = rendered(`Before\n\n${drawing}\n\nAfter`, { note: true });
+    expect(inNote).toContain('<img class="note-drawing" alt="A drawing" src="data:image/svg+xml');
+    expect(
+      decodeURIComponent(inNote.match(/src="data:image\/svg\+xml;charset=utf-8,([^"]*)"/)![1]!),
+    ).toBe(drawing);
+    expect(rendered(`Before\n\n${drawing}\n\nAfter`)).not.toContain("note-drawing");
+    const tall =
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10">\n  <circle r="4"/>\n</svg>';
+    expect(rendered(`Before\n\n${tall}\n\nAfter`, { note: true })).toContain("note-drawing");
   });
 });
