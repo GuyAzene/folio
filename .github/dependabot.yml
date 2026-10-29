@@ -1,0 +1,7 @@
+version: 2
+updates:
+  # Keeps the pinned GitHub Actions current. npm packages are upgraded deliberately, by hand.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
