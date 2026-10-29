@@ -2,6 +2,7 @@
   import {
     FileText,
     Folder,
+    ListChecks,
     MessageSquare,
     NotebookPen,
     RotateCcw,
@@ -21,6 +22,7 @@
     note: NotebookPen,
     chat: MessageSquare,
     course: Folder,
+    assignment: ListChecks,
   };
 
   function daysLeft(entry: TrashEntryView): string {
@@ -35,6 +37,7 @@
     const kind = {
       document: "File",
       note: "Note",
+      assignment: "Assignment",
       chat: "Chat",
       course: "Course",
     }[entry.kind];

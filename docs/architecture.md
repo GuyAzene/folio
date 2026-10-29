@@ -214,6 +214,19 @@ History menu, brings an earlier version back as a new one. Notes link to each ot
 `[[Title]]` and to study-notes topics with `[[topic:slug]]`. Chats from before this keep their
 suggested edits, which the student still keeps, inserts or discards.
 
+## Assignments
+
+An assignment is a record of its own, not only a PDF with a due date: any coursework (a problem
+set, a reading, exam prep, a project) on a board of To do, Doing, Submitted and Done, which the
+student moves by dragging or by each card's status menu. A record keeps the files it came with
+(the handout and the official solution, as links to library documents), steps, linked topics,
+and, once handed in, every submission as it was handed in (read-only copies that are never
+changed), the grade, the feedback and returned work, and what the student would do differently.
+Overdue, late and extended are worked out from the dates rather than set. Each assignment file
+in the library becomes a record once; a marker remembers which, so a record the student deletes
+stays deleted. The record holds the due date. Records are revision-checked like the rest of the
+library and go to the Trash with their files, alone or with their course.
+
 ## On disk
 
 Everything lives in `~/.folio/` (or `FOLIO_HOME`), with directories `0700` and files `0600`:
@@ -222,7 +235,8 @@ Everything lives in `~/.folio/` (or `FOLIO_HOME`), with directories `0700` and f
 | --- | --- |
 | `connection.json` | The ChatGPT connection and installation ID |
 | `sessions/<id>.json` | Each conversation |
-| `library/` | Courses, read-only originals with their hashes, notes, and suggested edits |
+| `library/` | Courses, read-only originals with their hashes, notes with their history, and suggested edits |
+| `library/assignments/<id>/` | Each assignment's record and the files handed in or back |
 | `library/courses/<id>/kb/generations/<n>/` | Each published version of a course's study notes |
 | `library/kb.sqlite` | Which version of each course's study notes is current |
 | `jobs.sqlite` | Study jobs and the saved output of their steps |

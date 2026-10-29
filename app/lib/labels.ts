@@ -1,4 +1,5 @@
 import type { AgentStatus, CourseView, DocumentRole, Pencil } from "../../src/desktop/api.ts";
+import type { AssignmentKind, AssignmentStatus } from "../../src/library/assignments.ts";
 import type { Location } from "./state.svelte.ts";
 import { folio } from "./state.svelte.ts";
 
@@ -156,4 +157,37 @@ export function formatPages(pages: number[]): string {
     start = end + 1;
   }
   return `${sorted.length === 1 ? "Page" : "Pages"} ${ranges.join(", ")}`;
+}
+
+// ── Assignments ───────────────────────────────────────────────────────────
+
+export const STATUS_COLUMN: Record<AssignmentStatus, string> = {
+  todo: "To do",
+  doing: "Doing",
+  submitted: "Submitted",
+  done: "Done",
+};
+
+export const KIND_LABEL: Record<AssignmentKind, string> = {
+  problem_set: "Problem set",
+  reading: "Reading",
+  project: "Project",
+  lab: "Lab",
+  quiz: "Quiz",
+  exam: "Exam",
+  exam_prep: "Exam prep",
+  presentation: "Presentation",
+  other: "Other",
+};
+
+/** "Due Fri, Nov 5" or "Due Fri, Nov 5, 14:00" when a time was given. */
+export function formatAssignmentDue(dueAt: string | null, hasTime: boolean): string {
+  if (!dueAt) return "No due date";
+  const base = formatDue(dueAt);
+  if (!hasTime || base === "No due date") return base;
+  const time = new Date(dueAt).toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  return `${base}, ${time}`;
 }

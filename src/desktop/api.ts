@@ -1,3 +1,4 @@
+import type { AssignmentPatch, AssignmentRecord } from "../library/assignments.ts";
 import type { SessionStatus } from "../session-store.ts";
 
 /** The IPC contract between Folio's Electron main process and its renderer. */
@@ -46,6 +47,10 @@ export interface ChatMessageView {
   /** "summary": where Folio summarized the chat so far for the tutor; shown as a divider. */
   kind?: "summary";
 }
+
+/** An assignment as the board shows it. */
+export type AssignmentView = Omit<AssignmentRecord, "version">;
+export type { AssignmentPatch };
 
 /** A change the tutor made to the student's notes, with what Undo puts back. */
 export interface NoteEditView {
@@ -392,7 +397,7 @@ export interface StudySectionView {
 /** Something in Folio's Trash. */
 export interface TrashEntryView {
   id: string;
-  kind: "document" | "note" | "chat" | "course";
+  kind: "document" | "note" | "chat" | "course" | "assignment";
   title: string;
   courseId: string | null;
   courseName: string | null;
@@ -533,6 +538,29 @@ export interface FolioApi {
   appendToNote(id: string, text: string): Promise<NoteView>;
   /** The note's kept earlier versions, newest first. */
   noteHistory(id: string): Promise<NoteVersionView[]>;
+  listAssignments(): Promise<AssignmentView[]>;
+  createAssignment(input: {
+    courseId: string;
+    title: string;
+    kind?: AssignmentRecord["kind"];
+    dueAt?: string | null;
+    dueHasTime?: boolean;
+  }): Promise<AssignmentView>;
+  /** Refused when the assignment changed since `revision`. */
+  updateAssignment(id: string, patch: AssignmentPatch, revision: number): Promise<AssignmentView>;
+  /**
+   * Opens the file picker and keeps the chosen files with the assignment, as a new submission or
+   * as returned feedback; null when cancelled.
+   */
+  addAssignmentFiles(
+    id: string,
+    into: "attempt" | "feedback",
+    revision: number,
+    note?: string,
+  ): Promise<AssignmentView | null>;
+  /** Opens a kept file in the app the Mac uses for it. */
+  openAssignmentFile(id: string, fileId: string): Promise<void>;
+  trashAssignment(id: string): Promise<TrashEntryView>;
   /** Brings back an earlier version as a new one; refused when the note changed since `revision`. */
   restoreNote(id: string, version: string, revision: string): Promise<NoteView>;
   listProposals(): Promise<ProposalView[]>;

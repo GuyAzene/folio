@@ -7,8 +7,8 @@
   import { PENCIL, ROLE_DOT, ROLE_LABEL, ROLES } from "../lib/labels.ts";
   import { folio } from "../lib/state.svelte.ts";
 
-  /** Library, Chats and Assignments: the list-shaped places in the sidebar. */
-  let { view }: { view: "library" | "chats" | "assignments" } = $props();
+  /** Library and Chats: the list-shaped places in the sidebar. */
+  let { view }: { view: "library" | "chats" } = $props();
 
   /** The filters' "everything" choice. */
   const ALL = "all";
@@ -25,11 +25,6 @@
           document.title.toLowerCase().includes(query.trim().toLowerCase())),
     ),
   );
-  const assignments = $derived(
-    folio.documents
-      .filter((document) => document.role === "assignment")
-      .sort((a, b) => (a.dueAt ?? "9").localeCompare(b.dueAt ?? "9")),
-  );
   const chats = $derived(
     folio.chats.filter(
       (chat) =>
@@ -41,7 +36,6 @@
   const title = {
     library: "Library",
     chats: "Chats",
-    assignments: "Assignments",
   };
 </script>
 
@@ -128,17 +122,6 @@
           empty={folio.courses.length
             ? "No documents match."
             : "Add a course, then drop its lectures into it."}
-        />
-      {:else if view === "assignments"}
-        <p class="-mt-2 mb-5 text-text-3">
-          Every assignment across your courses. Set a due date and it shows in
-          the sidebar when it's close.
-        </p>
-        <DocumentTable
-          documents={assignments}
-          showCourse
-          showDue
-          empty="No assignments yet. Files named like hw3.pdf are filed here, or change any file's role to Assignment."
         />
       {:else}
         <ChatList {chats} showCourse empty="No chats yet." />

@@ -15,6 +15,8 @@ import type {
   JobView,
   KnowledgeView,
   ImportResult,
+  AssignmentPatch,
+  AssignmentView,
   NoteEditView,
   NoteVersionView,
   NoteView,
@@ -137,6 +139,7 @@ class FolioState {
   courses = $state<CourseView[]>([]);
   documents = $state<DocumentView[]>([]);
   notes = $state<NoteView[]>([]);
+  assignments = $state<AssignmentView[]>([]);
   /** Background jobs, newest first; each carries its agent tree. */
   jobs = $state<JobView[]>([]);
   /** Each course's published knowledge, or null before its first publication. */
@@ -161,6 +164,8 @@ class FolioState {
 
   #api: FolioApi | null = null;
   #awaiting: string[] = [];
+  /** Each assignment's latest pending save, resolving to the revision it left. */
+  #assignmentSaves = new Map<string, Promise<number>>();
   /** Each document's latest pending save, resolving to the revision it left. */
   #documentSaves = new Map<string, Promise<number>>();
   #saveTimer: ReturnType<typeof setTimeout> | undefined;
@@ -496,14 +501,16 @@ class FolioState {
   // ── Library ─────────────────────────────────────────────────────────────
 
   async refreshLibrary(): Promise<void> {
-    const [courses, documents, notes, proposals] = await Promise.all([
+    const [courses, documents, notes, proposals, assignments] = await Promise.all([
       this.#api!.listCourses(),
       this.#api!.listDocuments(),
       this.#api!.listNotes(),
       this.#api!.listProposals(),
+      this.#api!.listAssignments(),
     ]);
     this.courses = courses;
     this.documents = documents;
+    this.assignments = assignments;
     const knowledge = await Promise.all(
       courses.map(async (course) => [course.id, await this.#api!.knowledge(course.id)] as const),
     );
@@ -693,6 +700,93 @@ class FolioState {
       tab.index = at >= 0 ? at : Math.min(tab.index, tab.history.length - 1);
     }
     this.#changed();
+  }
+
+  /** The assignment a handed-out document belongs to, if any. */
+  assignmentFor(documentId: string): AssignmentView | undefined {
+    return this.assignments.find((item) => item.documents.statement === documentId);
+  }
+
+  async createAssignment(
+    courseId: string,
+    title: string,
+    kind?: AssignmentView["kind"],
+  ): Promise<AssignmentView | null> {
+    try {
+      const created = await this.#api!.createAssignment({
+        courseId,
+        title,
+        ...(kind ? { kind } : {}),
+      });
+      await this.refreshLibrary();
+      return created;
+    } catch (error) {
+      this.error = message(error);
+      return null;
+    }
+  }
+
+  /**
+   * Saves a change to an assignment. Changes to one assignment go one at a time, each from the
+   * revision the previous one returned, as for documents.
+   */
+  updateAssignment(assignment: AssignmentView, patch: AssignmentPatch): Promise<void> {
+    const previous =
+      this.#assignmentSaves.get(assignment.id) ?? Promise.resolve(assignment.revision);
+    const saved = previous.then(async (known) => {
+      const revision = Math.max(
+        known,
+        this.assignments.find((item) => item.id === assignment.id)?.revision ?? 0,
+      );
+      try {
+        return (await this.#api!.updateAssignment(assignment.id, patch, revision)).revision;
+      } catch (error) {
+        this.error = message(error);
+        return revision;
+      }
+    });
+    this.#assignmentSaves.set(assignment.id, saved);
+    return saved.then(async () => {
+      if (this.#assignmentSaves.get(assignment.id) === saved)
+        this.#assignmentSaves.delete(assignment.id);
+      await this.refreshLibrary();
+    });
+  }
+
+  async addAssignmentFiles(
+    assignment: AssignmentView,
+    into: "attempt" | "feedback",
+    note = "",
+  ): Promise<void> {
+    try {
+      const updated = await this.#api!.addAssignmentFiles(
+        assignment.id,
+        into,
+        assignment.revision,
+        note,
+      );
+      if (updated) this.notice = into === "attempt" ? "Submission kept" : "Feedback kept";
+    } catch (error) {
+      this.error = message(error);
+    }
+    await this.refreshLibrary();
+  }
+
+  async openAssignmentFile(assignmentId: string, fileId: string): Promise<void> {
+    try {
+      await this.#api!.openAssignmentFile(assignmentId, fileId);
+    } catch (error) {
+      this.error = message(error);
+    }
+  }
+
+  async trashAssignment(id: string): Promise<void> {
+    const title = this.assignments.find((item) => item.id === id)?.title ?? "the assignment";
+    await this.#trash(
+      async () => [await this.#api!.trashAssignment(id)],
+      () => false,
+      `“${title}”`,
+    );
   }
 
   /**

@@ -1,6 +1,7 @@
 // Development-only stand-in for the Electron bridge, so the renderer can be previewed in a
 // plain browser. Synthetic courses and PDFs only; it never talks to a model and is not built.
 import type {
+  AssignmentView,
   AttachmentView,
   AgentNodeView,
   ChatSummary,
@@ -20,6 +21,7 @@ import type {
   VisualView,
 } from "../../src/desktop/api.ts";
 import { chatTitle } from "../../src/chat-title.ts";
+import { patchAssignment } from "../../src/library/assignments.ts";
 import { SYNTHETIC_LECTURE, syntheticPdf } from "../../tests/fixtures/synthetic-pdf.ts";
 
 /** A synthetic drawing for the preview's fake visual reply. */
@@ -203,6 +205,70 @@ const chats = new Map<string, ChatView>([
 ]);
 
 const notes = new Map<string, { note: NoteView; content: string }>();
+
+/** Synthetic assignments: one from a handed-out PDF, a reading, and finished work with a grade. */
+function assignment(n: number, title: string, more: Partial<AssignmentView> = {}): AssignmentView {
+  return {
+    id: id(n),
+    courseId: id(1),
+    title,
+    kind: "problem_set",
+    status: "todo",
+    dueAt: null,
+    dueHasTime: false,
+    originalDueAt: null,
+    excused: false,
+    documents: { statement: null, solution: null },
+    steps: [],
+    topics: [],
+    attempts: [],
+    grade: { score: null, max: null, text: "" },
+    feedback: { text: "", files: [] },
+    reflection: "",
+    finishedAt: null,
+    createdAt: ago(200),
+    updatedAt: ago(1),
+    revision: 1,
+    ...more,
+  };
+}
+const assignments = new Map<string, AssignmentView>(
+  [
+    assignment(81, "Assignment 1", {
+      dueAt: ago(-60),
+      documents: { statement: id(13), solution: null },
+      status: "doing",
+      steps: [
+        { id: id(91), text: "Question 1: BFS on the given graph", done: true },
+        { id: id(92), text: "Question 2: prove the running time", done: false },
+      ],
+    }),
+    assignment(82, "Read chapter 22 before the recitation", { kind: "reading", dueAt: ago(-20) }),
+    assignment(83, "Quiz 1", {
+      kind: "quiz",
+      status: "done",
+      dueAt: ago(120),
+      finishedAt: ago(96),
+      attempts: [
+        {
+          id: id(93),
+          submittedAt: ago(121),
+          files: [
+            {
+              id: id(94),
+              name: "quiz1.pdf",
+              size: 120_000,
+              sha256: "0".repeat(64),
+              addedAt: ago(121),
+            },
+          ],
+          note: "",
+        },
+      ],
+      grade: { score: 88, max: 100, text: "" },
+    }),
+  ].map((item) => [item.id, item]),
+);
 /** Each note's earlier versions in the preview, newest first. */
 const noteVersions = new Map<string, { revision: string; at: string; content: string }[]>();
 function putNote(noteId: string, courseId: string, content: string): NoteView {
@@ -1777,6 +1843,49 @@ export const previewApi: FolioApi = {
   async trashDocuments(ids) {
     return take(documents, (document) => ids.includes(document.id)).map((document) =>
       putInTrash("document", document.title, document.courseId, () => documents.push(document)),
+    );
+  },
+  async listAssignments() {
+    return [...assignments.values()].map((item) => structuredClone(item));
+  },
+  async createAssignment(input) {
+    if (!input.title.trim()) throw new Error("Give it a title.");
+    const created = assignment(100 + assignments.size, input.title.trim(), {
+      courseId: input.courseId,
+      kind: input.kind ?? "problem_set",
+      dueAt: input.dueAt ?? null,
+      dueHasTime: input.dueHasTime ?? false,
+      createdAt: new Date().toISOString(),
+    });
+    assignments.set(created.id, created);
+    emit({ type: "library" });
+    return structuredClone(created);
+  },
+  async updateAssignment(assignmentId, patch, revision) {
+    const current = assignments.get(assignmentId);
+    if (!current || current.revision !== revision)
+      throw new Error("This item changed since it was opened. Reload it.");
+    const next = {
+      ...patchAssignment({ ...current, version: 1 }, patch),
+      revision: current.revision + 1,
+      updatedAt: new Date().toISOString(),
+    };
+    const { version: _version, ...view } = next;
+    assignments.set(assignmentId, view);
+    emit({ type: "library" });
+    return structuredClone(view);
+  },
+  async addAssignmentFiles() {
+    // The browser preview has no file picker for Folio's library.
+    return null;
+  },
+  async openAssignmentFile() {},
+  async trashAssignment(assignmentId) {
+    const item = assignments.get(assignmentId);
+    if (!item) throw new Error("That assignment is no longer in Folio.");
+    assignments.delete(assignmentId);
+    return putInTrash("assignment", item.title, item.courseId, () =>
+      assignments.set(assignmentId, item),
     );
   },
   async trashNote(noteId) {

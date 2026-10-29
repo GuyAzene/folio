@@ -27,6 +27,11 @@ import { topicModel } from "../kb/topics.ts";
 import { createAttach } from "../library/attachments.ts";
 import { createRuntimes } from "../library/course-tools.ts";
 import { hostedSearch } from "../library/web-search.ts";
+import {
+  ASSIGNMENT_KINDS,
+  type AssignmentPatch,
+  type AssignmentRecord,
+} from "../library/assignments.ts";
 import { CourseNotes, noteTitle, type ProposalRecord } from "../library/notes.ts";
 import { scanFolder } from "../library/scan.ts";
 import { parseCourseDetails, SYLLABUS_PROMPT, syllabusText } from "../library/syllabus.ts";
@@ -416,6 +421,20 @@ async function knowledgeView(courseId: string): Promise<KnowledgeView | null> {
   };
 }
 
+/** An assignment for the window: the record without its storage version. */
+function assignmentView({ version: _version, ...assignment }: AssignmentRecord) {
+  return assignment;
+}
+
+/** Assignment documents become board cards; run after anything that can add or re-role one. */
+function syncAssignments(): void {
+  void library
+    .then((store) => store.syncAssignments())
+    .then((created) => created.length && emit({ type: "library" }))
+    .catch((error: unknown) => console.error("Folio could not add assignments:", error));
+}
+syncAssignments();
+
 async function importPaths(
   courseId: unknown,
   paths: unknown,
@@ -442,6 +461,7 @@ async function importPaths(
   }
   emit({ type: "library" });
   studySoon(courseId, added, "upload");
+  syncAssignments();
   return results;
 }
 
@@ -547,6 +567,7 @@ const handlers: Record<InvokeMethod, (...args: unknown[]) => Promise<unknown>> =
     }
     if (teaching(document) && (!teaching(before) || moved))
       studySoon(document.courseId, [document.id], "upload");
+    if (document.role === "assignment" && before.role !== "assignment") syncAssignments();
     emit({ type: "library" });
     return documentView(document);
   },
@@ -695,6 +716,75 @@ const handlers: Record<InvokeMethod, (...args: unknown[]) => Promise<unknown>> =
       await trashChanged();
     }
     return entries.map(trashView);
+  },
+  async listAssignments() {
+    return (await (await library).listAssignments()).map(assignmentView);
+  },
+  async createAssignment(input) {
+    const value = (input ?? {}) as Record<string, unknown>;
+    checkId(value.courseId);
+    const kind = ASSIGNMENT_KINDS.find((candidate) => candidate === value.kind);
+    const created = await (
+      await library
+    ).createAssignment({
+      courseId: value.courseId as string,
+      title: typeof value.title === "string" ? value.title : "",
+      ...(kind ? { kind } : {}),
+      dueAt: typeof value.dueAt === "string" ? value.dueAt : null,
+      dueHasTime: value.dueHasTime === true,
+    });
+    emit({ type: "library" });
+    return assignmentView(created);
+  },
+  async updateAssignment(id, patch, revision) {
+    checkId(id);
+    const updated = await (
+      await library
+    ).updateAssignment(id, (patch ?? {}) as AssignmentPatch, Number(revision));
+    emit({ type: "library" });
+    return assignmentView(updated);
+  },
+  async addAssignmentFiles(id, into, revision, note) {
+    checkId(id);
+    if (into !== "attempt" && into !== "feedback") throw new Error("Unknown kind of file.");
+    const options: Electron.OpenDialogOptions = {
+      title: into === "attempt" ? "Add what you handed in" : "Add the feedback you got back",
+      buttonLabel: "Add",
+      properties: ["openFile", "multiSelections"],
+    };
+    const picked = window
+      ? await dialog.showOpenDialog(window, options)
+      : await dialog.showOpenDialog(options);
+    if (picked.canceled || !picked.filePaths.length) return null;
+    const updated = await (
+      await library
+    ).addAssignmentFiles(
+      id,
+      picked.filePaths,
+      into,
+      Number(revision),
+      typeof note === "string" ? note : "",
+    );
+    emit({ type: "library" });
+    return assignmentView(updated);
+  },
+  async openAssignmentFile(id, fileId) {
+    checkId(id);
+    const store = await library;
+    const assignment = await store.assignment(id);
+    const kept = [
+      ...assignment.attempts.flatMap((attempt) => attempt.files),
+      ...assignment.feedback.files,
+    ];
+    if (!kept.some((file) => file.id === fileId)) throw new Error("That file is not kept here.");
+    const failure = await shell.openPath(store.assignmentFile(id, fileId as string));
+    if (failure) throw new Error(failure);
+  },
+  async trashAssignment(id) {
+    checkId(id);
+    const entry = await (await removal).removeAssignment(id as string);
+    await trashChanged();
+    return trashView(entry);
   },
   async trashNote(id) {
     checkId(id);

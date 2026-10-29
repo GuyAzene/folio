@@ -13,7 +13,7 @@ import { writeAtomic } from "../files.ts";
 export const TRASH_DAYS = 30;
 const DAY = 86_400_000;
 
-export type TrashKind = "document" | "note" | "chat" | "course";
+export type TrashKind = "document" | "note" | "chat" | "course" | "assignment";
 
 export interface TrashEntry {
   version: 1;
@@ -39,7 +39,7 @@ export type TrashInput = Omit<TrashEntry, "version" | "id" | "removedAt" | "path
 export class TrashError extends Error {}
 
 /** Only Folio's own data can go into the Trash or come back out of it. */
-const ROOTS = ["library/documents/", "library/courses/", "sessions/"];
+const ROOTS = ["library/documents/", "library/courses/", "library/assignments/", "sessions/"];
 
 export class Trash {
   readonly home: string;

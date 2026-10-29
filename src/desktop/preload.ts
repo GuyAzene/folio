@@ -52,6 +52,13 @@ const api: FolioApi = {
   rollbackKnowledge: (courseId) => call("rollbackKnowledge", courseId),
   trashDocuments: (ids) => call("trashDocuments", ids),
   trashNote: (id) => call("trashNote", id),
+  listAssignments: () => call("listAssignments"),
+  createAssignment: (input) => call("createAssignment", input),
+  updateAssignment: (id, patch, revision) => call("updateAssignment", id, patch, revision),
+  addAssignmentFiles: (id, into, revision, note) =>
+    call("addAssignmentFiles", id, into, revision, note),
+  openAssignmentFile: (id, fileId) => call("openAssignmentFile", id, fileId),
+  trashAssignment: (id) => call("trashAssignment", id),
   trashChat: (id) => call("trashChat", id),
   trashCourse: (id) => call("trashCourse", id),
   listTrash: () => call("listTrash"),

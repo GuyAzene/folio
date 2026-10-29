@@ -5,35 +5,44 @@
 
   /**
    * A due date the student types or picks. Typing never saves on its own: a year typed digit
-   * by digit passes through 0002 and 0020, so the date is saved when the field loses focus, on
-   * Enter, or when a day is picked in the calendar. While the student is in the field, the saved
-   * date is never written back over what they are typing.
+   * by digit passes through 0002 and 0020, so the date is saved when focus leaves the date (Tab
+   * included), on Enter, or when a day is picked in the calendar. While the student is in the
+   * date, and until what they saved comes back, the stored date never overwrites what they typed.
    */
   let {
     value,
     onchange,
     label = "Due date",
+    overdue = false,
   }: {
     /** The saved date as an ISO instant, or null. */
     value: string | null;
     /** The new date as the end of that local day, or null when cleared. */
     onchange: (value: string | null) => void;
     label?: string;
+    /** Shows the date in red, for work still to do whose date has passed. */
+    overdue?: boolean;
   } = $props();
 
   const MIN = new CalendarDate(2000, 1, 1);
   const MAX = new CalendarDate(2100, 12, 31);
   const locale = typeof navigator === "undefined" ? "en" : navigator.language;
 
-  let field: HTMLDivElement;
+  let segments: HTMLSpanElement;
   let draft = $state<DateValue | undefined>();
   let open = $state(false);
   let editing = $state(false);
+  /** The day last saved from here, until the stored date catches up with it. */
+  let sent = $state<string | null | undefined>(undefined);
 
-  // The saved date reaches the field only while the student is not in it.
+  // The saved date reaches the field only while the student is not in it, and not while their
+  // own save is still on its way back.
   $effect(() => {
     const saved = dayOf(value);
-    if (!editing && !open) draft = saved;
+    if (editing || open) return;
+    if (sent !== undefined && (saved?.toString() ?? null) !== sent) return;
+    sent = undefined;
+    draft = saved;
   });
 
   function dayOf(iso: string | null): CalendarDate | undefined {
@@ -53,9 +62,16 @@
       return;
     }
     if (draft?.toString() === saved?.toString()) return;
-    onchange(
-      draft ? new Date(`${draft.toString()}T23:59:00`).toISOString() : null,
-    );
+    const day = draft?.toString() ?? null;
+    sent = day;
+    // A save that never lands (refused, or failed) gives the field back to the stored date.
+    setTimeout(() => {
+      if (sent === day) {
+        sent = undefined;
+        draft = dayOf(value);
+      }
+    }, 4_000);
+    onchange(day ? new Date(`${day}T23:59:00`).toISOString() : null);
   }
 
   function clear(): void {
@@ -63,14 +79,13 @@
     commit();
   }
 
-  function left(event: FocusEvent): void {
-    // Focus moving into the calendar is still editing; the calendar commits when it closes.
+  /** Focus left the date itself: to the calendar button, or anywhere else, it saves. */
+  function left(): void {
     setTimeout(() => {
-      if (open || field.contains(document.activeElement)) return;
+      if (open || segments.contains(document.activeElement)) return;
       editing = false;
       commit();
     });
-    void event;
   }
 </script>
 
@@ -84,23 +99,28 @@
   fixedWeeks
   onOpenChange={(next) => {
     if (!next) {
-      editing = field.contains(document.activeElement);
+      editing = segments.contains(document.activeElement);
       commit();
     }
   }}
 >
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
-    bind:this={field}
-    class="group/date flex h-7 w-full min-w-0 items-center gap-1 rounded-md border border-transparent px-1 text-[12px] text-text-2 transition-colors hover:border-line focus-within:border-line-strong"
+    class="group/date flex h-7 w-full min-w-0 items-center gap-0.5 rounded-md border border-transparent px-1 text-[12px] transition-colors hover:border-line focus-within:border-line-strong {overdue
+      ? 'text-danger'
+      : 'text-text-2'}"
     dir="ltr"
-    onfocusin={() => (editing = true)}
     onfocusout={left}
     onkeydown={(event) => {
       if (event.key === "Enter") commit();
       else if (event.key === "Escape" && !open) draft = dayOf(value);
     }}
   >
+    <span
+      bind:this={segments}
+      class="flex min-w-0 flex-1"
+      onfocusin={() => (editing = true)}
+    >
     <DatePicker.Input
       aria-label={label}
       class="flex min-w-0 flex-1 items-center tabular-nums"
@@ -116,10 +136,13 @@
         {/each}
       {/snippet}
     </DatePicker.Input>
+    </span>
     {#if draft}
+      <!-- Out of the Tab order: Tab leaves the date and saves it; the pointer clears it. -->
       <button
         type="button"
-        class="flex size-5 shrink-0 items-center justify-center rounded text-text-4 opacity-0 transition-opacity group-hover/date:opacity-100 hover:text-text focus-visible:opacity-100"
+        tabindex="-1"
+        class="flex size-5 shrink-0 items-center justify-center rounded text-text-4 opacity-0 transition-opacity group-hover/date:opacity-100 hover:text-text"
         aria-label="Clear the due date"
         onclick={clear}
       >

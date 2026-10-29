@@ -34,7 +34,10 @@ lectures into notes you can browse, and it never changes your files.
 - **Your own notes.** Markdown notes with live preview, math, tables, diagrams, and Hebrew and
   English lines side by side. Ask the tutor to write, change or rename a note; every change can
   be undone from the chat or the note's history.
-- **Nothing lost.** Removed files, notes, chats and courses wait 30 days in Folio's Trash.
+- **Assignments.** A board of what you have to hand in, read or prepare, from To do to Done, with
+  what you handed in, the grade and the feedback kept with each one.
+- **Nothing lost.** Removed files, notes, chats, assignments and courses wait 30 days in Folio's
+  Trash.
 
 | Add context with + | A course |
 | --- | --- |

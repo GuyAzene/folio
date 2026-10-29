@@ -1,8 +1,16 @@
 import { createHash, randomUUID } from "node:crypto";
-import { chmod, lstat, mkdir, open, readdir, readFile, rm } from "node:fs/promises";
+import { chmod, lstat, mkdir, open, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, extname, resolve } from "node:path";
 import lockfile from "proper-lockfile";
 import { privateDirectory, writeAtomic } from "../files.ts";
+import {
+  patchAssignment,
+  validAssignment,
+  type AssignmentFile,
+  type AssignmentKind,
+  type AssignmentPatch,
+  type AssignmentRecord,
+} from "./assignments.ts";
 import { pdfPageCount } from "./pdf.ts";
 import { folioHome } from "../home.ts";
 
@@ -155,6 +163,9 @@ export class LibraryStore {
   readonly root: string;
   readonly #courses: string;
   readonly #documents: string;
+  readonly #assignments: string;
+  /** Turning assignment documents into records runs one pass at a time. */
+  #syncing: Promise<unknown> = Promise.resolve();
   /** What this store last read or wrote for each metadata file, to detect outside edits. */
   readonly #seen = new Map<string, { revision: number; hash: string }>();
 
@@ -162,13 +173,14 @@ export class LibraryStore {
     this.root = root;
     this.#courses = resolve(root, "courses");
     this.#documents = resolve(root, "documents");
+    this.#assignments = resolve(root, "assignments");
   }
 
   static async open(options: { home?: string } = {}): Promise<LibraryStore> {
     const home = resolve(options.home ?? folioHome());
     await privateDirectory(home, "data", LibraryError);
     const store = new LibraryStore(resolve(home, "library"));
-    for (const directory of [store.root, store.#courses, store.#documents])
+    for (const directory of [store.root, store.#courses, store.#documents, store.#assignments])
       await privateDirectory(directory, "library", LibraryError);
     return store;
   }
@@ -182,6 +194,219 @@ export class LibraryStore {
   documentDirectory(id: string): string {
     checkId(id);
     return resolve(this.#documents, id);
+  }
+
+  /** An assignment's folder: assignment.json and, under files/, what was handed in or back. */
+  assignmentDirectory(id: string): string {
+    checkId(id);
+    return resolve(this.#assignments, id);
+  }
+
+  /** A file kept with an assignment, read-only. */
+  assignmentFile(id: string, fileId: string): string {
+    checkId(fileId);
+    return resolve(this.assignmentDirectory(id), "files", fileId);
+  }
+
+  async listAssignments(courseId?: string): Promise<AssignmentRecord[]> {
+    const all = await this.#list(this.#assignments, "assignment.json", validAssignment);
+    return all
+      .filter((assignment) => !courseId || assignment.courseId === courseId)
+      .sort(
+        (a, b) =>
+          (a.dueAt ?? "9").localeCompare(b.dueAt ?? "9") || a.createdAt.localeCompare(b.createdAt),
+      );
+  }
+
+  async assignment(id: string): Promise<AssignmentRecord> {
+    return (
+      await this.#read(resolve(this.assignmentDirectory(id), "assignment.json"), validAssignment)
+    ).value;
+  }
+
+  async createAssignment(input: {
+    courseId: string;
+    title: string;
+    kind?: AssignmentKind;
+    dueAt?: string | null;
+    dueHasTime?: boolean;
+    statement?: string | null;
+  }): Promise<AssignmentRecord> {
+    await this.course(input.courseId);
+    if (input.statement) await this.#sameCourse(input.statement, input.courseId);
+    const now = new Date().toISOString();
+    const record: AssignmentRecord = {
+      version: 1,
+      id: randomUUID(),
+      courseId: input.courseId,
+      title: String(input.title ?? "")
+        .replace(/\s+/g, " ")
+        .trim(),
+      kind: input.kind ?? "problem_set",
+      status: "todo",
+      dueAt: input.dueAt ?? null,
+      dueHasTime: input.dueHasTime ?? false,
+      originalDueAt: null,
+      excused: false,
+      documents: { statement: input.statement ?? null, solution: null },
+      steps: [],
+      topics: [],
+      attempts: [],
+      grade: { score: null, max: null, text: "" },
+      feedback: { text: "", files: [] },
+      reflection: "",
+      finishedAt: null,
+      createdAt: now,
+      updatedAt: now,
+      revision: 1,
+    };
+    if (!record.title) throw new LibraryError("Give it a title.");
+    if (!validAssignment(record))
+      throw new LibraryError("Check the assignment's details and try again.");
+    const directory = this.assignmentDirectory(record.id);
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    const file = resolve(directory, "assignment.json");
+    await writeAtomic(file, json(record));
+    return (await this.#read(file, validAssignment)).value;
+  }
+
+  async updateAssignment(
+    id: string,
+    patch: AssignmentPatch,
+    expectedRevision: number,
+  ): Promise<AssignmentRecord> {
+    const current = await this.assignment(id);
+    for (const documentId of [patch.documents?.statement, patch.documents?.solution])
+      if (documentId) await this.#sameCourse(documentId, current.courseId);
+    return this.#update(
+      resolve(this.assignmentDirectory(id), "assignment.json"),
+      validAssignment,
+      expectedRevision,
+      (record) => patchAssignment(record, patch),
+    );
+  }
+
+  /**
+   * Copies the student's files into the assignment, read-only, as a new submission (an attempt
+   * that is never changed afterwards) or as returned feedback. Submitting moves an assignment that
+   * was still to do, or in progress, to Submitted.
+   */
+  async addAssignmentFiles(
+    id: string,
+    sources: string[],
+    into: "attempt" | "feedback",
+    expectedRevision: number,
+    note = "",
+  ): Promise<AssignmentRecord> {
+    await this.assignment(id);
+    const directory = resolve(this.assignmentDirectory(id), "files");
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    const files: AssignmentFile[] = [];
+    try {
+      for (const source of sources) {
+        const info = await lstat(source).catch(() => undefined);
+        if (!info?.isFile() || info.isSymbolicLink())
+          throw new LibraryError(`${basename(source)} is not a regular file.`);
+        if (info.size > MAX_IMPORT_BYTES)
+          throw new LibraryError(`${basename(source)} is too large.`);
+        const data = await readFile(source);
+        const file: AssignmentFile = {
+          id: randomUUID(),
+          name: basename(source).slice(0, 255),
+          size: data.length,
+          sha256: createHash("sha256").update(data).digest("hex"),
+          addedAt: new Date().toISOString(),
+        };
+        const target = resolve(directory, file.id);
+        await writeFile(target, data, { mode: 0o400, flag: "wx" });
+        files.push(file);
+      }
+      const now = new Date().toISOString();
+      return await this.#update(
+        resolve(this.assignmentDirectory(id), "assignment.json"),
+        validAssignment,
+        expectedRevision,
+        (record) =>
+          into === "attempt"
+            ? {
+                ...record,
+                attempts: [
+                  ...record.attempts,
+                  { id: randomUUID(), submittedAt: now, files, note: note.slice(0, 2_000) },
+                ],
+                status:
+                  record.status === "todo" || record.status === "doing"
+                    ? "submitted"
+                    : record.status,
+              }
+            : {
+                ...record,
+                feedback: { ...record.feedback, files: [...record.feedback.files, ...files] },
+              },
+      );
+    } catch (error) {
+      for (const file of files) await rm(resolve(directory, file.id), { force: true });
+      throw error;
+    }
+  }
+
+  /**
+   * Every assignment document becomes an assignment record, once: a marker keeps the documents
+   * already turned into records, so a record the student deleted does not come back.
+   */
+  syncAssignments(): Promise<AssignmentRecord[]> {
+    const run = this.#syncing
+      .catch(() => undefined)
+      .then(async () => {
+        const marker = resolve(this.#assignments, "migrated.json");
+        const done = new Set<string>(
+          (
+            JSON.parse(await readFile(marker, "utf8").catch(() => '{"documentIds":[]}')) as {
+              documentIds: string[];
+            }
+          ).documentIds,
+        );
+        const created: AssignmentRecord[] = [];
+        for (const document of await this.listDocuments())
+          if (document.role === "assignment" && !done.has(document.id)) {
+            created.push(
+              await this.createAssignment({
+                courseId: document.courseId,
+                title: document.title,
+                dueAt: document.dueAt,
+                statement: document.id,
+              }),
+            );
+            done.add(document.id);
+          }
+        if (created.length) await writeAtomic(marker, json({ version: 1, documentIds: [...done] }));
+        return created;
+      });
+    this.#syncing = run;
+    return run;
+  }
+
+  /** A document leaving the library leaves the assignments that pointed to it. */
+  async unlinkDocument(documentId: string): Promise<void> {
+    for (const assignment of await this.listAssignments()) {
+      const { statement, solution } = assignment.documents;
+      if (statement !== documentId && solution !== documentId) continue;
+      await this.updateAssignment(
+        assignment.id,
+        {
+          documents: {
+            statement: statement === documentId ? null : statement,
+            solution: solution === documentId ? null : solution,
+          },
+        },
+        assignment.revision,
+      );
+    }
+  }
+
+  async #sameCourse(documentId: string, courseId: string): Promise<void> {
+    const document = await this.document(documentId);
+    if (document.courseId !== courseId) throw new LibraryError("That file is in another course.");
   }
 
   async listCourses(): Promise<CourseRecord[]> {

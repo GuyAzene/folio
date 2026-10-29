@@ -4,13 +4,13 @@
   import type { DocumentRole, DocumentView } from "../../src/desktop/api.ts";
   import {
     formatDate,
-    formatDue,
     ROLE_DOT,
     ROLE_LABEL,
     ROLES,
   } from "../lib/labels.ts";
   import { folio } from "../lib/state.svelte.ts";
   import CourseTile from "./CourseTile.svelte";
+  import { assignmentBadges } from "../../src/library/assignments.ts";
   import DatePicker from "./DatePicker.svelte";
   import Select from "./Select.svelte";
 
@@ -131,16 +131,19 @@
         {#if showDue}
           <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
           <div
-            class="flex w-[166px] shrink-0 flex-col"
+            class="flex w-[166px] shrink-0 items-center"
             onclick={(event) => event.stopPropagation()}
           >
-            <DatePicker
-              value={document.dueAt}
-              onchange={(dueAt) => folio.updateDocument(document, { dueAt })}
-            />
-            <span class="px-1 text-[11px] text-text-3"
-              >{formatDue(document.dueAt)}</span
-            >
+            {#if folio.assignmentFor(document.id)}
+              {@const work = folio.assignmentFor(document.id)!}
+              <DatePicker
+                value={work.dueAt}
+                overdue={assignmentBadges(work).overdue}
+                label="Due date of {document.title}"
+                onchange={(dueAt) =>
+                  folio.updateAssignment(work, { dueAt, dueHasTime: false })}
+              />
+            {/if}
           </div>
         {:else}
           <span class="w-[60px] shrink-0 text-text-2 max-sm:hidden"

@@ -57,13 +57,15 @@
             ? here.courseId
             : null,
   );
+  /** Work still to hand in within a week, from the board's records. */
   const dueSoon = $derived(
-    folio.documents.filter(
-      (document) =>
-        document.role === "assignment" &&
-        document.dueAt &&
-        new Date(document.dueAt).getTime() - Date.now() < 7 * 86_400_000 &&
-        new Date(document.dueAt).getTime() > Date.now(),
+    folio.assignments.filter(
+      (item) =>
+        (item.status === "todo" || item.status === "doing") &&
+        !item.excused &&
+        item.dueAt &&
+        new Date(item.dueAt).getTime() - Date.now() < 7 * 86_400_000 &&
+        new Date(item.dueAt).getTime() > Date.now(),
     ).length,
   );
 

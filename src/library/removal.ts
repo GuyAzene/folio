@@ -67,7 +67,23 @@ export class Removal {
         await trash.restore(entry.id).catch(() => {});
         throw error;
       }
+    // Assignments that pointed to the file keep their own record without it.
+    await library.unlinkDocument(id);
     return entry;
+  }
+
+  /** An assignment goes with its submissions and feedback; its course's files stay. */
+  async removeAssignment(id: string): Promise<TrashEntry> {
+    const { library, trash } = this.#options;
+    const assignment = await library.assignment(id);
+    const course = await library.course(assignment.courseId);
+    return trash.put({
+      kind: "assignment",
+      title: assignment.title,
+      courseId: course.id,
+      courseName: course.name,
+      paths: [library.assignmentDirectory(id)],
+    });
   }
 
   async removeNote(id: string): Promise<TrashEntry> {
@@ -118,6 +134,7 @@ export class Removal {
     const documents = await library.listDocuments({ courseId: id });
     const chats = (await sessions.list()).filter((summary) => summary.scope.courseId === id);
     const noteCount = (await notes.list(id)).length;
+    const assignments = await library.listAssignments(id);
     await this.#options.releaseChats?.(chats.map((chat) => chat.id));
     knowledge?.release(id);
     const entry = await trash.put({
@@ -130,6 +147,7 @@ export class Removal {
         library.courseDirectory(id),
         ...documents.map((document) => library.documentDirectory(document.id)),
         ...chats.map((chat) => resolve(sessions.directory, `${chat.id}.json`)),
+        ...assignments.map((assignment) => library.assignmentDirectory(assignment.id)),
       ],
     });
     this.#options.forgetJobs?.(id);

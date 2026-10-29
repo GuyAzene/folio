@@ -12,6 +12,7 @@
   import DocumentView from "./views/DocumentView.svelte";
   import HomeView from "./views/HomeView.svelte";
   import JobsView from "./views/JobsView.svelte";
+  import AssignmentsBoard from "./views/AssignmentsBoard.svelte";
   import ListViews from "./views/ListViews.svelte";
   import NoteView from "./views/NoteView.svelte";
   import StudyView from "./views/StudyView.svelte";
@@ -172,6 +173,8 @@
                     <JobsView />
                   {:else if location.view === "trash"}
                     <TrashView />
+                  {:else if location.view === "assignments"}
+                    <AssignmentsBoard />
                   {:else}
                     <ListViews view={location.view} />
                   {/if}
