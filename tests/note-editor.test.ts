@@ -58,7 +58,7 @@ function editorMath(doc: string): string[] {
 /** Math the chat renderer finds. */
 function chatMath(doc: string): string[] {
   return [...markdownToHtml(doc).matchAll(/data-tex="([^"]*)"/g)].map((match) =>
-    match[1]!.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">"),
+    decodeURIComponent(match[1]!),
   );
 }
 

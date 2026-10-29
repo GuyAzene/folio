@@ -89,30 +89,37 @@ interface MathToken {
   open: string;
 }
 
+/**
+ * The TeX rides through the sanitizer percent-encoded: DOMPurify drops any attribute whose value
+ * looks like the end of a comment or markup (`-->`, `]>`, `</style`), which formulas such as
+ * `E[X]>0` would otherwise trip, losing the formula.
+ */
 function placeholder(token: MathToken, tag: "span" | "div"): string {
-  return `<${tag} class="math" dir="ltr" data-tex="${escapeHtml(token.tex)}" data-mode="${token.display ? "display" : "inline"}" data-open="${escapeHtml(token.open)}">${escapeHtml(token.raw)}</${tag}>`;
+  return `<${tag} class="math" dir="ltr" data-tex="${encodeURIComponent(token.tex)}" data-mode="${token.display ? "display" : "inline"}" data-open="${escapeHtml(token.open)}">${escapeHtml(token.raw)}</${tag}>`;
 }
 
 const PLACEHOLDER =
   /<(span|div) class="math" dir="ltr" data-tex="([^"]*)" data-mode="(inline|display)" data-open="([^"]*)">[^<]*<\/\1>/g;
 
-/** Puts KaTeX's output into each placeholder that survived sanitizing. */
+/** Puts KaTeX's output into each placeholder that survived sanitizing, with its TeX readable again. */
 export function fillMath(html: string): string {
   return html.replace(
     PLACEHOLDER,
-    (_match, tag: string, tex: string, mode: string, open: string) =>
-      `<${tag} class="math" dir="ltr" data-tex="${tex}" data-mode="${mode}" data-open="${open}">${renderTex(unescapeAttribute(tex), mode === "display")}</${tag}>`,
+    (match, tag: string, encoded: string, mode: string, open: string) => {
+      const tex = decoded(encoded);
+      return tex === null
+        ? match
+        : `<${tag} class="math" dir="ltr" data-tex="${escapeHtml(tex)}" data-mode="${mode}" data-open="${open}">${renderTex(tex, mode === "display")}</${tag}>`;
+    },
   );
 }
 
-function unescapeAttribute(value: string): string {
-  return value
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&");
+function decoded(value: string): string | null {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return null;
+  }
 }
 
 /**

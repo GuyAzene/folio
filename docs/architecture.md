@@ -27,8 +27,29 @@ src/desktop/main.ts           the main process
 | `src/kb/` | Each course's knowledge base: immutable published versions, a search index and the tutor's study-note tools. |
 | `src/jobs/` | Background study jobs and the saved output of every finished step. |
 | `src/cli.ts` | A terminal client with a small synthetic demo course. |
-| `tests/` | Deterministic test suites; `tests/fixtures/` builds synthetic PDFs and courses. |
+| `tests/` | Deterministic test suites; `tests/fixtures/` builds synthetic PDFs and courses; `tests/electron/` checks Folio in a real window (`vp run test:electron`). |
 | `scripts/desktop.ts` | Runs the app from the dev server or from the production build. |
+
+## What the window may do
+
+The renderer runs sandboxed, with context isolation, and loads only Folio's own files from its
+`folio://app` scheme under a strict content policy. The main process adds rules the page cannot
+change (`src/desktop/hardening.ts`):
+
+- Only Folio's own page, in the window's main frame, can call the app over IPC.
+- The page gets no browser permission beyond writing to the clipboard; frames inside it get none.
+- The window makes no network requests: model traffic runs in the main process. The development
+  server is the one exception.
+- Frames inside the page cannot navigate, nothing opens a new window or attaches a webview, and
+  downloads are refused. Links open in the system browser.
+
+`FOLIO_PERMISSIONS=log` prints every permission request instead of refusing it, to take stock of
+what the page uses.
+
+Replies and notes are Markdown sanitized by DOMPurify. Math leaves the sanitizer as an inert
+placeholder carrying its TeX percent-encoded (the sanitizer drops attributes such as `E[X]>0` or
+`-->`), and KaTeX fills it in afterwards, so the sanitizing policy never has to allow SVG or
+MathML.
 
 ## Chats and what they may read
 

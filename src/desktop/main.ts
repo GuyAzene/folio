@@ -11,6 +11,7 @@ import {
   ipcMain,
   net,
   protocol,
+  session,
   shell,
   type IpcMainInvokeEvent,
 } from "electron";
@@ -30,6 +31,13 @@ import { checkId, DOCUMENT_ROLES, LibraryStore, type DocumentRole } from "../lib
 import { OFFERED_MODELS, SUBSCRIPTIONS } from "../model-choices.ts";
 import { DEFAULT_MODEL } from "../agents.ts";
 import { createSessionStore } from "../session-store.ts";
+import {
+  frameNavigationDecision,
+  originOf,
+  permissionDecision,
+  requestDecision,
+  trustedSender,
+} from "./hardening.ts";
 import {
   CHANNELS,
   type ConnectionView,
@@ -61,7 +69,9 @@ const devUrl = process.env.FOLIO_RENDERER_URL;
 if (devUrl && !/^http:\/\/(127\.0\.0\.1|localhost):\d+\/?$/.test(devUrl))
   throw new Error("FOLIO_RENDERER_URL must be a loopback dev server.");
 const rendererUrl = devUrl ?? "folio://app/index.html";
-const rendererOrigin = new URL(rendererUrl).origin;
+const rendererOrigin = originOf(rendererUrl);
+// "log" grants what Electron would and prints each request, to take stock of what the page uses.
+const permissionMode = process.env.FOLIO_PERMISSIONS === "log" ? "log" : "enforce";
 // Everything Folio owns lives in ~/.folio; an earlier build's folder moves there once.
 const home = prepareHome();
 // A disposable test home may use an existing ChatGPT connection, read in place, never copied.
@@ -615,9 +625,13 @@ const handlers: Record<InvokeMethod, (...args: unknown[]) => Promise<unknown>> =
 };
 
 function trusted(event: IpcMainInvokeEvent): boolean {
-  const url = event.senderFrame?.url;
-  if (!url || event.sender !== window?.webContents) return false;
-  return new URL(url).origin === rendererOrigin;
+  const frame = event.senderFrame;
+  return trustedSender({
+    fromWindow: !!window && event.sender === window.webContents,
+    isMainFrame: !!frame && frame.parent === null,
+    origin: frame?.origin,
+    rendererOrigin,
+  });
 }
 
 ipcMain.handle(
@@ -643,6 +657,43 @@ function serveRenderer(): void {
     return net.fetch(pathToFileURL(path).href);
   });
 }
+
+/** What the window may ask for, load and reach; see hardening.ts for the rules. */
+function hardenSession(): void {
+  const ses = session.defaultSession;
+  const decide = (permission: string, isMainFrame: boolean, url: string) => {
+    const origin = originOf(url);
+    const allowed = permissionDecision({ permission, isMainFrame, origin, rendererOrigin });
+    if (permissionMode === "log")
+      console.error(`[permission] ${JSON.stringify({ permission, isMainFrame, origin, allowed })}`);
+    return permissionMode === "log" || allowed;
+  };
+  ses.setPermissionRequestHandler((_contents, permission, callback, details) =>
+    callback(decide(permission, details.isMainFrame, details.requestingUrl)),
+  );
+  ses.setPermissionCheckHandler((_contents, permission, requestingOrigin, details) =>
+    decide(permission, details.isMainFrame, details.requestingUrl ?? requestingOrigin),
+  );
+  ses.setDevicePermissionHandler(() => false);
+  ses.webRequest.onBeforeRequest(
+    { urls: ["http://*/*", "https://*/*", "ws://*/*", "wss://*/*"] },
+    (details, callback) =>
+      callback({
+        cancel: !requestDecision({ url: details.url, devOrigin: devUrl ? rendererOrigin : null }),
+      }),
+  );
+  ses.on("will-download", (event) => event.preventDefault());
+}
+
+// Every web page Folio creates: no webviews, no new windows, and frames stay where they are.
+app.on("web-contents-created", (_event, contents) => {
+  contents.on("will-attach-webview", (event) => event.preventDefault());
+  contents.setWindowOpenHandler(() => ({ action: "deny" }));
+  contents.on("will-frame-navigate", (event) => {
+    if (!frameNavigationDecision({ isMainFrame: event.isMainFrame, url: event.url }))
+      event.preventDefault();
+  });
+});
 
 function createWindow(): void {
   window = new BrowserWindow({
@@ -672,8 +723,9 @@ function createWindow(): void {
     return { action: "deny" };
   });
   window.webContents.on("will-navigate", (event, url) => {
-    if (new URL(url).origin !== rendererOrigin || !devUrl) event.preventDefault();
+    if (originOf(url) !== rendererOrigin || !devUrl) event.preventDefault();
   });
+  window.webContents.setWebRTCIPHandlingPolicy("disable_non_proxied_udp");
   void window.loadURL(rendererUrl);
 }
 
@@ -700,6 +752,7 @@ app.on("activate", () => {
   if (!window) createWindow();
 });
 void app.whenReady().then(() => {
+  hardenSession();
   serveRenderer();
   createWindow();
 });

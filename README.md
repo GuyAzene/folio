@@ -79,6 +79,7 @@ else. See [docs/architecture.md](docs/architecture.md#on-disk) for the layout.
 vp check            # formatting, lint and types
 vp run check:ui     # Svelte checks for the renderer
 vp test             # deterministic tests: no network, no real accounts
+vp run test:electron # Folio in a real window: its security rules
 vp build && vp pack # renderer, CLI and Electron bundles
 vp dev              # the interface alone, in a browser, with synthetic data
 ```

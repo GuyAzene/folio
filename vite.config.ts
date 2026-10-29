@@ -39,6 +39,8 @@ export default defineConfig({
       "desktop:build": { command: "vp build && vp pack", cache: false },
       "desktop:start": { command: "node scripts/desktop.ts --built", cache: false },
       typecheck: { command: "vp check --no-fmt --no-lint", cache: false },
+      // Folio in a real Electron window, built into a temporary folder; local only, no model calls.
+      "test:electron": { command: "node --test tests/electron/*.e2e.ts", cache: false },
       "check:ui": { command: "svelte-check --tsconfig ./tsconfig.app.json", cache: false },
       "format:ui": {
         command: 'prettier --plugin prettier-plugin-svelte --write "app/**/*.svelte"',

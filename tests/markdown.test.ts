@@ -5,9 +5,7 @@ import { fillMath, markdownToHtml, splitPendingMath } from "../app/lib/markdown.
 // Synthetic sentences in the style of Folio's replies; no course material.
 const html = (text: string, options = {}) => markdownToHtml(text, options);
 const texOf = (out: string) =>
-  [...out.matchAll(/data-tex="([^"]*)"/g)].map((match) =>
-    match[1]!.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">"),
-  );
+  [...out.matchAll(/data-tex="([^"]*)"/g)].map((match) => decodeURIComponent(match[1]!));
 
 describe("math in chat Markdown", () => {
   it("keeps TeX intact through Markdown, with every delimiter models use", () => {
