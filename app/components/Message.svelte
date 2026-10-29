@@ -6,7 +6,7 @@
     FileText,
     ScanText,
   } from "@lucide/svelte";
-  import type { ChatMessageView } from "../../src/desktop/api.ts";
+  import type { ChatMessageView, VisualView } from "../../src/desktop/api.ts";
   import {
     estimateDirection,
     writtenDirection,
@@ -19,6 +19,7 @@
   import CourseTile from "./CourseTile.svelte";
   import FolioMark from "./FolioMark.svelte";
   import ProposalCard from "./ProposalCard.svelte";
+  import VisualCard from "./VisualCard.svelte";
 
   /**
    * `chatId` lets a citation open its page with this chat beside it. `base` is the direction of
@@ -36,14 +37,44 @@
   let copied = $state(false);
   let showSteps = $state(false);
 
-  const html = $derived(
-    message.role === "assistant"
-      ? renderMarkdown(message.text, {
-          streaming: message.state === "streaming",
-          base,
-        })
-      : "",
-  );
+  type Part =
+    | { kind: "text"; key: string; html: string }
+    | { kind: "visual"; key: string; visual: VisualView };
+
+  // Text before a visual no longer changes, so it is rendered once, not on every new word.
+  const rendered = new Map<string, string>();
+  function render(text: string, streaming: boolean): string {
+    const key = `${streaming ? "s" : "c"}${text}`;
+    let html = rendered.get(key);
+    if (html === undefined) {
+      html = renderMarkdown(text, { streaming, base });
+      if (!streaming) rendered.set(key, html);
+    }
+    return html;
+  }
+
+  /**
+   * A reply's text with its visuals in place: each visual sits where the tutor showed it, which
+   * is always between two of its messages, so the text splits cleanly there.
+   */
+  const parts = $derived.by((): Part[] => {
+    if (message.role !== "assistant") return [];
+    const streaming = message.state === "streaming";
+    const visuals = [...(message.visuals ?? [])].sort((a, b) => a.at - b.at);
+    const out: Part[] = [];
+    let from = 0;
+    for (const visual of visuals) {
+      const at = Math.min(Math.max(visual.at, from), message.text.length);
+      const text = message.text.slice(from, at);
+      if (text.trim()) out.push({ kind: "text", key: `t${from}`, html: render(text, false) });
+      out.push({ kind: "visual", key: visual.id, visual });
+      from = at;
+    }
+    const rest = message.text.slice(from);
+    if (rest.trim() || !visuals.length)
+      out.push({ kind: "text", key: `t${from}`, html: render(rest, streaming) });
+    return out;
+  });
   const steps = $derived(message.steps ?? []);
   const working = $derived(steps.some((step) => step.state === "running"));
 
@@ -266,20 +297,26 @@
         {/if}
       </div>
     {/if}
-    {#if message.state === "streaming" && !message.text && !working}
+    {#if message.state === "streaming" && !message.text && !message.visuals?.length && !working}
       <div class="flex h-7 items-center gap-2.5 text-text-3">
         <FolioMark size={18} working />
         <span>Thinking</span>
       </div>
-    {:else if message.text}
+    {:else if message.text || message.visuals?.length}
       <div
         class="prose-folio select-text"
         class:is-streaming={message.state === "streaming"}
         oncopy={copyWithTex}
       >
-        <!-- Sanitized by DOMPurify in renderMarkdown. -->
-        <!-- eslint-disable-next-line svelte/no-at-html-tags -->
-        {@html html}
+        {#each parts as part (part.key)}
+          {#if part.kind === "visual"}
+            <VisualCard visual={part.visual} {chatId} />
+          {:else}
+            <!-- Sanitized by DOMPurify in renderMarkdown. -->
+            <!-- eslint-disable-next-line svelte/no-at-html-tags -->
+            {@html part.html}
+          {/if}
+        {/each}
       </div>
     {/if}
     {#if message.sources?.length}

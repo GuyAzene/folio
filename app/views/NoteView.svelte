@@ -9,6 +9,7 @@
     type NoteEditor,
   } from "../lib/editor/note-editor.ts";
   import { formatDate } from "../lib/labels.ts";
+  import { mountDemos } from "../lib/demo-slots.ts";
   import { renderMarkdown } from "../lib/markdown.ts";
   import { folio } from "../lib/state.svelte.ts";
 
@@ -240,6 +241,11 @@
       <div class="scroll-quiet min-h-0 flex-1 overflow-y-auto">
         <article
           class="prose-folio prose-reading mx-auto max-w-[784px] px-8 py-10 font-serif text-[17px] leading-7 max-sm:px-4"
+          {@attach (node) => {
+            // Demos run again whenever the note's text changes.
+            void content;
+            return mountDemos(node);
+          }}
         >
           <!-- Sanitized by DOMPurify in renderMarkdown. -->
           <!-- eslint-disable-next-line svelte/no-at-html-tags -->

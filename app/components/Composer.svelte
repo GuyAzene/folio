@@ -56,6 +56,16 @@
   let attachments = $state.raw<Added[]>([]);
 
   const chat = $derived(folio.chatFor(chatId, tabId));
+
+  // A demo's question, or "Ask the tutor to fix this", lands here unsent: the student decides.
+  $effect(() => {
+    const offered = folio.prefill;
+    if (!offered || offered.chatId !== chat?.id || tabId !== folio.activeTabId) return;
+    folio.prefill = null;
+    text = offered.text;
+    engaged = true;
+    queueMicrotask(() => field?.focus());
+  });
   /** The course the chat reads; null when it reads the whole library. */
   const chatCourse = $derived(
     chat ? (chat.kind === "course" ? chat.courseId : null) : courseId,

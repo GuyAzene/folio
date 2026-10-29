@@ -17,9 +17,22 @@ import type {
   SendInput,
   StudyNotesView,
   TrashEntryView,
+  VisualView,
 } from "../../src/desktop/api.ts";
 import { chatTitle } from "../../src/chat-title.ts";
 import { SYNTHETIC_LECTURE, syntheticPdf } from "../../tests/fixtures/synthetic-pdf.ts";
+
+/** A synthetic drawing for the preview's fake visual reply. */
+const PREVIEW_DRAWING = [
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 90">',
+  "<title>The queue after two steps</title>",
+  "<style>rect{fill:var(--folio-surface);stroke:var(--folio-line)}text{fill:var(--folio-text);font:14px var(--folio-font)}.new{stroke:var(--folio-accent)}</style>",
+  '<rect x="10" y="30" width="60" height="36" rx="6"/><text x="40" y="53" text-anchor="middle">b</text>',
+  '<rect x="80" y="30" width="60" height="36" rx="6"/><text x="110" y="53" text-anchor="middle">c</text>',
+  '<rect class="new" x="150" y="30" width="60" height="36" rx="6"/><text x="180" y="53" text-anchor="middle">d</text>',
+  '<text x="10" y="20">front</text>',
+  "</svg>",
+].join("");
 
 const listeners = new Set<(event: DesktopEvent) => void>();
 const emit = (event: DesktopEvent) => listeners.forEach((listener) => listener(event));
@@ -1369,7 +1382,30 @@ export const previewApi: FolioApi = {
           "",
           "Each vertex enters the queue once, because it is marked as it enters.",
         ].join("\n")
-      : "This is the **preview bridge**. In the app, Folio reads your course pages and answers from them.";
+      : /visual|demo|הדגמה/i.test(text)
+        ? "Here is the queue as it changes, and a demo you can step through:"
+        : "This is the **preview bridge**. In the app, Folio reads your course pages and answers from them.";
+    // Asking for a visual shows a drawing written piece by piece, then a demo's card.
+    const visuals: VisualView[] = /visual|demo|הדגמה/i.test(text)
+      ? [
+          {
+            id: "preview-drawing",
+            kind: "svg",
+            title: "The queue after two steps",
+            source: PREVIEW_DRAWING,
+            state: "ready",
+            at: reply.length,
+          },
+          {
+            id: "preview-demo",
+            kind: "html",
+            title: "Step through breadth-first search",
+            source: "<title>Step through breadth-first search</title><button>Next</button>",
+            state: "ready",
+            at: reply.length,
+          },
+        ]
+      : [];
     queueMicrotask(async () => {
       emit({
         type: "chat",
@@ -1388,12 +1424,22 @@ export const previewApi: FolioApi = {
         await new Promise((resolve) => setTimeout(resolve, 30));
         emit({ type: "stream", chatId: key, text: words.slice(0, index).join(" ") });
       }
+      for (const visual of visuals)
+        for (let length = 40; length < visual.source.length + 40; length += 40) {
+          await new Promise((resolve) => setTimeout(resolve, 40));
+          emit({
+            type: "visual",
+            chatId: key,
+            visual: { ...visual, source: visual.source.slice(0, length), state: "streaming" },
+          });
+        }
       chat.messages.push({
         role: "assistant",
         text: reply,
         state: "complete",
         steps: [],
         sources: [],
+        ...(visuals.length ? { visuals } : {}),
       });
       chat.status = "idle";
       emit({ type: "chat", chat: structuredClone(chat) });
@@ -1698,6 +1744,10 @@ export const previewApi: FolioApi = {
   },
   async saveFile() {
     return false;
+  },
+  // Demos run only in Folio's window; the preview shows a card instead.
+  async registerArtifact() {
+    return { url: "" };
   },
   async loadWorkspace() {
     return null;

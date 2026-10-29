@@ -60,6 +60,34 @@ direction of its first letter. In notes, the editor draws the same blocks in pla
 (`DiagramWidget`), and an SVG drawing written into a note is shown as an image, which runs no
 scripts and loads nothing.
 
+### Drawings and demos
+
+The tutor shows anything a diagram can't express with one tool, `show_visual`, whose argument is
+an SVG or an HTML fragment (`src/visual.ts`, `src/library/visual-tool.ts`). The tool checks it
+(a title, no network, no storage, libraries only from Folio's list) and returns a correction the
+tutor can act on; the visual is saved as the tool call itself, so a reopened chat shows it again
+without running anything. A still SVG is shown as an image. Everything else runs in a sealed
+frame:
+
+- `ArtifactFrame.svelte` is the only place Folio creates a frame: `sandbox="allow-scripts"`,
+  never same-origin, no permissions. A test checks that no other file makes one.
+- The main process serves each demo from `folio-artifact://<hash>/` with its own content policy:
+  no network at all, no frames, no forms, and scripts only inline or from
+  `folio-artifact://lib/`, a fixed list of bundled files (`src/desktop/artifacts.ts`). Folio's
+  own files are refused to anything but Folio's page, and a frame may load one demo, once.
+- The page hands each demo a private port; a demo can only report its height, an error, or a
+  question, and every message is checked (`app/lib/frames.ts`). A question only fills in the
+  message box.
+- Each demo runs in its own process, so one that loops forever freezes only itself; after four
+  seconds of silence it is stopped. At most four run at once.
+
+`vp run test:electron` checks all of this in a real window: a probe demo tries every way out
+(requests, styles, sockets, forms, windows, navigation, Folio's page and storage) while a local
+server records any request that arrives.
+
+A note can hold a demo as a ```` ```demo ```` block, run the same way. In the editor it runs while
+the cursor is away, and waits for **Run** while its code is being written.
+
 ## Chats and what they may read
 
 There are three kinds of chat, fixed when a chat is created:

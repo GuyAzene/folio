@@ -31,6 +31,7 @@ import { checkId, DOCUMENT_ROLES, LibraryStore, type DocumentRole } from "../lib
 import { OFFERED_MODELS, SUBSCRIPTIONS } from "../model-choices.ts";
 import { DEFAULT_MODEL } from "../agents.ts";
 import { createSessionStore } from "../session-store.ts";
+import { ARTIFACT_SCHEME, ArtifactRegistry, artifactResponse, MAX_ARTIFACT } from "./artifacts.ts";
 import {
   frameNavigationDecision,
   originOf,
@@ -78,9 +79,12 @@ const home = prepareHome();
 const connectionHome = resolve(process.env.FOLIO_CONNECTION_HOME ?? home);
 const MAX_WORKSPACE_BYTES = 256 * 1024;
 const MAX_SAVED_FILE = 5 * 1024 * 1024;
+const artifacts = new ArtifactRegistry();
 
 protocol.registerSchemesAsPrivileged([
   { scheme: "folio", privileges: { standard: true, secure: true, supportFetchAPI: true } },
+  // The tutor's demos: standard and secure so each is its own origin; never bypassing CSP.
+  { scheme: ARTIFACT_SCHEME, privileges: { standard: true, secure: true, corsEnabled: true } },
 ]);
 app.setName("Folio");
 // Another home is another instance: its own browser storage and its own single-instance lock.
@@ -138,6 +142,7 @@ const service = Promise.all([sessionStore, library, notes, knowledgeStore, pageR
       changed: () => emit({ type: "library" }),
       knowledge,
       pages,
+      visuals: true,
     });
     return new ChatService({
       store,
@@ -609,6 +614,12 @@ const handlers: Record<InvokeMethod, (...args: unknown[]) => Promise<unknown>> =
     for (const entry of await trash.list()) await trash.discard(entry.id);
     emit({ type: "trash" });
   },
+  async registerArtifact(input) {
+    const { source } = (input ?? {}) as Record<string, unknown>;
+    if (typeof source !== "string" || !source.trim()) throw new Error("There is no demo to show.");
+    if (source.length > MAX_ARTIFACT) throw new Error("That demo is too large to show.");
+    return { url: artifacts.register(source) };
+  },
   async saveFile(file) {
     const { name, type, data } = (file ?? {}) as Record<string, unknown>;
     if (type !== "svg" || typeof data !== "string" || !data.startsWith("<svg"))
@@ -670,6 +681,10 @@ ipcMain.handle(
 function serveRenderer(): void {
   protocol.handle("folio", (request) => {
     const url = new URL(request.url);
+    // Folio's own files go to Folio's page (or to the window opening it), never to a demo.
+    const initiator = (request as { initiatorOrigin?: string }).initiatorOrigin;
+    if (initiator !== undefined && originOf(initiator) !== rendererOrigin)
+      return new Response("Not found", { status: 404 });
     const path = resolve(rendererRoot, `.${decodeURIComponent(url.pathname)}`);
     if (url.host !== "app" || !path.startsWith(`${rendererRoot}${sep}`))
       return new Response("Not found", { status: 404 });
@@ -709,8 +724,14 @@ app.on("web-contents-created", (_event, contents) => {
   contents.on("will-attach-webview", (event) => event.preventDefault());
   contents.setWindowOpenHandler(() => ({ action: "deny" }));
   contents.on("will-frame-navigate", (event) => {
-    if (!frameNavigationDecision({ isMainFrame: event.isMainFrame, url: event.url }))
-      event.preventDefault();
+    const parent = event.frame?.parent;
+    const allowed = frameNavigationDecision({
+      isMainFrame: event.isMainFrame,
+      url: event.url,
+      parentIsMain: !!parent && parent.parent === null,
+      currentUrl: event.frame?.url ?? "",
+    });
+    if (!allowed) event.preventDefault();
   });
 });
 
@@ -773,5 +794,15 @@ app.on("activate", () => {
 void app.whenReady().then(() => {
   hardenSession();
   serveRenderer();
+  protocol.handle(ARTIFACT_SCHEME, (request) =>
+    artifactResponse(
+      {
+        url: request.url,
+        initiatorOrigin: (request as { initiatorOrigin?: string }).initiatorOrigin,
+      },
+      artifacts,
+      rendererOrigin,
+    ),
+  );
   createWindow();
 });

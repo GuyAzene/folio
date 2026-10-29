@@ -1,4 +1,5 @@
 import { EditorView, WidgetType } from "@codemirror/view";
+import { mountDemos } from "../demo-slots.ts";
 import { diagramHtml, drawnHeight } from "../diagrams.ts";
 import { estimateDirection } from "../direction.ts";
 import { renderMarkdown } from "../markdown.ts";
@@ -112,6 +113,59 @@ export class DiagramWidget extends WidgetType {
   // The diagram's buttons work; a click anywhere else puts the cursor into the source.
   ignoreEvent(event: Event): boolean {
     return event.target instanceof Element && !!event.target.closest("button");
+  }
+}
+
+/**
+ * A ```demo block, run in its sealed frame. With the cursor away it runs in place of the block;
+ * while the block is edited it waits under the source for the student to press Run, so code
+ * that is half written never runs.
+ */
+export class DemoWidget extends WidgetType {
+  readonly source: string;
+  readonly armed: boolean;
+  #stop?: () => void;
+  constructor(source: string, armed: boolean) {
+    super();
+    this.source = source;
+    this.armed = armed;
+  }
+  eq(other: DemoWidget): boolean {
+    return other.source === this.source && other.armed === this.armed;
+  }
+  toDOM(): HTMLElement {
+    const element = document.createElement("div");
+    element.className = "cm-demo";
+    element.dir = "ltr";
+    const slot = document.createElement("div");
+    slot.className = "demo-slot";
+    slot.dataset.source = encodeURIComponent(this.source);
+    const run = () => (this.#stop = mountDemos(element));
+    if (this.armed) {
+      element.append(slot);
+      queueMicrotask(run);
+    } else {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "cm-demo-run";
+      button.textContent = "Run demo";
+      button.onclick = () => {
+        button.replaceWith(slot);
+        run();
+      };
+      element.append(button);
+    }
+    return element;
+  }
+  destroy(): void {
+    this.#stop?.();
+  }
+  get estimatedHeight(): number {
+    return this.armed ? 200 : 40;
+  }
+  // The demo's own controls and the Run button work; elsewhere a click edits the source.
+  ignoreEvent(event: Event): boolean {
+    return event.target instanceof Element && !!event.target.closest("button, iframe");
   }
 }
 

@@ -37,6 +37,22 @@ export interface ChatMessageView {
   proposals?: string[];
   /** What the student added to a question with the composer's +. */
   attachments?: AttachmentView[];
+  /** Drawings and demos the tutor showed in this turn, each at its place in `text`. */
+  visuals?: VisualView[];
+}
+
+/** A drawing or demo the tutor showed with `show_visual`. */
+export interface VisualView {
+  /** The tool call's ID. */
+  id: string;
+  kind: "svg" | "html";
+  title: string;
+  source: string;
+  /** "invalid": Folio refused it (`error` says why); "stopped": the reply ended before it did. */
+  state: "streaming" | "ready" | "invalid" | "stopped";
+  error?: string;
+  /** Its place in the turn's text: the length of the text that comes before it. */
+  at: number;
 }
 
 /** Something added to a question, as the chat shows it. */
@@ -407,6 +423,8 @@ export interface SendInput {
 export type DesktopEvent =
   | { type: "chat"; chat: ChatView }
   | { type: "stream"; chatId: string; text: string }
+  /** A visual the tutor is still writing, sent as it arrives. */
+  | { type: "visual"; chatId: string; visual: VisualView }
   | { type: "chats"; chats: ChatSummary[] }
   | { type: "library" }
   | { type: "job"; job: JobView }
@@ -479,6 +497,8 @@ export interface FolioApi {
   /** Moves it on to the Mac's Trash, out of Folio. */
   deleteFromTrash(id: string): Promise<void>;
   emptyTrash(): Promise<void>;
+  /** Hands a demo to the main process and returns the address its sealed frame loads. */
+  registerArtifact(input: { source: string }): Promise<{ url: string }>;
   /** Saves a file the student made (a diagram as SVG) where they choose; false if they cancel. */
   saveFile(file: { name: string; type: "svg"; data: string }): Promise<boolean>;
   loadWorkspace(): Promise<unknown>;

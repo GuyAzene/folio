@@ -38,14 +38,31 @@ describe("permissions", () => {
 });
 
 describe("navigation and network", () => {
-  it("keeps frames inside the page from navigating", () => {
-    expect(frameNavigationDecision({ isMainFrame: false, url: "https://example.com" })).toBe(false);
-    expect(frameNavigationDecision({ isMainFrame: false, url: "folio://app/index.html" })).toBe(
-      false,
-    );
-    expect(frameNavigationDecision({ isMainFrame: true, url: "folio://app/index.html" })).toBe(
-      true,
-    );
+  it("lets a frame in Folio's page load one demo, and nothing else", () => {
+    const demo = `folio-artifact://${"a".repeat(52)}/`;
+    const go = (
+      url: string,
+      overrides: Partial<Parameters<typeof frameNavigationDecision>[0]> = {},
+    ) =>
+      frameNavigationDecision({
+        isMainFrame: false,
+        url,
+        parentIsMain: true,
+        currentUrl: "about:blank",
+        ...overrides,
+      });
+    expect(go(demo)).toBe(true);
+    expect(go(`${demo}#theme=dark`)).toBe(true);
+    expect(go(demo, { currentUrl: "" })).toBe(true);
+    // A demo never moves on, nests a frame of its own, or loads anything but a demo.
+    expect(go(demo, { currentUrl: `folio-artifact://${"b".repeat(52)}/` })).toBe(false);
+    expect(go(demo, { parentIsMain: false })).toBe(false);
+    expect(go("https://example.com")).toBe(false);
+    expect(go("folio://app/index.html")).toBe(false);
+    expect(go("folio-artifact://lib/katex/katex.min.js")).toBe(false);
+    expect(go(`folio-artifact://${"a".repeat(52)}/other`)).toBe(false);
+    expect(go("about:blank")).toBe(false);
+    expect(go("folio://app/index.html", { isMainFrame: true })).toBe(true);
   });
 
   it("refuses the network, except the development server while developing", () => {

@@ -40,10 +40,11 @@
     void tick().then(() => toBottom("instant"));
   });
 
-  // While pinned, follow new messages and streaming text.
+  // While pinned, follow new messages, streaming text and visuals as they arrive.
   $effect(() => {
     void chat.messages.length;
     void chat.messages.at(-1)?.text;
+    for (const visual of chat.messages.at(-1)?.visuals ?? []) void visual.state;
     if (pinned) void tick().then(() => toBottom("instant"));
   });
 </script>

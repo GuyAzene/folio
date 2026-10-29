@@ -344,7 +344,13 @@ export class Conversation {
           if (event.type === "message_end") {
             this.#record.partialAssistant = undefined;
             await this.#checkpoint();
-          } else if (event.type === "message_update" && Date.now() - this.#partialSavedAt >= 250) {
+          } else if (
+            event.type === "message_update" &&
+            // A long tool call (a demo being written) is saved less often: each save writes the
+            // whole chat.
+            Date.now() - this.#partialSavedAt >=
+              (event.assistantMessageEvent.type.startsWith("toolcall") ? 2000 : 250)
+          ) {
             this.#record.partialAssistant = structuredClone(event.message as AssistantMessage);
             this.#partialSavedAt = Date.now();
             await this.#checkpoint();

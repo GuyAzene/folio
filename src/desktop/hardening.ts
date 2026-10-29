@@ -42,13 +42,23 @@ export function permissionDecision(request: {
 
 /**
  * Whether a frame inside the window may navigate. The window itself never leaves Folio (see the
- * main frame's own guard); frames inside it may not load anything for now.
+ * main frame's own guard). A frame placed directly in Folio's page may load one demo from its
+ * own scheme, once; nothing else loads in a frame.
  */
 export function frameNavigationDecision(navigation: {
   isMainFrame: boolean;
   url: string;
+  /** The frame sits directly in Folio's page, not inside another frame. */
+  parentIsMain: boolean;
+  /** Where the frame is now; a demo frame never moves on to anything else. */
+  currentUrl: string;
 }): boolean {
-  return navigation.isMainFrame;
+  if (navigation.isMainFrame) return true;
+  return (
+    navigation.parentIsMain &&
+    /^folio-artifact:\/\/[a-z2-7]{52}\/(?:#.*)?$/.test(navigation.url) &&
+    (navigation.currentUrl === "" || navigation.currentUrl === "about:blank")
+  );
 }
 
 /**

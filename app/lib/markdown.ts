@@ -451,6 +451,10 @@ markdown.use({
     code(token) {
       const language = /^\S+/.exec(token.lang ?? "")?.[0];
       const text = token.text.replace(/\n$/, "");
+      // A demo in a note runs in a sealed frame, mounted into this slot; the code shows until then
+      // and wherever demos can't run.
+      if (context.note && language === "demo" && !token.escaped && closedFence(token.raw))
+        return `<div class="demo-slot" dir="ltr" data-source="${encodeURIComponent(text)}"><pre dir="ltr"><code class="language-html">${escapeHtml(text)}\n</code></pre></div>\n`;
       if (language === "mermaid" && !token.escaped) {
         if (closedFence(token.raw)) return diagramPlaceholder(text);
         // Still being written: shown as its source, with a quiet note, until the fence closes.

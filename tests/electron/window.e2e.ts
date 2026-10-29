@@ -83,7 +83,13 @@ void describe("Folio's window", () => {
       frame.src = "folio://app/index.html";
       document.body.append(frame);
       await new Promise((done) => setTimeout(done, 800));
-      const href = frame.contentWindow?.location.href;
+      // Blocked outright, the frame holds an error page this page may not read.
+      let href: string | undefined;
+      try {
+        href = frame.contentWindow?.location.href;
+      } catch {
+        href = "blocked";
+      }
       frame.remove();
       return href;
     });

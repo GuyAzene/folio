@@ -121,6 +121,8 @@ class FolioState {
   newCourseOpen = $state(false);
   sidebarOpen = $state(true);
   theme = $state<ThemePreference>("light");
+  /** The theme on screen now, "system" resolved; demos and drawings follow it. */
+  shownTheme = $state<"light" | "dark">("light");
 
   courses = $state<CourseView[]>([]);
   documents = $state<DocumentView[]>([]);
@@ -324,6 +326,22 @@ class FolioState {
       if ((this.location as { item?: string | null }).item !== item)
         this.navigate({ view: "study", courseId, item });
     } else this.navigate({ view: "study", courseId, item }, options);
+  }
+
+  /**
+   * Text for the message box, offered by a demo's button or "Ask the tutor to fix this": the
+   * student reads it and chooses whether to send. Composers pick it up; see Composer.svelte.
+   */
+  prefill = $state<{ text: string; chatId: string } | null>(null);
+
+  offerQuestion(chatId: string, text: string): void {
+    this.prefill = { text: text.slice(0, 1000), chatId };
+  }
+
+  /** The address a demo's sealed frame loads; empty where demos can't run (the browser preview). */
+  async demoUrl(source: string): Promise<string> {
+    if (!this.#api) return "";
+    return (await this.#api.registerArtifact({ source })).url;
   }
 
   /** Loads the course's current study notes unless the loaded ones are already current. */
@@ -845,6 +863,7 @@ class FolioState {
       this.theme === "dark" ||
       (this.theme === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
     document.documentElement.dataset.theme = dark ? "dark" : "light";
+    this.shownTheme = dark ? "dark" : "light";
   }
 
   // ── Workspace ───────────────────────────────────────────────────────────
@@ -956,6 +975,15 @@ class FolioState {
     } else if (event.type === "stream") {
       const last = this.chatViews[event.chatId]?.messages.at(-1);
       if (last?.state === "streaming") last.text = event.text;
+    } else if (event.type === "visual") {
+      // A visual still being written: shown as it arrives, until the saved reply replaces it.
+      const last = this.chatViews[event.chatId]?.messages.at(-1);
+      if (last?.state === "streaming") {
+        const visuals = last.visuals ?? [];
+        last.visuals = visuals.some((visual) => visual.id === event.visual.id)
+          ? visuals.map((visual) => (visual.id === event.visual.id ? event.visual : visual))
+          : [...visuals, event.visual];
+      }
     } else if (event.type === "chats") {
       this.chats = event.chats;
     } else if (event.type === "library") {

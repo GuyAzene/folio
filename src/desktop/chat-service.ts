@@ -12,7 +12,7 @@ import type {
   Focus,
   SendInput,
 } from "./api.ts";
-import { chatSummaries, chatView, visibleText } from "./view.ts";
+import { chatSummaries, chatView, visibleText, visualView } from "./view.ts";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_MESSAGE_LENGTH = 100_000;
@@ -58,6 +58,8 @@ export class ChatService {
   readonly #streaming = new Map<string, string>();
   /** Text already saved in the answer being written, so streamed text extends it. */
   readonly #prefix = new Map<string, string>();
+  /** When each streaming visual was last sent to the window, by chat and call. */
+  readonly #visualSent = new Map<string, number>();
   #closed = false;
 
   constructor(options: ChatServiceOptions) {
@@ -211,12 +213,33 @@ export class ChatService {
       if (event.type === "message_update" && event.message.role === "assistant") {
         const text = visibleText(event.message.content);
         const prefix = this.#prefix.get(id);
-        this.#streaming.set(id, text);
-        this.#options.emit({
-          type: "stream",
-          chatId: id,
-          text: prefix && text ? `${prefix}\n\n${text}` : prefix || text,
-        });
+        const full = prefix && text ? `${prefix}\n\n${text}` : prefix || text;
+        // Tool calls and reasoning stream too; the text only goes out when it changed.
+        if (this.#streaming.get(id) !== text || !this.#streaming.has(id)) {
+          this.#streaming.set(id, text);
+          this.#options.emit({ type: "stream", chatId: id, text: full });
+        }
+        const update = event.assistantMessageEvent;
+        if (
+          update.type === "toolcall_start" ||
+          update.type === "toolcall_delta" ||
+          update.type === "toolcall_end"
+        ) {
+          const block = event.message.content[update.contentIndex];
+          if (block?.type === "toolCall" && block.name === "show_visual") {
+            // A visual being written goes out a few times a second, and once more when complete.
+            const key = `${id}:${block.id}`;
+            const now = Date.now();
+            if (update.type === "toolcall_end" || now - (this.#visualSent.get(key) ?? 0) >= 150) {
+              this.#visualSent.set(key, now);
+              this.#options.emit({
+                type: "visual",
+                chatId: id,
+                visual: visualView(block.id, block.arguments, full.length),
+              });
+            }
+          }
+        }
       } else if (event.type === "message_start" || event.type === "message_end") {
         if (event.type === "message_start" && event.message.role === "assistant")
           this.#prefix.set(id, this.#view(conversation).messages.at(-1)?.text ?? "");
@@ -237,6 +260,8 @@ export class ChatService {
   #settled(conversation: Conversation): void {
     this.#streaming.delete(conversation.snapshot.id);
     this.#prefix.delete(conversation.snapshot.id);
+    for (const key of this.#visualSent.keys())
+      if (key.startsWith(`${conversation.snapshot.id}:`)) this.#visualSent.delete(key);
     this.#options.emit({ type: "chat", chat: this.#view(conversation) });
     void this.#emitChats();
   }

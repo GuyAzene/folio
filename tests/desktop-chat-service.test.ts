@@ -432,3 +432,144 @@ describe("desktop chat service", () => {
     });
   });
 });
+
+describe("visuals in the desktop chat service", () => {
+  const SOURCE = '<svg xmlns="http://www.w3.org/2000/svg"><title>Dot</title><circle r="4"/></svg>';
+
+  /** A reply that writes a visual in many small pieces, then answers once the tool has run. */
+  function drawingThenAnswer(): StreamFn {
+    let calls = 0;
+    return () => {
+      const stream = createAssistantMessageEventStream();
+      const call = calls++;
+      queueMicrotask(async () => {
+        if (call > 0) {
+          const final = assistant("There it is.");
+          stream.push({ type: "start", partial: assistant("") });
+          stream.push({ type: "done", reason: "stop", message: final });
+          return;
+        }
+        const message = (source: string) => ({
+          ...assistant("Look:"),
+          content: [
+            { type: "text" as const, text: "Look:" },
+            {
+              type: "toolCall" as const,
+              id: "call_1",
+              name: "show_visual",
+              arguments: { source },
+            },
+          ],
+          stopReason: "toolUse" as const,
+        });
+        stream.push({ type: "start", partial: message("") });
+        stream.push({ type: "toolcall_start", contentIndex: 1, partial: message("") });
+        for (let length = 1; length <= SOURCE.length; length += 4) {
+          stream.push({
+            type: "toolcall_delta",
+            contentIndex: 1,
+            delta: SOURCE.slice(length - 1, length + 3),
+            partial: message(SOURCE.slice(0, length + 3)),
+          });
+          await new Promise((done) => setTimeout(done, 5));
+        }
+        const final = message(SOURCE);
+        stream.push({
+          type: "toolcall_end",
+          contentIndex: 1,
+          toolCall: final.content[1] as never,
+          partial: final,
+        });
+        stream.push({ type: "done", reason: "toolUse", message: final });
+      });
+      return stream;
+    };
+  }
+
+  it("sends a visual to the window as it is written, a few times a second, then shows it saved", async () => {
+    const { visualTool } = await import("../src/library/visual-tool.ts");
+    const runtime = async () => ({
+      tools: [visualTool()],
+      prompt: async () => "Synthetic course prompt",
+      checkFocus: async () => ({ title: "Synthetic lecture", pages: 3 }),
+    });
+    const { service, events } = await setup({
+      streamFn: drawingThenAnswer(),
+      courseRuntime: runtime,
+    });
+    const { chatId } = await service.send({
+      chatId: null,
+      text: "Draw a dot",
+      submissionId: randomUUID(),
+      courseId: randomUUID(),
+    });
+    await settled(events);
+    const sent = events.filter((event) => event.type === "visual");
+    // Throttled while it streams, and always sent once complete.
+    expect(sent.length).toBeGreaterThan(1);
+    expect(sent.length).toBeLessThan(SOURCE.length / 4);
+    expect(sent.at(-1)).toMatchObject({
+      type: "visual",
+      visual: { id: "call_1", source: SOURCE, title: "Dot", state: "streaming", at: 5 },
+    });
+    // Text only goes out when it changed, not with every piece of the visual.
+    expect(events.filter((event) => event.type === "stream").length).toBeLessThan(5);
+    const view = await service.openChat(chatId);
+    expect(view.messages[1]).toMatchObject({
+      text: "Look:\n\nThere it is.",
+      visuals: [{ id: "call_1", state: "ready", source: SOURCE, at: 5 }],
+    });
+  });
+
+  it("shows a saved visual when the chat reopens, without asking the model or running the tool", async () => {
+    let requests = 0;
+    const { visualTool } = await import("../src/library/visual-tool.ts");
+    const tool = visualTool();
+    let executions = 0;
+    const counted = {
+      ...tool,
+      execute: (...args: Parameters<typeof tool.execute>) => {
+        executions++;
+        return tool.execute(...args);
+      },
+    };
+    const runtime = async () => ({
+      tools: [counted],
+      prompt: async () => "Synthetic course prompt",
+      checkFocus: async () => ({ title: "Synthetic lecture", pages: 3 }),
+    });
+    const draw = drawingThenAnswer();
+    const first = await setup({
+      streamFn: (...args) => {
+        requests++;
+        return draw(...args);
+      },
+      courseRuntime: runtime,
+    });
+    const { chatId } = await first.service.send({
+      chatId: null,
+      text: "Draw a dot",
+      submissionId: randomUUID(),
+      courseId: randomUUID(),
+    });
+    await settled(first.events);
+    await first.service.close();
+    const before = { requests, executions };
+    const reopened = new ChatService({
+      store: first.store,
+      streamFn: () => {
+        requests++;
+        throw new Error("Reopening must not ask the model.");
+      },
+      resolveModel: (id) => ({ ...model, id }),
+      modelId: model.id,
+      courseRuntime: runtime,
+      connected: async () => true,
+      emit: () => undefined,
+    });
+    services.push(reopened);
+    const view = await reopened.openChat(chatId);
+    expect(view.messages[1]?.visuals?.[0]).toMatchObject({ state: "ready", source: SOURCE });
+    expect({ requests, executions }).toEqual(before);
+  });
+});

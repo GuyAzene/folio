@@ -18,6 +18,7 @@ import type { SyntaxNode } from "@lezer/common";
 import {
   BulletWidget,
   CheckboxWidget,
+  DemoWidget,
   DiagramWidget,
   HtmlWidget,
   ImageWidget,
@@ -404,7 +405,19 @@ class Preview {
     const { doc } = this.state;
     const first = doc.lineAt(node.from);
     const last = doc.lineAt(node.to);
-    const diagram = this.diagramSource(node);
+    const demo = this.closedSource(node, "demo");
+    // A closed ```demo block runs in place while the cursor is away; edited, it waits for Run.
+    if (demo !== null && first.from === node.from && !this.showsLines(node.from, node.to)) {
+      this.replaceLines(first.from, last.to, new DemoWidget(demo, true));
+      return false;
+    }
+    if (demo !== null)
+      this.ranges.push(
+        Decoration.widget({ widget: new DemoWidget(demo, false), block: true, side: 1 }).range(
+          last.to,
+        ),
+      );
+    const diagram = this.closedSource(node, "mermaid");
     // A closed ```mermaid block is drawn in place while the cursor is away.
     if (diagram !== null && first.from === node.from && !this.showsLines(node.from, node.to)) {
       this.replaceLines(first.from, last.to, new DiagramWidget(diagram));
@@ -435,11 +448,11 @@ class Preview {
     return false;
   }
 
-  /** A closed ```mermaid block's source in the live view; null for any other block. */
-  private diagramSource(node: SyntaxNode): string | null {
+  /** A closed block's source in the live view, for one language; null for anything else. */
+  private closedSource(node: SyntaxNode, language: "mermaid" | "demo"): string | null {
     if (!this.live) return null;
     const info = node.getChild("CodeInfo");
-    if (!info || /^\S+/.exec(this.text(info.from, info.to))?.[0] !== "mermaid") return null;
+    if (!info || /^\S+/.exec(this.text(info.from, info.to))?.[0] !== language) return null;
     const marks = node.getChildren("CodeMark");
     const { doc } = this.state;
     const open = marks[0];

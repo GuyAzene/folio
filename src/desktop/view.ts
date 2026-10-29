@@ -15,7 +15,9 @@ import type {
   ProposalView,
   SourceView,
   StepView,
+  VisualView,
 } from "./api.ts";
+import { visualKind, visualTitle } from "../visual.ts";
 
 /** Visible text only: reasoning, signatures and other native blocks stay in the main process. */
 export function visibleText(content: unknown): string {
@@ -34,11 +36,26 @@ export function visibleText(content: unknown): string {
 }
 
 type Step = StepView & { id: string; tool: string };
-type Turn = Omit<ChatMessageView, "steps" | "sources" | "proposals"> & {
+type Turn = Omit<ChatMessageView, "steps" | "sources" | "proposals" | "visuals"> & {
   steps: Step[];
   sources: SourceView[];
   proposals: string[];
+  visuals: VisualView[];
 };
+
+/** A `show_visual` call as the window shows it, before its result settles it. */
+export function visualView(id: string, args: unknown, at: number): VisualView {
+  const source = (args as { source?: unknown } | undefined)?.source;
+  const text = typeof source === "string" ? source : "";
+  return {
+    id,
+    kind: visualKind(text),
+    title: visualTitle(text) ?? "",
+    source: text,
+    state: "streaming",
+    at,
+  };
+}
 
 function runningLabel(name: string, args: unknown): string {
   const page = (args as { page?: unknown } | undefined)?.page;
@@ -110,13 +127,16 @@ export function chatView(record: SessionRecord, streaming?: string): ChatView {
           steps: [],
           sources: [],
           proposals: [],
+          visuals: [],
         };
         messages.push(turn);
       }
       const text = visibleText(message.content);
       if (text) turn.text = turn.text ? `${turn.text}\n\n${text}` : text;
       for (const block of message.content)
-        if (block.type === "toolCall")
+        if (block.type === "toolCall" && block.name === "show_visual")
+          turn.visuals.push(visualView(block.id, block.arguments, turn.text.length));
+        else if (block.type === "toolCall")
           turn.steps.push({
             id: block.id,
             tool: block.name,
@@ -131,6 +151,11 @@ export function chatView(record: SessionRecord, streaming?: string): ChatView {
         turn.error = message.errorMessage ?? "The reply failed.";
       }
     } else if (message.role === "toolResult" && turn) {
+      const visual = turn.visuals.find((candidate) => candidate.id === message.toolCallId);
+      if (visual) {
+        visual.state = message.isError ? "invalid" : "ready";
+        if (message.isError) visual.error = visibleText(message.content);
+      }
       const step = turn.steps.find((candidate) => candidate.id === message.toolCallId);
       if (step) {
         step.state = message.isError ? "failed" : "done";
@@ -174,12 +199,15 @@ export function chatView(record: SessionRecord, streaming?: string): ChatView {
   // not happen; only the reply still arriving has steps in progress.
   const live = record.status === "running" ? turn : undefined;
   for (const view of messages)
-    if (view.role === "assistant" && view !== live)
+    if (view.role === "assistant" && view !== live) {
       for (const step of (view as Turn).steps)
         if (step.state === "running") {
           step.state = "failed";
           step.label = finishedLabel(step.tool, undefined, true, step.label);
         }
+      for (const visual of (view as Turn).visuals)
+        if (visual.state === "streaming") visual.state = "stopped";
+    }
   if (record.status === "running") {
     if (!turn) {
       turn = {
@@ -189,6 +217,7 @@ export function chatView(record: SessionRecord, streaming?: string): ChatView {
         steps: [],
         sources: [],
         proposals: [],
+        visuals: [],
       };
       messages.push(turn);
     }
@@ -207,16 +236,16 @@ export function chatView(record: SessionRecord, streaming?: string): ChatView {
       record.focus?.documentId !== undefined
         ? { documentId: record.focus.documentId, page: record.focus.page }
         : null,
-    messages: messages.map((view) =>
-      view.role === "assistant"
-        ? {
-            ...view,
-            steps: (view as Turn).steps.map(({ label, state }) => ({ label, state })),
-            sources: (view as Turn).sources,
-            proposals: (view as Turn).proposals,
-          }
-        : view,
-    ),
+    messages: messages.map((view) => {
+      if (view.role !== "assistant") return view;
+      const { visuals, ...turn } = view as Turn;
+      return {
+        ...turn,
+        steps: turn.steps.map(({ label, state }) => ({ label, state })),
+        // Only turns that showed a visual carry the list, so other replies read as before.
+        ...(visuals.length ? { visuals } : {}),
+      };
+    }),
     reads:
       chatKind(record.scope) === "course"
         ? grantsOf(record.messages)

@@ -41,10 +41,37 @@ export interface Seeded {
  * A fresh home with one synthetic course, its lecture, and a saved course chat whose reply is
  * `replyText`. Folio opens on the place `open` names.
  */
+/**
+ * A reply that shows each visual through `show_visual`, as a saved chat stores it: a short text,
+ * the call, and its accepted result.
+ */
+export function visualTurns(sources: string[]): AgentMessage[] {
+  return sources.flatMap((source, index) => [
+    {
+      ...reply(`Visual ${index + 1}:`),
+      content: [
+        { type: "text", text: `Visual ${index + 1}:` },
+        { type: "toolCall", id: `call_${index + 1}`, name: "show_visual", arguments: { source } },
+      ],
+      stopReason: "toolUse",
+    } as AgentMessage,
+    {
+      role: "toolResult",
+      toolCallId: `call_${index + 1}`,
+      toolName: "show_visual",
+      content: [{ type: "text", text: "Shown to the student." }],
+      isError: false,
+      timestamp: Date.now(),
+    } as AgentMessage,
+  ]);
+}
+
 export async function seedHome(
   replyText: string,
   open: "chat" | "lecture" | "note" = "chat",
   noteText = "A synthetic note.",
+  /** The saved reply's messages, in place of one reply of `replyText`. */
+  replyMessages?: AgentMessage[],
 ): Promise<Seeded> {
   const home = await mkdtemp(resolve(tmpdir(), "folio-e2e-home-"));
   const library = await LibraryStore.open({ home });
@@ -61,7 +88,7 @@ export async function seedHome(
     title: "Synthetic chat",
     messages: [
       { role: "user", content: "Explain this.", timestamp: Date.now() } as AgentMessage,
-      reply(replyText),
+      ...(replyMessages ?? [reply(replyText)]),
     ],
   });
   const location =
