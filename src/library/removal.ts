@@ -1,6 +1,8 @@
+import { lstat } from "node:fs/promises";
 import { resolve } from "node:path";
 import { withDocumentsFrom, withoutDocuments } from "../kb/knowledge.ts";
 import type { KnowledgeStore } from "../kb/store.ts";
+import { historyFile } from "../notes.ts";
 import type { SessionStore } from "../session-store.ts";
 import type { CourseNotes } from "./notes.ts";
 import { LibraryError, type LibraryStore } from "./store.ts";
@@ -73,6 +75,7 @@ export class Removal {
     const note = await notes.read(id);
     const course = await library.course(note.courseId);
     const directory = library.courseDirectory(course.id);
+    const history = historyFile(resolve(directory, "notes", `${id}.md`));
     // Folio's pending edits for the note go with it and come back with it.
     const pending = (await notes.listProposals(course.id)).filter(
       (proposal) => proposal.noteId === id && proposal.state === "pending",
@@ -84,6 +87,8 @@ export class Removal {
       courseName: course.name,
       paths: [
         resolve(directory, "notes", `${id}.md`),
+        // Its earlier versions go with it, when it has any.
+        ...((await lstat(history).catch(() => null)) ? [history] : []),
         ...pending.map((proposal) => resolve(directory, "proposals", `${proposal.id}.json`)),
       ],
     });

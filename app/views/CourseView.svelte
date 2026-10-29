@@ -265,7 +265,7 @@
             </div>
           {:else}
             {@render emptyState(
-              `Your own notes for ${course.name}, in Markdown. Quote a passage from the reader, or ask Folio to draft one for you to review.`,
+              `Notes for ${course.name}, in Markdown. Write your own, quote a passage from the reader, or ask the tutor to write or change one for you; every change can be undone.`,
               "New note",
               () => folio.createNote(courseId),
             )}

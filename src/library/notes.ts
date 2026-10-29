@@ -7,8 +7,11 @@ import {
   MISSING_NOTE,
   NoteConflictError,
   readNoteFile,
+  readNoteHistory,
   writeNoteFile,
+  type NoteAuthor,
   type NoteFile,
+  type NoteHistoryEntry,
 } from "../notes.ts";
 import { checkId, LibraryError, type LibraryStore } from "./store.ts";
 
@@ -73,7 +76,16 @@ export function noteTitle(content: string): string {
   );
 }
 
-function appended(content: string, text: string): string {
+/** `[[Old]]` and `[[Old|shown text]]` links point at the new title; nothing else changes. */
+export function relinkTitle(content: string, from: string, to: string): string {
+  const escaped = from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return content.replace(
+    new RegExp(`\\[\\[\\s*${escaped}\\s*(\\|[^\\]]*)?\\]\\]`, "giu"),
+    (_match, shown: string | undefined) => `[[${to}${shown ?? ""}]]`,
+  );
+}
+
+export function appended(content: string, text: string): string {
   if (!content.trim()) return `${text.trim()}\n`;
   return `${content.replace(/\s*$/, "")}\n\n${text.trim()}\n`;
 }
@@ -155,10 +167,77 @@ export class CourseNotes {
     return this.#read(courseId, id);
   }
 
-  async save(noteId: string, content: string, expectedRevision: string): Promise<CourseNote> {
+  /** Saves the note from `expectedRevision`; the version it replaces is kept for undo. */
+  async save(
+    noteId: string,
+    content: string,
+    expectedRevision: string,
+    author: NoteAuthor = { kind: "student" },
+    /** Keep the replaced version however recently the student saved. */
+    always = false,
+  ): Promise<CourseNote> {
     const courseId = await this.#courseOf(noteId);
-    await writeNoteFile(this.#file(courseId, noteId), content, expectedRevision);
+    await writeNoteFile(this.#file(courseId, noteId), content, expectedRevision, author, always);
     return this.#read(courseId, noteId);
+  }
+
+  /** The note's earlier versions, newest first. */
+  async history(noteId: string): Promise<NoteHistoryEntry[]> {
+    const courseId = await this.#courseOf(noteId);
+    return (await readNoteHistory(this.#file(courseId, noteId))).reverse();
+  }
+
+  /**
+   * Brings back an earlier version as a new one, so the version it replaces can itself be
+   * brought back. Refused when the note changed since `expectedRevision`.
+   */
+  async restore(
+    noteId: string,
+    revision: string,
+    expectedRevision: string,
+    author: NoteAuthor = { kind: "student" },
+  ): Promise<CourseNote> {
+    const earlier = (await this.history(noteId)).find((entry) => entry.revision === revision);
+    if (!earlier) throw new LibraryError("That version of the note is no longer kept.");
+    // A restore is always kept, so it can itself be undone.
+    return this.save(noteId, earlier.content, expectedRevision, author, true);
+  }
+
+  /** The course's notes with this title, ignoring case and spacing. */
+  async withTitle(courseId: string, title: string): Promise<CourseNote[]> {
+    const key = (value: string) => value.replace(/\s+/g, " ").trim().toLocaleLowerCase();
+    return (await this.list(courseId)).filter((note) => key(note.title) === key(title));
+  }
+
+  /**
+   * Renames a note by rewriting its first line, the title, then rewrites `[[Old title]]` links
+   * in the course's other notes, each from the version it has now. Returns the renamed note and
+   * the notes whose links changed.
+   */
+  async rename(
+    noteId: string,
+    title: string,
+    expectedRevision: string,
+    author: NoteAuthor = { kind: "student" },
+  ): Promise<{ note: CourseNote; relinked: CourseNote[] }> {
+    const current = await this.read(noteId);
+    const heading = title.replace(/\s+/g, " ").trim().slice(0, 120);
+    if (!heading) throw new LibraryError("Give the note a title.");
+    const lines = current.content.split("\n");
+    const first = lines.findIndex((line) => line.trim());
+    if (first === -1) lines.unshift(`# ${heading}`);
+    else lines[first] = `# ${heading}`;
+    const note = await this.save(noteId, lines.join("\n"), expectedRevision, author);
+    const old = current.title;
+    const relinked: CourseNote[] = [];
+    if (old !== heading)
+      for (const other of await this.list(current.courseId)) {
+        if (other.id === noteId) continue;
+        const next = relinkTitle(other.content, old, heading);
+        if (next !== other.content)
+          relinked.push(await this.save(other.id, next, other.revision, author));
+      }
+    return { note, relinked };
   }
 
   /** Adds text at the end of the note as it is now; nothing already there is replaced. */

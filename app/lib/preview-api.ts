@@ -203,6 +203,8 @@ const chats = new Map<string, ChatView>([
 ]);
 
 const notes = new Map<string, { note: NoteView; content: string }>();
+/** Each note's earlier versions in the preview, newest first. */
+const noteVersions = new Map<string, { revision: string; at: string; content: string }[]>();
 function putNote(noteId: string, courseId: string, content: string): NoteView {
   const previous = notes.get(noteId)?.note.revision ?? "0";
   const note: NoteView = {
@@ -1596,9 +1598,27 @@ export const previewApi: FolioApi = {
     const entry = notes.get(noteId);
     if (!entry || entry.note.revision !== revision)
       throw new Error("This note changed outside this editor. Reload it before saving.");
+    noteVersions.set(noteId, [
+      { revision, at: new Date().toISOString(), content: entry.content },
+      ...(noteVersions.get(noteId) ?? []),
+    ]);
     const note = putNote(noteId, entry.note.courseId, content);
     emit({ type: "library" });
     return note;
+  },
+  async noteHistory(noteId) {
+    return (noteVersions.get(noteId) ?? []).map((version) => ({
+      revision: version.revision,
+      at: version.at,
+      author: "student" as const,
+      title: version.content.split("\n")[0]?.replace(/^#+\s*/, "") || "Untitled note",
+      characters: version.content.length,
+    }));
+  },
+  async restoreNote(noteId, version, revision) {
+    const earlier = noteVersions.get(noteId)?.find((item) => item.revision === version);
+    if (!earlier) throw new Error("That version of the note is no longer kept.");
+    return previewApi.saveNote(noteId, earlier.content, revision);
   },
   async appendToNote(noteId, text) {
     const entry = notes.get(noteId)!;

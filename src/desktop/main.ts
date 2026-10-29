@@ -26,7 +26,7 @@ import { KnowledgeStore } from "../kb/store.ts";
 import { topicModel } from "../kb/topics.ts";
 import { createAttach } from "../library/attachments.ts";
 import { createRuntimes } from "../library/course-tools.ts";
-import { CourseNotes, type ProposalRecord } from "../library/notes.ts";
+import { CourseNotes, noteTitle, type ProposalRecord } from "../library/notes.ts";
 import { scanFolder } from "../library/scan.ts";
 import { parseCourseDetails, SYLLABUS_PROMPT, syllabusText } from "../library/syllabus.ts";
 import { checkId, DOCUMENT_ROLES, LibraryStore, type DocumentRole } from "../library/store.ts";
@@ -573,6 +573,24 @@ const handlers: Record<InvokeMethod, (...args: unknown[]) => Promise<unknown>> =
     if (typeof content !== "string" || typeof revision !== "string")
       throw new Error("A note and its revision are required.");
     const note = await (await notes).save(id, content, revision);
+    emit({ type: "library" });
+    return noteView(note);
+  },
+  async noteHistory(id) {
+    checkId(id);
+    return (await (await notes).history(id)).map((entry) => ({
+      revision: entry.revision,
+      at: entry.at,
+      author: entry.author.kind,
+      title: noteTitle(entry.content),
+      characters: entry.content.length,
+    }));
+  },
+  async restoreNote(id, version, revision) {
+    checkId(id);
+    if (typeof version !== "string" || typeof revision !== "string")
+      throw new Error("A version and the note's revision are required.");
+    const note = await (await notes).restore(id, version, revision);
     emit({ type: "library" });
     return noteView(note);
   },

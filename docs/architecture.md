@@ -22,7 +22,7 @@ src/desktop/main.ts           the main process
 | `app/` | The renderer: `views/` (Home, course, reader, notes, study notes, chats, Studying, Trash), `components/`, and `lib/` (app state, Markdown and math rendering, text direction, the note editor in `lib/editor/`). |
 | `src/desktop/` | The Electron main process, the preload bridge, the IPC contract (`api.ts`) and the chat service. |
 | `src/conversation.ts`, `src/session-store.ts`, `src/transcript.ts`, `src/agents.ts` | Conversations on Pi: saving and resuming, cancellation, leases, and what history the model sees. |
-| `src/library/` | Courses and documents, PDF pages and page images, notes and suggested edits, the Trash, the tutor's tools and teaching rules, and attachments. |
+| `src/library/` | Courses and documents, PDF pages and page images, notes with their history, the Trash, the tutor's tools and teaching rules, and attachments. |
 | `src/ingest/` | Studying a lecture: page inventory, reading, drafting, reconciling and publishing study notes. |
 | `src/kb/` | Each course's knowledge base: immutable published versions, a search index and the tutor's study-note tools. |
 | `src/jobs/` | Background study jobs and the saved output of every finished step. |
@@ -98,7 +98,8 @@ There are three kinds of chat, fixed when a chat is created:
 - **Plain chats** read nothing. Only chats from early builds are plain.
 
 The tutor's tools (`list_documents`, `read_page`, `search_course`, `read_sections`,
-`related_sections`, `topic_map`, `list_notes`, `read_note` and `propose_note_edit`) check every
+`related_sections`, `topic_map`, `list_notes`, `read_note`, `create_note`, `edit_note` and
+`rename_note`) check every
 argument in application code against what the chat may read. The app installs its own prompt
 before each request, so a saved chat never carries stale permissions. That prompt stays the same
 from turn to turn, which lets the provider reuse the start of each request: what changes with a
@@ -187,8 +188,17 @@ regrouped once, then each document is studied again behind new files.
 The student's notes are Markdown files. The editor (CodeMirror 6) renders Markdown, math (KaTeX),
 tables and HTML as you write, and each line takes the direction of its first letter, so Hebrew and
 English sit side by side. Saves are revision-checked: when a note changed outside Folio, the
-editor stops and keeps both versions rather than overwriting either. Folio's own edits are only
-ever suggestions that the student keeps, inserts or discards.
+editor stops and keeps both versions rather than overwriting either.
+
+When the student asks, the tutor writes in the notebook itself: it creates a note, replaces one
+exact passage or adds to the end, or renames a note, and links in other notes follow a rename.
+Every change passes the revision the tutor read, so one made after the note changed is refused.
+A course chat writes only to its own course's notes. Each change the tutor makes is kept in the
+note's history (`<note>.history.jsonl`, the version it replaced, who and when), and so are the
+student's own saves at most every five minutes; Undo on the chat's change card, or the note's
+History menu, brings an earlier version back as a new one. Notes link to each other with
+`[[Title]]` and to study-notes topics with `[[topic:slug]]`. Chats from before this keep their
+suggested edits, which the student still keeps, inserts or discards.
 
 ## On disk
 

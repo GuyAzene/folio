@@ -1,10 +1,10 @@
 import type { DocumentRole } from "../../src/desktop/api.ts";
 
-/** A course page's tabs: its files, Folio's study notes, the student's own notes, and its chats. */
+/** A course page's tabs: its files, Folio's study notes, the student's notebook, and its chats. */
 export const COURSE_TABS = [
   { tab: "materials", label: "Materials" },
   { tab: "study", label: "Study notes" },
-  { tab: "notes", label: "My notes" },
+  { tab: "notes", label: "Notes" },
   { tab: "chats", label: "Chats" },
 ] as const;
 export type CourseTab = (typeof COURSE_TABS)[number]["tab"];

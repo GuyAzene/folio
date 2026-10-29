@@ -15,6 +15,8 @@ import type {
   JobView,
   KnowledgeView,
   ImportResult,
+  NoteEditView,
+  NoteVersionView,
   NoteView,
   ProposalAction,
   ProposalView,
@@ -784,6 +786,44 @@ class FolioState {
     } catch (error) {
       this.error = message(error);
     }
+  }
+
+  /**
+   * Undoes a change the tutor made to a note: a new note goes to the Trash; an edit or rename
+   * brings back the version before it. Only while the note is still as the tutor left it.
+   */
+  async undoNoteEdit(edit: NoteEditView): Promise<void> {
+    const current = this.note(edit.noteId);
+    if (!current) {
+      this.error = "That note is no longer in Folio.";
+      return;
+    }
+    if (current.revision !== edit.after) {
+      this.error = "The note changed since then. Open its History to go back further.";
+      return;
+    }
+    if (edit.before === null) return this.trashNote(edit.noteId);
+    try {
+      await this.#api!.restoreNote(edit.noteId, edit.before, edit.after);
+      this.notice = `Undid the change to “${edit.title}”`;
+    } catch (error) {
+      this.error = message(error);
+    }
+    await this.refreshLibrary();
+  }
+
+  noteHistory(id: string): Promise<NoteVersionView[]> {
+    return this.#api!.noteHistory(id);
+  }
+
+  async restoreNote(id: string, version: string, revision: string): Promise<void> {
+    try {
+      await this.#api!.restoreNote(id, version, revision);
+      this.notice = "Brought back an earlier version. The one it replaced is in History.";
+    } catch (error) {
+      this.error = message(error);
+    }
+    await this.refreshLibrary();
   }
 
   async resolveProposal(id: string, action: ProposalAction): Promise<void> {

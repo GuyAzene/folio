@@ -19,6 +19,7 @@
   import CourseTile from "./CourseTile.svelte";
   import FolioMark from "./FolioMark.svelte";
   import ProposalCard from "./ProposalCard.svelte";
+  import NoteEditCard from "./NoteEditCard.svelte";
   import VisualCard from "./VisualCard.svelte";
 
   /**
@@ -346,6 +347,9 @@
     {/if}
     {#each message.proposals ?? [] as id (id)}
       <ProposalCard {id} />
+    {/each}
+    {#each message.noteEdits ?? [] as edit, index (`${index}:${edit.noteId}:${edit.after}`)}
+      <NoteEditCard {edit} />
     {/each}
     {#if message.state === "interrupted"}
       <span class="text-[12px] text-text-3">Stopped</span>

@@ -143,39 +143,119 @@ describe("note tools", () => {
     );
   });
 
-  it("lets a course chat read and propose only within its course, writing nothing", async () => {
-    const { library, notes, course, other, note, file, chatId } = await setup();
+  it("lets a course chat write notes in its own course, refusing stale and ambiguous edits", async () => {
+    const { library, notes, course, other, note, chatId } = await setup();
     let changes = 0;
     const runtimes = createCourseRuntimes(library, { notes, changed: () => changes++ });
     const tools = (await runtimes(course.id, chatId)).tools;
     const tool = (name: string) => tools.find((candidate) => candidate.name === name)!;
+    expect(tools.map((candidate) => candidate.name)).not.toContain("propose_note_edit");
 
     const reading = await tool("read_note").execute("call_1", { noteId: note.id });
-    expect(reading.content[0]).toMatchObject({ type: "text" });
-    expect((reading.content[0] as { text: string }).text).toContain("not course material");
+    const text = (reading.content[0] as { text: string }).text;
+    expect(text).toContain("not course material");
+    const revision = (reading.details as { revision: string }).revision;
+    expect(text).toContain(`Revision: ${revision}`);
 
-    const before = await readFile(file, "utf8");
-    const proposed = await tool("propose_note_edit").execute("call_2", {
+    // A passage replaced from the revision read.
+    const current = await notes.read(note.id);
+    const passage = current.content
+      .split("\n")
+      .find((line) => line.trim() && !line.startsWith("#"))!;
+    const edit = await tool("edit_note").execute("call_2", {
       noteId: note.id,
-      text: "## Queue\nFIFO",
-      reason: "Add the data structure.",
+      revision,
+      find: passage,
+      text: "A queue is first in, first out.",
     });
-    const { proposalId } = proposed.details as { proposalId: string };
-    expect(await readFile(file, "utf8")).toBe(before);
-    expect(await notes.proposal(proposalId)).toMatchObject({ chatId, state: "pending" });
+    const change = (edit.details as { noteEdit: { before: string; after: string } }).noteEdit;
+    expect(change.before).toBe(revision);
+    expect((await notes.read(note.id)).content).toContain("A queue is first in, first out.");
     expect(changes).toBe(1);
 
+    // The same revision again is stale; a missing or repeated passage is refused.
+    await expect(
+      tool("edit_note").execute("call_3", { noteId: note.id, revision, text: "More." }),
+    ).rejects.toThrow("changed since you read it");
+    await expect(
+      tool("edit_note").execute("call_4", {
+        noteId: note.id,
+        revision: change.after,
+        find: "not in the note",
+        text: "x",
+      }),
+    ).rejects.toThrow("not in the note");
+    await notes.save(
+      note.id,
+      `${(await notes.read(note.id)).content}\nzebra\nzebra\n`,
+      change.after,
+    );
+    const latest = (await notes.read(note.id)).revision;
+    await expect(
+      tool("edit_note").execute("call_5", {
+        noteId: note.id,
+        revision: latest,
+        find: "zebra",
+        text: "x",
+      }),
+    ).rejects.toThrow("appears 2 times");
+
+    // A new note, a duplicate title refused, and a rename that links follow.
+    const created = await tool("create_note").execute("call_6", {
+      title: "Queues",
+      text: `See [[${note.title}]].`,
+    });
+    const queues = (created.details as { noteEdit: { noteId: string; before: null } }).noteEdit;
+    expect(queues.before).toBeNull();
+    await expect(
+      tool("create_note").execute("call_7", { title: "queues", text: "Again" }),
+    ).rejects.toThrow("already exists");
+    await tool("rename_note").execute("call_8", {
+      noteId: note.id,
+      revision: latest,
+      title: "BFS notes",
+    });
+    expect((await notes.read(note.id)).title).toBe("BFS notes");
+    expect((await notes.read(queues.noteId)).content).toContain("See [[BFS notes]].");
+
+    // Another course's notes are out of reach.
     const elsewhere = await notes.create(other.id, "Private");
-    await expect(tool("read_note").execute("call_3", { noteId: elsewhere.id })).rejects.toThrow(
+    await expect(tool("read_note").execute("call_9", { noteId: elsewhere.id })).rejects.toThrow(
       "not part of this chat",
     );
     await expect(
-      tool("propose_note_edit").execute("call_4", { noteId: elsewhere.id, text: "x" }),
+      tool("edit_note").execute("call_10", {
+        noteId: elsewhere.id,
+        revision: elsewhere.revision,
+        text: "x",
+      }),
     ).rejects.toThrow("not part of this chat");
     await expect(
-      tool("read_note").execute("call_5", { noteId: note.id, path: "../../x" } as never),
+      tool("read_note").execute("call_11", { noteId: note.id, path: "../../x" } as never),
     ).rejects.toThrow("accepts only");
-    expect(await notes.listProposals(other.id)).toEqual([]);
+  });
+
+  it("keeps each version the tutor replaced, and brings one back as a new version", async () => {
+    const { notes, note } = await setup();
+    const first = await notes.read(note.id);
+    const tutor = { kind: "tutor" as const, chatId: "00000000-0000-4000-8000-000000000099" };
+    const edited = await notes.save(
+      note.id,
+      `${first.content}\nTutor line.\n`,
+      first.revision,
+      tutor,
+    );
+    // Two quick saves by the student keep one version between them.
+    const mine = await notes.save(note.id, `${edited.content}Mine.\n`, edited.revision);
+    await notes.save(note.id, `${mine.content}Mine again.\n`, mine.revision);
+    const history = await notes.history(note.id);
+    expect(history.map((entry) => entry.author.kind)).toEqual(["student", "tutor"]);
+    expect(history[1]!.revision).toBe(first.revision);
+    const now = await notes.read(note.id);
+    const restored = await notes.restore(note.id, first.revision, now.revision);
+    expect(restored.content).toBe(first.content);
+    await expect(notes.restore(note.id, first.revision, now.revision)).rejects.toThrow();
+    expect((await notes.history(note.id))[0]!.revision).toBe(now.revision);
   });
 });
 

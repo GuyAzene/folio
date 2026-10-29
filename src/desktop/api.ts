@@ -33,14 +33,36 @@ export interface ChatMessageView {
   error?: string;
   steps?: StepView[];
   sources?: SourceView[];
-  /** Note edits Folio suggested in this turn, by proposal ID. */
+  /** Note edits Folio suggested in this turn, by proposal ID (chats from before 2026-10-29). */
   proposals?: string[];
+  /** Notes the tutor created, changed or renamed in this turn. */
+  noteEdits?: NoteEditView[];
   /** What the student added to a question with the composer's +. */
   attachments?: AttachmentView[];
   /** Drawings and demos the tutor showed in this turn, each at its place in `text`. */
   visuals?: VisualView[];
   /** "summary": where Folio summarized the chat so far for the tutor; shown as a divider. */
   kind?: "summary";
+}
+
+/** A change the tutor made to the student's notes, with what Undo puts back. */
+export interface NoteEditView {
+  action: "created" | "edited" | "renamed";
+  noteId: string;
+  title: string;
+  /** The revision before the change (null for a new note), and the one it made. */
+  before: string | null;
+  after: string;
+}
+
+/** One kept earlier version of a note. */
+export interface NoteVersionView {
+  revision: string;
+  at: string;
+  /** Who made the change that replaced this version. */
+  author: "student" | "tutor";
+  title: string;
+  characters: number;
 }
 
 /** A drawing or demo the tutor showed with `show_visual`. */
@@ -505,6 +527,10 @@ export interface FolioApi {
   saveNote(id: string, content: string, revision: string): Promise<NoteView>;
   /** Adds text at the end of the note as it is now. */
   appendToNote(id: string, text: string): Promise<NoteView>;
+  /** The note's kept earlier versions, newest first. */
+  noteHistory(id: string): Promise<NoteVersionView[]>;
+  /** Brings back an earlier version as a new one; refused when the note changed since `revision`. */
+  restoreNote(id: string, version: string, revision: string): Promise<NoteView>;
   listProposals(): Promise<ProposalView[]>;
   resolveProposal(id: string, action: ProposalAction): Promise<ProposalView>;
   /** Lists a folder's PDFs and Markdown; null opens the folder picker. Null when cancelled. */

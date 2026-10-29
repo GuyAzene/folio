@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { ToggleGroup } from "bits-ui";
+  import { DropdownMenu, ToggleGroup } from "bits-ui";
   import { onDestroy, tick, untrack } from "svelte";
-  import { Trash2 } from "@lucide/svelte";
+  import { History, Trash2 } from "@lucide/svelte";
+  import type { NoteVersionView } from "../../src/desktop/api.ts";
   import CourseTile from "../components/CourseTile.svelte";
   import IconButton from "../components/IconButton.svelte";
   import {
@@ -10,6 +11,7 @@
   } from "../lib/editor/note-editor.ts";
   import { formatDate } from "../lib/labels.ts";
   import { mountDemos } from "../lib/demo-slots.ts";
+  import { linkedMarkdown, wikilinkTarget } from "../lib/editor/wikilinks.ts";
   import { renderMarkdown } from "../lib/markdown.ts";
   import { folio } from "../lib/state.svelte.ts";
 
@@ -21,6 +23,40 @@
 
   let content = $state("");
   let revision = $state("");
+
+  /** What `[[` offers in this note: the course's other notes, then its study-notes topics. */
+  function linkTargets() {
+    const course = note?.courseId;
+    if (!course) return [];
+    return [
+      ...folio.notes
+        .filter((other) => other.courseId === course && other.id !== noteId)
+        .map((other) => ({ target: other.title, label: other.title, detail: "Note" })),
+      ...(folio.studyNotes[course]?.topics ?? []).map((topic) => ({
+        target: `topic:${topic.slug}`,
+        label: topic.title,
+        detail: "Study notes",
+      })),
+    ];
+  }
+
+  /** Opens a link's note or topic; a title no note has yet says so. */
+  function openLink(target: string, newTab: boolean): void {
+    const course = note?.courseId;
+    if (!course) return;
+    if (target.startsWith("topic:")) {
+      folio.openStudyNotes(course, target, { newTab });
+      return;
+    }
+    const key = target.trim().toLocaleLowerCase();
+    const linked = folio.notes.find(
+      (other) => other.courseId === course && other.title.toLocaleLowerCase() === key,
+    );
+    if (linked) folio.openNote(linked.id, { newTab });
+    else folio.error = `There is no note called “${target}” in this course yet.`;
+  }
+  /** The note's kept earlier versions, loaded when the History menu opens. */
+  let versions = $state<NoteVersionView[]>([]);
   let status = $state<Status>("loading");
   /** Live preview (Obsidian's default), Markdown source, or the reading view. */
   let mode = $state<"edit" | "source" | "read">("edit");
@@ -70,6 +106,7 @@
         onBlur: () => void save(),
         onSave: () => void save(),
         onRead: () => (mode = "read"),
+        links: { targets: linkTargets, open: openLink },
       });
       return () => {
         editor?.destroy();
@@ -185,6 +222,54 @@
           : label[status]}
       </span>
       <span class="flex-1"></span>
+      <DropdownMenu.Root
+        onOpenChange={async (open) => {
+          if (open) versions = await folio.noteHistory(noteId).catch(() => []);
+        }}
+      >
+        <DropdownMenu.Trigger
+          class="flex size-7 shrink-0 items-center justify-center rounded-md text-text-3 transition-colors hover:bg-hover hover:text-text data-[state=open]:bg-hover data-[state=open]:text-text"
+          aria-label="Earlier versions"
+          title="Earlier versions"
+        >
+          <History size={14} strokeWidth={1.75} />
+        </DropdownMenu.Trigger>
+        <DropdownMenu.Portal>
+          <DropdownMenu.Content
+            side="bottom"
+            align="end"
+            sideOffset={6}
+            class="z-50 max-h-[360px] w-[300px] animate-[folio-scale_140ms_var(--ease-out-quint)] overflow-y-auto rounded-xl border border-line-subtle bg-raised p-1.5 shadow-3 outline-none"
+          >
+            <div
+              class="px-2.5 pt-1.5 pb-1 text-[11px] font-medium tracking-[0.06em] text-text-3 uppercase"
+            >
+              Earlier versions
+            </div>
+            {#each versions as version (version.revision + version.at)}
+              <DropdownMenu.Item
+                class="flex cursor-default flex-col rounded-md px-2.5 py-1.5 text-[13px] text-text outline-none select-none data-[highlighted]:bg-hover"
+                onSelect={async () => {
+                  // Typing not saved yet is saved first, so it too can be brought back.
+                  await save();
+                  await folio.restoreNote(noteId, version.revision, revision);
+                }}
+              >
+                <span class="truncate" dir="auto">{version.title}</span>
+                <span class="text-[11px] text-text-3"
+                  >{formatDate(version.at)} · before {version.author === "tutor"
+                    ? "the tutor's change"
+                    : "your edits"}</span
+                >
+              </DropdownMenu.Item>
+            {:else}
+              <p class="px-2.5 py-2 text-[12px] text-text-3">
+                Earlier versions appear here as the note changes.
+              </p>
+            {/each}
+          </DropdownMenu.Content>
+        </DropdownMenu.Portal>
+      </DropdownMenu.Root>
       <IconButton
         label="Move note to Trash"
         class="hover:text-danger"
@@ -239,8 +324,16 @@
 
     {#if mode === "read"}
       <div class="scroll-quiet min-h-0 flex-1 overflow-y-auto">
+        <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
         <article
           class="prose-folio prose-reading mx-auto max-w-[784px] px-8 py-10 font-serif text-[17px] leading-7 max-sm:px-4"
+          onclick={(event) => {
+            const anchor = (event.target as Element).closest?.("a");
+            const target = wikilinkTarget(anchor?.getAttribute("href") ?? null);
+            if (!target) return;
+            event.preventDefault();
+            openLink(target, event.metaKey || event.ctrlKey);
+          }}
           {@attach (node) => {
             // Demos run again whenever the note's text changes.
             void content;
@@ -249,7 +342,9 @@
         >
           <!-- Sanitized by DOMPurify in renderMarkdown. -->
           <!-- eslint-disable-next-line svelte/no-at-html-tags -->
-          {@html renderMarkdown(content || "Nothing here yet.", { note: true })}
+          {@html renderMarkdown(linkedMarkdown(content || "Nothing here yet."), {
+            note: true,
+          })}
         </article>
       </div>
     {:else if status !== "loading"}

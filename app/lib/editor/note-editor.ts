@@ -22,6 +22,7 @@ import { noteDirection } from "./direction.ts";
 import { livePreview, livePreviewExtension } from "./live-preview.ts";
 import { noteMarkdown } from "./syntax.ts";
 import { noteHighlight, noteTheme } from "./theme.ts";
+import { wikilinks, type LinkTargets } from "./wikilinks.ts";
 
 /**
  * Folio's Markdown note editor: CodeMirror 6 with an Obsidian-style live preview, TeX math,
@@ -42,6 +43,8 @@ export interface NoteEditorOptions {
   onSave?(): void;
   /** ⌘E: switch to the reading view, as in Obsidian. */
   onRead?(): void;
+  /** Where `[[` links point, and how to open one; without it they stay plain text. */
+  links?: LinkTargets;
 }
 
 export interface NoteEditor {
@@ -77,6 +80,7 @@ export function noteExtensions(options: Omit<NoteEditorOptions, "doc">, mode = n
     syntaxHighlighting(noteHighlight),
     noteDirection(),
     livePreviewExtension(),
+    options.links ? wikilinks(options.links) : [],
     closeBrackets(),
     search({ top: true }),
     highlightSelectionMatches(),

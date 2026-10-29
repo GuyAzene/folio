@@ -11,6 +11,7 @@ import type {
   ChatView,
   CourseView,
   DocumentView,
+  NoteEditView,
   NoteView,
   ProposalView,
   SourceView,
@@ -36,10 +37,11 @@ export function visibleText(content: unknown): string {
 }
 
 type Step = StepView & { id: string; tool: string };
-type Turn = Omit<ChatMessageView, "steps" | "sources" | "proposals" | "visuals"> & {
+type Turn = Omit<ChatMessageView, "steps" | "sources" | "proposals" | "noteEdits" | "visuals"> & {
   steps: Step[];
   sources: SourceView[];
   proposals: string[];
+  noteEdits: NoteEditView[];
   visuals: VisualView[];
 };
 
@@ -68,6 +70,9 @@ function runningLabel(name: string, args: unknown): string {
   if (name === "list_notes") return "Looking through your notes";
   if (name === "read_note") return "Reading your note";
   if (name === "propose_note_edit") return "Drafting a note edit";
+  if (name === "create_note") return "Writing a note";
+  if (name === "edit_note") return "Editing your note";
+  if (name === "rename_note") return "Renaming your note";
   return name;
 }
 
@@ -98,6 +103,12 @@ function finishedLabel(name: string, details: unknown, failed: boolean, fallback
   }
   if (name === "propose_note_edit")
     return failed ? "Couldn't draft the note edit" : "Drafted a note edit for you to review";
+  const edit = (details as { noteEdit?: { title?: unknown } } | undefined)?.noteEdit;
+  const title = typeof edit?.title === "string" ? ` ${edit.title}` : "";
+  if (name === "create_note") return failed ? "Couldn't write the note" : `Wrote the note${title}`;
+  if (name === "edit_note") return failed ? "Couldn't edit your note" : `Edited your note${title}`;
+  if (name === "rename_note")
+    return failed ? "Couldn't rename your note" : `Renamed your note to${title}`;
   return fallback;
 }
 
@@ -131,6 +142,7 @@ export function chatView(record: SessionRecord, streaming?: string): ChatView {
           steps: [],
           sources: [],
           proposals: [],
+          noteEdits: [],
           visuals: [],
         };
         messages.push(turn);
@@ -197,6 +209,16 @@ export function chatView(record: SessionRecord, streaming?: string): ChatView {
         typeof proposalId === "string"
       )
         turn.proposals.push(proposalId);
+      const edit = (message.details as { noteEdit?: NoteEditView & { v?: number } } | undefined)
+        ?.noteEdit;
+      if (!message.isError && edit && typeof edit.noteId === "string")
+        turn.noteEdits.push({
+          action: edit.action,
+          noteId: edit.noteId,
+          title: edit.title,
+          before: edit.before,
+          after: edit.after,
+        });
     }
   }
   // A step whose reply stopped before it finished (interrupted, failed, or closed mid-call) did
@@ -221,6 +243,7 @@ export function chatView(record: SessionRecord, streaming?: string): ChatView {
         steps: [],
         sources: [],
         proposals: [],
+        noteEdits: [],
         visuals: [],
       };
       messages.push(turn);
@@ -242,12 +265,13 @@ export function chatView(record: SessionRecord, streaming?: string): ChatView {
         : null,
     messages: messages.map((view) => {
       if (view.role !== "assistant" || view.kind === "summary") return view;
-      const { visuals, ...turn } = view as Turn;
+      const { visuals, noteEdits, ...turn } = view as Turn;
       return {
         ...turn,
         steps: turn.steps.map(({ label, state }) => ({ label, state })),
-        // Only turns that showed a visual carry the list, so other replies read as before.
+        // Only turns that showed a visual or changed a note carry those lists.
         ...(visuals.length ? { visuals } : {}),
+        ...(noteEdits.length ? { noteEdits } : {}),
       };
     }),
     reads:
