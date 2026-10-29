@@ -14,7 +14,8 @@
     "app/**/*.svelte",
     "src/chat-title.ts",
     "src/desktop/api.ts",
-    "tests/fixtures/synthetic-pdf.ts"
+    "tests/fixtures/synthetic-pdf.ts",
+    "tests/fixtures/diagrams.ts"
   ],
   "exclude": ["node_modules", "build", "dist", "dist-desktop"]
 }
