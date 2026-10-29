@@ -20,8 +20,10 @@ import type {
   ProposalView,
   StudyNotesView,
   SubscriptionView,
+  Thinking,
   TrashEntryView,
 } from "../../src/desktop/api.ts";
+import { DEFAULT_THINKING, THINKING_LEVELS } from "../../src/desktop/api.ts";
 import { chatTitle } from "../../src/chat-title.ts";
 import { courseTab, type CourseTab } from "./course-tabs.ts";
 
@@ -108,6 +110,8 @@ class FolioState {
   defaultModel = $state("");
   /** The model new chats start with; each chat keeps the model it started with. */
   modelChoice = $state("");
+  /** How long the tutor thinks, for every chat, from the next question on. */
+  thinking = $state<Thinking>(DEFAULT_THINKING);
   connection = $state<ConnectionView>({ connected: false, signingIn: false });
   error = $state<string | null>(null);
   notice = $state<string | null>(null);
@@ -171,6 +175,7 @@ class FolioState {
       this.subscriptions = boot.subscriptions;
       this.defaultModel = boot.model.id;
       this.modelChoice = this.#savedModel() ?? boot.model.id;
+      this.thinking = this.#savedThinking() ?? DEFAULT_THINKING;
       this.chats = boot.chats;
       this.unavailableChats = boot.unavailableChats;
       this.connection = boot.connection;
@@ -444,6 +449,7 @@ class FolioState {
         courseId: context.courseId,
         focus: context.focus,
         modelId: context.chatId ? null : this.modelChoice,
+        thinking: this.thinking,
         ...(added.length ? { attachments: added.map((item) => item.input) } : {}),
       });
       if (!context.chatId) this.#adopt(context.tabId, chatId);
@@ -821,6 +827,25 @@ class FolioState {
       localStorage.setItem("folio.model", id);
     } catch {
       // A per-device convenience; new chats fall back to the default model.
+    }
+  }
+
+  setThinking(level: Thinking): void {
+    if (!THINKING_LEVELS.includes(level)) return;
+    this.thinking = level;
+    try {
+      localStorage.setItem("folio.thinking", level);
+    } catch {
+      // A per-device convenience; chats fall back to the default level.
+    }
+  }
+
+  #savedThinking(): Thinking | undefined {
+    try {
+      const saved = localStorage.getItem("folio.thinking");
+      return THINKING_LEVELS.find((level) => level === saved);
+    } catch {
+      return undefined;
     }
   }
 

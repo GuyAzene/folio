@@ -19,6 +19,7 @@ import { chatTitle } from "./chat-title.ts";
 import { DEMO_PAGE_COUNT, readDemoPage, type DemoPage } from "./demo-source.ts";
 import { createChatAgent, createCourseAgent, createDemoAgent, DEFAULT_MODEL } from "./agents.ts";
 import type { SessionFocus, SessionLease, SessionRecord, SessionStore } from "./session-store.ts";
+import type { Thinking } from "./desktop/api.ts";
 import { estimateMessageTokens } from "@earendil-works/pi-ai/utils/estimate";
 import {
   modelContextMessages,
@@ -144,6 +145,8 @@ export interface SendExtras {
   attachments?: { attachment: Attachment; note: string; image?: ImageContent }[];
   /** A course chat's page in view as the question is sent; null when no document is open. */
   focus?: SessionFocus | null;
+  /** How long the tutor thinks about this question and the requests that answer it. */
+  thinking?: Thinking;
 }
 
 /** Every course and document the student added in a chat, read from their own messages only. */
@@ -468,7 +471,9 @@ export class Conversation {
       folioSubmissionId: submissionId,
       ...(added.length ? { folioAttachments: added.map((item) => item.attachment) } : {}),
       ...(focus !== undefined ? { folioFocus: focus } : {}),
+      ...(extras.thinking ? { folioThinking: extras.thinking } : {}),
     };
+    if (extras.thinking) this.#agent.state.thinkingLevel = extras.thinking;
     const summarize = this.#trim(input);
     if (focus !== undefined)
       this.#record.focus = focus ? { documentId: focus.documentId, page: focus.page } : null;

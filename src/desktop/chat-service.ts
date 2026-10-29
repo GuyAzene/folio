@@ -4,13 +4,15 @@ import { Conversation, type CourseRuntime } from "../conversation.ts";
 import type { AttachReach, ResolvedAttachment } from "../library/attachments.ts";
 import { MAX_IMAGE_BYTES } from "../library/images.ts";
 import type { SessionStore } from "../session-store.ts";
-import type {
-  AttachmentInput,
-  ChatSummary,
-  ChatView,
-  DesktopEvent,
-  Focus,
-  SendInput,
+import {
+  THINKING_LEVELS,
+  type AttachmentInput,
+  type ChatSummary,
+  type ChatView,
+  type DesktopEvent,
+  type Focus,
+  type SendInput,
+  type Thinking,
 } from "./api.ts";
 import { chatSummaries, chatView, visibleText, visualView } from "./view.ts";
 
@@ -79,7 +81,8 @@ export class ChatService {
 
   /** Accepts a message and returns its chat ID; the reply and any failure arrive as events. */
   async send(input: unknown): Promise<{ chatId: string }> {
-    const { chatId, text, submissionId, courseId, focus, modelId, attachments } = validSend(input);
+    const { chatId, text, submissionId, courseId, focus, modelId, attachments, thinking } =
+      validSend(input);
     const models = this.#options.models ?? [this.#options.modelId];
     if (modelId && !models.includes(modelId)) throw new Error("That model is not available.");
     if (!(await this.#options.connected()))
@@ -105,7 +108,7 @@ export class ChatService {
     const id = conversation.snapshot.id;
     // A course chat's question carries the page in view, so the tutor's prompt stays the same.
     const extras = conversation.kind === "course" ? { focus: focus ?? null } : {};
-    conversation.send(text, submissionId, { attachments: added, ...extras }).then(
+    conversation.send(text, submissionId, { attachments: added, thinking, ...extras }).then(
       () => this.#settled(conversation),
       (error: unknown) => {
         this.#options.emit({ type: "error", chatId: id, message: errorMessage(error) });
@@ -277,10 +280,8 @@ export class ChatService {
 
 function validSend(input: unknown): SendInput & { attachments: AttachmentInput[] } {
   if (typeof input !== "object" || input === null) throw new Error("Invalid message.");
-  const { chatId, text, submissionId, courseId, focus, modelId, attachments } = input as Record<
-    string,
-    unknown
-  >;
+  const { chatId, text, submissionId, courseId, focus, modelId, attachments, thinking } =
+    input as Record<string, unknown>;
   if (chatId !== null && (typeof chatId !== "string" || !UUID.test(chatId)))
     throw new Error("Unknown chat.");
   if (typeof text !== "string" || !text.trim()) throw new Error("Enter a message first.");
@@ -295,6 +296,8 @@ function validSend(input: unknown): SendInput & { attachments: AttachmentInput[]
     throw new Error("Unknown course.");
   if (modelId !== undefined && modelId !== null && typeof modelId !== "string")
     throw new Error("That model is not available.");
+  if (thinking !== undefined && !THINKING_LEVELS.includes(thinking as Thinking))
+    throw new Error("That thinking level is not available.");
   return {
     chatId,
     text,
@@ -303,6 +306,7 @@ function validSend(input: unknown): SendInput & { attachments: AttachmentInput[]
     focus: focus === undefined ? null : validFocus(focus),
     modelId: (modelId as string | null | undefined) ?? null,
     attachments: validAttachments(attachments),
+    ...(thinking !== undefined ? { thinking: thinking as Thinking } : {}),
   };
 }
 

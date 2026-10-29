@@ -10,6 +10,7 @@ import {
   type Api,
   type Model,
 } from "@earendil-works/pi-ai";
+import { DEFAULT_THINKING } from "./desktop/api.ts";
 import { demoPageTool } from "./demo-source.ts";
 import { REPLY_FORMAT } from "./reply-format.ts";
 import { modelContextMessages } from "./transcript.ts";
@@ -99,7 +100,7 @@ export function createCourseAgent(
   return new Agent({
     initialState: {
       model,
-      thinkingLevel: "low",
+      thinkingLevel: DEFAULT_THINKING,
       systemPrompt: "You are Folio, a course tutor.",
       messages: options.messages?.filter((message) => message.role !== "system"),
       tools: options.tools,
@@ -130,7 +131,7 @@ export function createChatAgent(
   return new Agent({
     initialState: {
       model,
-      thinkingLevel: "low",
+      thinkingLevel: DEFAULT_THINKING,
       systemPrompt: CHAT_PROMPT,
       // Saved system messages are never trusted; the app's prompt is installed instead.
       messages: options.messages?.filter((message) => message.role !== "system"),

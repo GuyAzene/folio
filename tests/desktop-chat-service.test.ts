@@ -573,3 +573,42 @@ describe("visuals in the desktop chat service", () => {
     expect({ requests, executions }).toEqual(before);
   });
 });
+
+describe("how long the tutor thinks", () => {
+  it("thinks at High unless the question says otherwise, from that question on", async () => {
+    const levels: unknown[] = [];
+    const { service, store, events } = await setup({
+      streamFn: (model, context, options) => {
+        levels.push(options?.reasoning);
+        return streaming(model, context, options);
+      },
+    });
+    const { chatId } = await service.send({
+      chatId: null,
+      text: "First",
+      submissionId: randomUUID(),
+    });
+    await settled(events);
+    events.length = 0;
+    await service.send({
+      chatId,
+      text: "Think harder",
+      submissionId: randomUUID(),
+      thinking: "max",
+    });
+    await settled(events);
+    events.length = 0;
+    await service.send({ chatId, text: "And again", submissionId: randomUUID() });
+    await settled(events);
+    expect(levels).toEqual(["high", "max", "max"]);
+    const questions = (await store.load(chatId)).messages.filter(
+      (message) => message.role === "user",
+    );
+    expect(
+      questions.map((message) => (message as { folioThinking?: string }).folioThinking),
+    ).toEqual([undefined, "max", undefined]);
+    await expect(
+      service.send({ chatId, text: "Hmm", submissionId: randomUUID(), thinking: "ultra" as never }),
+    ).rejects.toThrow("thinking level");
+  });
+});

@@ -1,12 +1,18 @@
 <script lang="ts">
   import { Check, ChevronDown, Settings2 } from "@lucide/svelte";
   import { DropdownMenu } from "bits-ui";
+  import {
+    DEFAULT_THINKING,
+    THINKING_LEVELS,
+    type Thinking,
+  } from "../../src/desktop/api.ts";
   import { folio } from "../lib/state.svelte.ts";
   import ProviderMark from "./ProviderMark.svelte";
 
   /**
    * The model pill in the composer. A new chat uses the student's choice; a saved chat keeps
-   * the model it started with, so picking another one starts a new chat.
+   * the model it started with, so picking another one starts a new chat. How long the tutor
+   * thinks is one choice for every chat, and applies from the next question.
    */
   let {
     chatModelId = null,
@@ -23,6 +29,14 @@
       candidate.models.some((model) => model.id === current),
     ),
   );
+
+  const THINKING_NAMES: Record<Thinking, string> = {
+    low: "Low",
+    medium: "Medium",
+    high: "High",
+    xhigh: "Extra high",
+    max: "Max",
+  };
 
   function pick(id: string): void {
     folio.setModelChoice(id);
@@ -41,6 +55,7 @@
       size={13}
     />
     <span class="truncate">{folio.modelName(current)}</span>
+    <span class="shrink-0 text-text-3">{THINKING_NAMES[folio.thinking]}</span>
     <ChevronDown size={13} strokeWidth={2} class="shrink-0 text-text-3" />
   </DropdownMenu.Trigger>
   <DropdownMenu.Portal>
@@ -101,6 +116,34 @@
           {/each}
         </DropdownMenu.Group>
       {/each}
+      <DropdownMenu.Separator class="my-1.5 h-px bg-line-subtle" />
+      <DropdownMenu.Group>
+        <DropdownMenu.GroupHeading class="px-2.5 pt-1 pb-1.5">
+          <span class="block text-[12px] font-medium text-text-2">Thinking</span
+          >
+          <span class="block text-[11px] leading-4 text-text-3">
+            Higher thinks longer before answering: slower, and uses more of your
+            plan.
+          </span>
+        </DropdownMenu.GroupHeading>
+        {#each THINKING_LEVELS as level (level)}
+          <DropdownMenu.Item
+            class="flex h-8 cursor-default items-center gap-2 rounded-md pr-2.5 pl-[34px] text-[13px] text-text outline-none select-none data-[highlighted]:bg-hover"
+            closeOnSelect={false}
+            onSelect={() => folio.setThinking(level)}
+          >
+            <span class="flex-1 truncate">{THINKING_NAMES[level]}</span>
+            {#if level === DEFAULT_THINKING}
+              <span class="text-[11px] text-text-3">Default</span>
+            {/if}
+            <span class="flex w-4 justify-end">
+              {#if level === folio.thinking}
+                <Check size={14} strokeWidth={2.25} />
+              {/if}
+            </span>
+          </DropdownMenu.Item>
+        {/each}
+      </DropdownMenu.Group>
       <DropdownMenu.Separator class="my-1.5 h-px bg-line-subtle" />
       <DropdownMenu.Item
         class="flex h-8 cursor-default items-center gap-2 rounded-md px-2.5 text-[13px] text-text-2 outline-none select-none data-[highlighted]:bg-hover data-[highlighted]:text-text"

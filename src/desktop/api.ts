@@ -409,6 +409,15 @@ export interface DesktopBootstrap {
   platform: string;
 }
 
+/**
+ * How long the tutor thinks before it answers, from quick to thorough. Every offered model takes
+ * all five (checked with one request each on a ChatGPT Pro plan, 2026-10-29); higher is slower
+ * and uses more of the plan.
+ */
+export const THINKING_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
+export type Thinking = (typeof THINKING_LEVELS)[number];
+export const DEFAULT_THINKING: Thinking = "high";
+
 export interface SendInput {
   chatId: string | null;
   text: string;
@@ -420,6 +429,8 @@ export interface SendInput {
   modelId?: string | null;
   /** What the student added to the question with the composer's +. */
   attachments?: AttachmentInput[];
+  /** How long the tutor thinks about this question; it applies from this question on. */
+  thinking?: Thinking;
 }
 
 export type DesktopEvent =
