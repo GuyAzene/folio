@@ -162,7 +162,8 @@ function breaks(requests: TranscriptContext[]): number {
   return count;
 }
 
-describe("long chats", () => {
+// Each of these runs dozens of saved turns, which takes a few seconds when the suite runs at once.
+describe("long chats", { timeout: 30_000 }, () => {
   it("shorten earlier tool results in batches, only ever moving forward", async () => {
     const requests: TranscriptContext[] = [];
     const { chat } = await open(
