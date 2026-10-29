@@ -174,7 +174,8 @@ export function validateTranscript(messages: unknown): asserts messages is Agent
  * the first system message with the current application-owned prompt/tools.
  * Persisted system updates never enter this projection. No calls execute here.
  */
-export function modelContextMessages(messages: AgentMessage[]): Message[] {
+export function modelContextMessages(saved: AgentMessage[]): Message[] {
+  const messages = trimmed(saved);
   const context: Message[] = [];
   // The page the tutor was last told about; a question says so only when it changed.
   let focus = NOT_READING;
@@ -252,6 +253,100 @@ function withFocusNote(message: Extract<Message, { role: "user" }>, previous: st
   const content = [...message.content];
   content.splice(at === -1 ? content.length : at, 0, note);
   return { ...message, content };
+}
+
+// ── Long chats ─────────────────────────────────────────────────────────────
+
+/**
+ * Recorded on the question that moved it: tool results before `stubBefore` (an index into the
+ * saved messages) reach the model as one-line notes, and visuals there as their titles. Only
+ * ever moves forward, so every later request repeats the one before.
+ */
+export interface TrimMark {
+  v: 1;
+  stubBefore: number;
+}
+
+/**
+ * A summary of the chat so far, written by the model when the chat neared its limit and saved
+ * as a message of Folio's (not the student's) just before the question that needed it. The
+ * messages it covers stay saved; the model sees the summary instead of them.
+ */
+export interface SummaryMark {
+  v: 1;
+  /** The summary's own index; everything before it is covered. */
+  covers: number;
+  model: string;
+  createdAt: string;
+}
+
+/** The text Folio sends in place of an earlier tool result. */
+export function stubOf(result: { toolName: string; details?: unknown; isError?: boolean }): string {
+  const details = (result.details ?? {}) as Record<string, unknown>;
+  const handles = Array.isArray(details.handles) ? (details.handles as unknown[]).join(", ") : "";
+  const what =
+    result.toolName === "read_page" && typeof details.title === "string"
+      ? `"${details.title}", page ${String(details.page)}`
+      : handles
+        ? `sections ${handles}`
+        : result.toolName === "read_note" && typeof details.title === "string"
+          ? `the note "${details.title}"`
+          : "";
+  return `[An earlier ${result.toolName} result${what ? ` (${what})` : ""} is not sent again; call the tool again if you need its text.]`;
+}
+
+/**
+ * The saved messages as long chats send them: from the latest summary on, with tool results
+ * and visuals before the latest trim mark shortened. Pure: the same messages give the same
+ * result, so a reopened chat sends what it sent before.
+ */
+function trimmed(messages: AgentMessage[]): AgentMessage[] {
+  let stubBefore = 0;
+  let summary = -1;
+  messages.forEach((message, index) => {
+    if (message.role !== "user") return;
+    const marks = message as { folioTrim?: TrimMark; folioSummary?: SummaryMark };
+    if (marks.folioTrim) stubBefore = Math.max(stubBefore, marks.folioTrim.stubBefore);
+    if (marks.folioSummary) summary = index;
+  });
+  if (!stubBefore && summary === -1) return messages;
+  const kept = messages.flatMap((message, index) => {
+    // A summary replaces what came before it; the app's leading system message stays.
+    if (summary !== -1 && index < summary && !(index === 0 && message.role === "system")) return [];
+    if (index >= stubBefore) return [message];
+    if (message.role === "toolResult")
+      return [{ ...message, content: [{ type: "text" as const, text: stubOf(message) }] }];
+    if (message.role === "assistant" && message.content.some((block) => block.type === "toolCall"))
+      return [
+        {
+          ...message,
+          content: message.content.map((block) =>
+            block.type === "toolCall" && block.name === "show_visual"
+              ? {
+                  ...block,
+                  arguments: {
+                    source: `[A visual shown earlier: ${earlierTitle(block.arguments)}.]`,
+                  },
+                }
+              : block,
+          ),
+        },
+      ];
+    return [message];
+  });
+  return kept as AgentMessage[];
+}
+
+function earlierTitle(args: unknown): string {
+  const source = (args as { source?: unknown } | undefined)?.source;
+  const title =
+    typeof source === "string" ? /<title[^>]*>([\s\S]*?)<\/title>/i.exec(source)?.[1] : "";
+  return (
+    title
+      ?.replace(/<[^>]*>/g, "")
+      .trim()
+      .slice(0, 80) || "untitled"
+  );
 }
 
 /** At most this many messages (questions or tool results) keep their images in a request. */

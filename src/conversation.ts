@@ -1,5 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
-import type { Agent, AgentEvent, AgentTool, StreamFn } from "@earendil-works/pi-agent-core";
+import type {
+  Agent,
+  AgentEvent,
+  AgentMessage,
+  AgentTool,
+  StreamFn,
+} from "@earendil-works/pi-agent-core";
 import type {
   Api,
   AssistantMessage,
@@ -8,11 +14,18 @@ import type {
   TextContent,
   UserMessage,
 } from "@earendil-works/pi-ai";
+import { normalizeContext } from "@earendil-works/pi-ai/utils/transcript";
 import { chatTitle } from "./chat-title.ts";
 import { DEMO_PAGE_COUNT, readDemoPage, type DemoPage } from "./demo-source.ts";
 import { createChatAgent, createCourseAgent, createDemoAgent, DEFAULT_MODEL } from "./agents.ts";
 import type { SessionFocus, SessionLease, SessionRecord, SessionStore } from "./session-store.ts";
-import { validateTranscript } from "./transcript.ts";
+import { estimateMessageTokens } from "@earendil-works/pi-ai/utils/estimate";
+import {
+  modelContextMessages,
+  validateTranscript,
+  type SummaryMark,
+  type TrimMark,
+} from "./transcript.ts";
 
 export const DEMO_SOURCE_VERSION = createHash("sha256")
   .update(
@@ -101,8 +114,24 @@ export interface Grants {
   documents: string[];
 }
 
+/** Past this share of the model's context, earlier tool results reach it as short notes. */
+const STUB_AT = 0.25;
+/** Past this share even so, the chat so far is summarized for the model. */
+const SUMMARY_AT = 0.6;
+/** The most recent questions whose tool results always reach the model whole. */
+const KEEP_TURNS = 4;
+
+const SUMMARY_PROMPT = [
+  "You are summarizing a tutoring chat for yourself, so you can go on teaching from the summary instead of the full history.",
+  "Keep: what the student asked and is working on now; the course material discussed, with each citation (title and page) and section handle; standing requests about pace, quizzes, language or format, which still hold; questions still open; and visuals or notes you made, by title.",
+  "Do not judge what the student understands, knows or has mastered; say only what was discussed and asked.",
+  "Write compact notes in the chat's language, under 500 words. Do not address the student.",
+].join("\n");
+
 type SubmittedMessage = UserMessage & {
   folioSubmissionId: string;
+  folioTrim?: TrimMark;
+  folioSummary?: SummaryMark;
   /** Chats saved before attachments: the page in view, sent with the question as an image. */
   folioPage?: SessionFocus & { documentId: string };
   folioAttachments?: Attachment[];
@@ -170,6 +199,7 @@ export class Conversation {
   #submissionText?: string;
   #cancelRequested = false;
   #partialSavedAt = 0;
+  #summaryAbort?: AbortController;
 
   private constructor(
     options: OpenConversationOptions,
@@ -439,6 +469,7 @@ export class Conversation {
       ...(added.length ? { folioAttachments: added.map((item) => item.attachment) } : {}),
       ...(focus !== undefined ? { folioFocus: focus } : {}),
     };
+    const summarize = this.#trim(input);
     if (focus !== undefined)
       this.#record.focus = focus ? { documentId: focus.documentId, page: focus.page } : null;
     if (!this.#record.messages.some((message) => message.role === "user"))
@@ -458,6 +489,10 @@ export class Conversation {
         this.#record.revision,
         this.#lease,
       );
+      // A chat near the model's limit is summarized first; without a summary, it goes on as is.
+      const summary = summarize ? await this.#summary(this.#agent.state.messages) : null;
+      if (summary && !this.#cancelRequested)
+        this.#agent.state.messages = [...this.#agent.state.messages, summary];
       if (this.#cancelRequested) this.#agent.state.messages = this.#record.messages;
       else await this.#agent.prompt(input);
     } catch (error) {
@@ -504,8 +539,101 @@ export class Conversation {
     );
   }
 
+  /**
+   * Decides, once, as a question is sent, how much of a long chat reaches the model whole. Past
+   * a quarter of the model's context, tool results before the last few questions are shortened
+   * (recorded on the question, so the cut only moves forward and reopening sends the same).
+   * Returns whether the chat is still too long, so it should be summarized.
+   */
+  #trim(input: SubmittedMessage): boolean {
+    const window = this.#options.resolveModel(this.#record.modelId).contextWindow;
+    if (!this.#runtime || !window) return false;
+    const messages = this.#agent.state.messages;
+    const size = () =>
+      modelContextMessages([...messages, input]).reduce(
+        (sum, message) => sum + estimateMessageTokens(message),
+        0,
+      );
+    if (size() > STUB_AT * window) {
+      const questions = messages.flatMap((message, index) =>
+        message.role === "user" && !(message as SubmittedMessage).folioSummary ? [index] : [],
+      );
+      const boundary = questions.length >= KEEP_TURNS ? questions.at(-KEEP_TURNS)! : 0;
+      const before = Math.max(
+        0,
+        ...messages.map((message) => (message as SubmittedMessage).folioTrim?.stubBefore ?? 0),
+      );
+      if (boundary > before) input.folioTrim = { v: 1, stubBefore: boundary };
+    }
+    return size() > SUMMARY_AT * window;
+  }
+
+  /**
+   * One request for a summary of the chat so far, saved as a message of Folio's just before the
+   * question that needed it. Which courses and documents the student added is restated by
+   * Folio, not by the model. Null when the request fails or the student stops the reply.
+   */
+  async #summary(messages: AgentMessage[]): Promise<AgentMessage | null> {
+    const model = this.#options.resolveModel(this.#record.modelId);
+    const controller = new AbortController();
+    this.#summaryAbort = controller;
+    try {
+      const stream = await this.#options.streamFn(
+        model,
+        normalizeContext({
+          systemPrompt: SUMMARY_PROMPT,
+          messages: [
+            ...modelContextMessages(messages).filter((message) => message.role !== "system"),
+            {
+              role: "user",
+              content: "Summarize this chat as instructed.",
+              timestamp: Date.now(),
+            },
+          ],
+        }),
+        { signal: controller.signal, sessionId: this.#record.id },
+      );
+      let text = "";
+      for await (const event of stream) {
+        if (event.type === "error") return null;
+        if (event.type === "done")
+          text = event.message.content
+            .flatMap((block) => (block.type === "text" ? [block.text] : []))
+            .join("\n\n");
+      }
+      if (!text.trim() || controller.signal.aborted) return null;
+      const grants = grantsOf(messages);
+      const added = [
+        ...grants.courses.map((id) => `the course ${id}`),
+        ...grants.documents.map((id) => `the document ${id}`),
+      ];
+      const summary = {
+        role: "user" as const,
+        content: [
+          {
+            type: "text" as const,
+            text: `<folio_summary>\nFolio's summary of the chat so far; earlier messages are not sent again.\n\n${text.trim()}${added.length ? `\n\nThe student added ${added.join(", ")} to this chat; they can still be read.` : ""}\n</folio_summary>`,
+          },
+        ],
+        timestamp: Date.now(),
+        folioSummary: {
+          v: 1 as const,
+          covers: messages.length,
+          model: model.id,
+          createdAt: new Date().toISOString(),
+        },
+      };
+      return summary as AgentMessage;
+    } catch {
+      return null;
+    } finally {
+      this.#summaryAbort = undefined;
+    }
+  }
+
   cancel(): void {
     this.#cancelRequested = true;
+    this.#summaryAbort?.abort();
     this.#agent.abort();
   }
 

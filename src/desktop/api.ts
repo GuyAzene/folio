@@ -39,6 +39,8 @@ export interface ChatMessageView {
   attachments?: AttachmentView[];
   /** Drawings and demos the tutor showed in this turn, each at its place in `text`. */
   visuals?: VisualView[];
+  /** "summary": where Folio summarized the chat so far for the tutor; shown as a divider. */
+  kind?: "summary";
 }
 
 /** A drawing or demo the tutor showed with `show_visual`. */

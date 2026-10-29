@@ -31,7 +31,7 @@ const model: Model<Api> = {
   reasoning: true,
   input: ["text"],
   cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-  contextWindow: 4096,
+  contextWindow: 272_000,
   maxTokens: 1024,
 };
 const homes: string[] = [];

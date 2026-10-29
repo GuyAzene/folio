@@ -163,7 +163,13 @@
   </div>
 {/snippet}
 
-{#if message.role === "user"}
+{#if message.kind === "summary"}
+  <div class="flex items-center gap-3 text-[12px] text-text-4" role="separator">
+    <span class="h-px flex-1 bg-line-subtle"></span>
+    Earlier messages were summarized for the tutor
+    <span class="h-px flex-1 bg-line-subtle"></span>
+  </div>
+{:else if message.role === "user"}
   <div class="flex animate-[folio-in_220ms_var(--ease-out-quint)] justify-end">
     <div
       class="flex max-w-[85%] flex-col gap-2 rounded-[16px] rounded-br-[5px] border border-line-subtle bg-sunken px-4 py-2.5 text-[15px] leading-6 text-text select-text dark:bg-raised"

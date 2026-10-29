@@ -116,6 +116,16 @@ request resends the conversation, so at most the six most recent messages with i
 and earlier ones say an image was there. Older images are let go five at a time rather than one
 per new image, so most requests repeat the one before.
 
+Long chats are trimmed in the same spirit, and only as a question is sent, so a reopened chat
+sends exactly what it sent before. Past a quarter of the model's context, tool results before the
+last four questions reach the model as one-line notes of what they were (and earlier visuals as
+their titles); the question records where that cut is, and the cut only moves forward. If the
+chat is still past 60% of the context, the model writes one summary of the chat so far, saved as
+a message of Folio's just before the question; from then on the model sees the summary instead
+of what it covers. Nothing saved is deleted, the summary never judges what the student
+understands, and which courses the student added is restated by Folio, not by the model. A
+summary that fails is skipped; one the student stops leaves the chat as it was.
+
 ## Studying a lecture
 
 A study job reads every page of a lecture: its text layer and regions, with close-up re-reads

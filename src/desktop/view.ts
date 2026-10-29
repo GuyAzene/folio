@@ -109,7 +109,11 @@ export function chatView(record: SessionRecord, streaming?: string): ChatView {
   const messages: ChatMessageView[] = [];
   let turn: Turn | undefined;
   for (const message of record.messages as AgentMessage[]) {
-    if (message.role === "user") {
+    if (message.role === "user" && "folioSummary" in message) {
+      // Folio's summary for the model, shown as a quiet divider rather than a question.
+      turn = undefined;
+      messages.push({ role: "assistant", text: "", state: "complete", kind: "summary" });
+    } else if (message.role === "user") {
       turn = undefined;
       const attachments = attachmentViews(message);
       messages.push({
@@ -199,7 +203,7 @@ export function chatView(record: SessionRecord, streaming?: string): ChatView {
   // not happen; only the reply still arriving has steps in progress.
   const live = record.status === "running" ? turn : undefined;
   for (const view of messages)
-    if (view.role === "assistant" && view !== live) {
+    if (view.role === "assistant" && view !== live && view.kind !== "summary") {
       for (const step of (view as Turn).steps)
         if (step.state === "running") {
           step.state = "failed";
@@ -237,7 +241,7 @@ export function chatView(record: SessionRecord, streaming?: string): ChatView {
         ? { documentId: record.focus.documentId, page: record.focus.page }
         : null,
     messages: messages.map((view) => {
-      if (view.role !== "assistant") return view;
+      if (view.role !== "assistant" || view.kind === "summary") return view;
       const { visuals, ...turn } = view as Turn;
       return {
         ...turn,
