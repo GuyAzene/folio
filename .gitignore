@@ -34,5 +34,6 @@ sessions/
 # Local preview configuration
 .claude/launch.json
 
-# Private working notes: a separate repository
+# Local working files and personal agent instructions
 .private/
+CLAUDE.local.md

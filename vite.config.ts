@@ -49,7 +49,7 @@ export default defineConfig({
     ignorePatterns: [".private/**", "docs/**", "README.md", "AGENTS.md", "package-lock.json"],
   },
   lint: {
-    // Private notes are a separate repository kept in this folder.
+    // Local working files are not part of the project.
     ignorePatterns: [".private/**"],
     options: {
       typeAware: true,

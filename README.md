@@ -98,7 +98,13 @@ src/        the main process: chats, library, studying, study notes, storage
 tests/      test suites and synthetic fixtures
 scripts/    development scripts
 docs/       architecture and images
+.github/    continuous integration
 ```
+
+## Contributing
+
+Folio isn't accepting outside contributions yet. To report a security problem, see
+[SECURITY.md](SECURITY.md).
 
 ## License
 
