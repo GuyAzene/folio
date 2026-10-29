@@ -265,8 +265,8 @@
         />{:else}<FolderOpen size={18} strokeWidth={1.75} />{/if}
     </span>
     <div class="flex min-w-0 flex-1 flex-col gap-0.5">
-      <span class="font-medium text-text">{title}</span>
-      <span class="text-[12px] text-text-3">{hint}</span>
+      <span class="truncate font-medium text-text" dir="auto">{title}</span>
+      <span class="text-[12px] break-words text-text-3">{hint}</span>
     </div>
     <button
       type="button"
@@ -527,13 +527,14 @@
                             onchange={(event) =>
                               (skipped[file.path] =
                                 !event.currentTarget.checked)}
-                            class="size-3.5 accent-[var(--ink)]"
+                            class="size-3.5 shrink-0 accent-[var(--ink)]"
                           />
                           <span
                             class="min-w-0 flex-1 truncate text-[13px] text-text"
-                            >{file.name}</span
+                            dir="auto">{file.name}</span
                           >
-                          <span class="text-[12px] text-text-3"
+                          <span
+                            class="shrink-0 text-[12px] whitespace-nowrap text-text-3"
                             >{ROLE_LABEL[file.role]}</span
                           >
                         </label>

@@ -30,7 +30,7 @@ lectures into notes you can browse, and it never changes your files.
   sequences) right in the reply, and shows drawings or interactive demos you can step through.
   Demos run sealed off from Folio and the network.
 - **Study notes.** Folio can study a lecture page by page and publish notes by topic, each
-  section citing the slides it came from, with what it left out and why.
+  section citing the slides it came from.
 - **Your own notes.** Markdown notes with live preview, math, tables, diagrams, and Hebrew and
   English lines side by side. The tutor can suggest an edit; nothing changes until you keep it.
 - **Nothing lost.** Removed files, notes, chats and courses wait 30 days in Folio's Trash.

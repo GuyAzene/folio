@@ -35,11 +35,12 @@
     >
       {#if question}
         <AlertDialog.Title
-          class="text-[16px] leading-6 font-semibold tracking-[-0.01em] text-text"
+          class="text-[16px] leading-6 font-semibold tracking-[-0.01em] break-words text-text"
           dir="auto">{question.title}</AlertDialog.Title
         >
-        <AlertDialog.Description class="text-[13px] leading-5 text-text-2"
-          >{question.body}</AlertDialog.Description
+        <AlertDialog.Description
+          class="text-[13px] leading-5 break-words text-text-2"
+          dir="auto">{question.body}</AlertDialog.Description
         >
         <div class="mt-3 flex justify-end gap-2">
           <AlertDialog.Cancel

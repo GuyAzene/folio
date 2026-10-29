@@ -3,8 +3,8 @@ import type { GenerationInfo } from "../kb/store.ts";
 import type { StudyNotesView } from "./api.ts";
 
 /**
- * A course's published knowledge as the student reads it: sessions with what they cover and
- * what was left out, and topic pages whose sections cite the slide pages they came from.
+ * A course's published knowledge as the student reads it: sessions with what they cover, and
+ * topic pages whose sections cite the slide pages they came from.
  * Prerequisites the course has no page for are dropped rather than shown as dead links.
  */
 export function studyNotesView(knowledge: Knowledge, current: GenerationInfo): StudyNotesView {
@@ -18,28 +18,19 @@ export function studyNotesView(knowledge: Knowledge, current: GenerationInfo): S
     courseId: knowledge.courseId,
     generation: current.generation,
     publishedAt: current.publishedAt,
-    sessions: knowledge.sessions.map((session) => {
-      const leftOut = new Map<number, Set<string>>();
-      for (const entry of session.ledger)
-        if (entry.state === "gap")
-          leftOut.set(entry.page, (leftOut.get(entry.page) ?? new Set()).add(entry.reason));
-      return {
-        slug: session.slug,
-        title: session.title,
-        type: session.type,
-        documentId: session.documentId,
-        covers: session.covers,
-        worthRemembering: session.worthRemembering,
-        openThreads: session.openThreads,
-        workedExamples: session.workedExamples.map(({ title, page }) => ({ title, page })),
-        topics: knowledge.pages
-          .filter((page) => page.introducedIn === session.slug)
-          .map((page) => page.slug),
-        leftOut: [...leftOut]
-          .sort(([a], [b]) => a - b)
-          .map(([page, reasons]) => ({ page, reasons: [...reasons].filter(Boolean) })),
-      };
-    }),
+    sessions: knowledge.sessions.map((session) => ({
+      slug: session.slug,
+      title: session.title,
+      type: session.type,
+      documentId: session.documentId,
+      covers: session.covers,
+      worthRemembering: session.worthRemembering,
+      openThreads: session.openThreads,
+      workedExamples: session.workedExamples.map(({ title, page }) => ({ title, page })),
+      topics: knowledge.pages
+        .filter((page) => page.introducedIn === session.slug)
+        .map((page) => page.slug),
+    })),
     topics: knowledge.pages.map((page) => ({
       slug: page.slug,
       title: page.title,

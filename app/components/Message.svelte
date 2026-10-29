@@ -156,7 +156,7 @@
   <div class="flex flex-col">
     {#each text.split("\n") as line, index (index)}
       <span
-        class="min-h-6 whitespace-pre-wrap"
+        class="min-h-6 break-words whitespace-pre-wrap"
         dir={writtenDirection(estimateDirection(line)) ?? whole}>{line}</span
       >
     {/each}
@@ -179,8 +179,8 @@
           class="flex gap-2.5 rounded-lg bg-surface py-2 pr-3 pl-0 dark:bg-surface"
         >
           <span class="w-[3px] shrink-0 rounded-full bg-highlight"></span>
-          <div class="flex flex-col gap-0.5">
-            <span class="font-serif text-[14px] leading-5" dir="auto"
+          <div class="flex min-w-0 flex-col gap-0.5">
+            <span class="font-serif text-[14px] leading-5 break-words" dir="auto"
               >{quoted.text}</span
             >
             {#if quoted.source}<span class="text-[11px] text-text-3"
@@ -330,15 +330,16 @@
         {#each message.sources as source (`${source.documentId}:${source.page}`)}
           {@const cited = folio.document(source.documentId)}
           <button
-            class="inline-flex h-6 items-center gap-1.5 rounded-md border border-line-subtle bg-sunken px-2 text-[12px] text-text-2 transition-colors hover:border-line hover:text-text dark:bg-raised"
+            class="inline-flex h-6 max-w-full items-center gap-1.5 rounded-md border border-line-subtle bg-sunken px-2 text-[12px] whitespace-nowrap text-text-2 transition-colors hover:border-line hover:text-text dark:bg-raised"
+            title="{source.title} · Page {source.page}"
             onclick={() =>
               folio.openDocument(source.documentId, source.page, { chatId })}
           >
-            <FileText size={12} strokeWidth={1.75} />
-            {shortTitle(
-              source.title,
-              folio.course(cited?.courseId)?.name,
-            )} · Page {source.page}
+            <FileText size={12} strokeWidth={1.75} class="shrink-0" />
+            <span class="max-w-[240px] min-w-0 truncate" dir="auto"
+              >{shortTitle(source.title, folio.course(cited?.courseId)?.name)}</span
+            >
+            <span class="shrink-0">· Page {source.page}</span>
           </button>
         {/each}
       </div>

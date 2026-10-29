@@ -1,10 +1,4 @@
-import type {
-  AgentStatus,
-  CourseView,
-  DocumentRole,
-  PageCoverageView,
-  Pencil,
-} from "../../src/desktop/api.ts";
+import type { AgentStatus, CourseView, DocumentRole, Pencil } from "../../src/desktop/api.ts";
 import type { Location } from "./state.svelte.ts";
 import { folio } from "./state.svelte.ts";
 
@@ -95,6 +89,8 @@ export function formatDue(iso: string | null): string {
     weekday: "short",
     month: "short",
     day: "numeric",
+    // Another year is named, so a date a year out never reads as this year's.
+    ...(date.getFullYear() !== new Date().getFullYear() ? { year: "numeric" } : {}),
   });
   if (days < 0) return `Was due ${label}`;
   if (days === 0) return "Due today";
@@ -111,15 +107,6 @@ export const STATUS_LABEL: Record<AgentStatus, string> = {
   done: "Done",
   failed: "Failed",
   stopped: "Paused",
-};
-
-export const COVERAGE_LABEL: Record<PageCoverageView["state"], string> = {
-  pending: "Unread",
-  read: "Read",
-  escalated: "Escalated",
-  represented: "Represented",
-  gap: "Gap",
-  unaccounted: "Unaccounted",
 };
 
 const capitalize = (word: string) => word.charAt(0).toUpperCase() + word.slice(1);

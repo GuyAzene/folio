@@ -1,18 +1,14 @@
 <script lang="ts">
-  import { Check, ChevronDown, Settings2 } from "@lucide/svelte";
+  import { Check, ChevronDown, ChevronRight, Settings2 } from "@lucide/svelte";
   import { DropdownMenu } from "bits-ui";
-  import {
-    DEFAULT_THINKING,
-    THINKING_LEVELS,
-    type Thinking,
-  } from "../../src/desktop/api.ts";
+  import type { ModelView } from "../../src/desktop/api.ts";
   import { folio } from "../lib/state.svelte.ts";
   import ProviderMark from "./ProviderMark.svelte";
 
   /**
    * The model pill in the composer. A new chat uses the student's choice; a saved chat keeps
-   * the model it started with, so picking another one starts a new chat. How long the tutor
-   * thinks is one choice for every chat, and applies from the next question.
+   * the model it started with, so picking another one starts a new chat. Earlier models wait
+   * under "Older models".
    */
   let {
     chatModelId = null,
@@ -30,19 +26,30 @@
     ),
   );
 
-  const THINKING_NAMES: Record<Thinking, string> = {
-    low: "Low",
-    medium: "Medium",
-    high: "High",
-    xhigh: "Extra high",
-    max: "Max",
-  };
-
   function pick(id: string): void {
     folio.setModelChoice(id);
     if (chatModelId && id !== chatModelId) onnewchat?.();
   }
 </script>
+
+{#snippet modelItem(model: ModelView, indent = true)}
+  <DropdownMenu.Item
+    class="flex h-8 cursor-default items-center gap-2 rounded-md pr-2.5 {indent
+      ? 'pl-[34px]'
+      : 'pl-2.5'} text-[13px] text-text outline-none select-none data-[highlighted]:bg-hover"
+    onSelect={() => pick(model.id)}
+  >
+    <span class="flex-1 truncate">{model.name}</span>
+    {#if model.id === folio.defaultModel}
+      <span class="shrink-0 text-[11px] text-text-3">Default</span>
+    {/if}
+    <span class="flex w-4 shrink-0 justify-end">
+      {#if model.id === current}
+        <Check size={14} strokeWidth={2.25} />
+      {/if}
+    </span>
+  </DropdownMenu.Item>
+{/snippet}
 
 <DropdownMenu.Root>
   <DropdownMenu.Trigger
@@ -55,7 +62,6 @@
       size={13}
     />
     <span class="truncate">{folio.modelName(current)}</span>
-    <span class="shrink-0 text-text-3">{THINKING_NAMES[folio.thinking]}</span>
     <ChevronDown size={13} strokeWidth={2} class="shrink-0 text-text-3" />
   </DropdownMenu.Trigger>
   <DropdownMenu.Portal>
@@ -98,52 +104,35 @@
               {/if}
             </span>
           </DropdownMenu.GroupHeading>
-          {#each group.models as model (model.id)}
-            <DropdownMenu.Item
-              class="flex h-8 cursor-default items-center gap-2 rounded-md pr-2.5 pl-[34px] text-[13px] text-text outline-none select-none data-[highlighted]:bg-hover"
-              onSelect={() => pick(model.id)}
-            >
-              <span class="flex-1 truncate">{model.name}</span>
-              {#if model.id === folio.defaultModel}
-                <span class="text-[11px] text-text-3">Default</span>
-              {/if}
-              <span class="flex w-4 justify-end">
-                {#if model.id === current}
-                  <Check size={14} strokeWidth={2.25} />
-                {/if}
-              </span>
-            </DropdownMenu.Item>
+          {#each group.models.filter((model) => !model.older) as model (model.id)}
+            {@render modelItem(model)}
           {/each}
+          {@const older = group.models.filter((model) => model.older)}
+          {#if older.length}
+            <DropdownMenu.Sub>
+              <DropdownMenu.SubTrigger
+                class="flex h-8 cursor-default items-center gap-2 rounded-md pr-2.5 pl-[34px] text-[13px] text-text-2 outline-none select-none data-[highlighted]:bg-hover data-[highlighted]:text-text data-[state=open]:bg-hover"
+              >
+                <span class="flex-1 truncate">Older models</span>
+                <span class="text-[11px] text-text-3">{older.length}</span>
+                <ChevronRight
+                  size={14}
+                  strokeWidth={1.75}
+                  class="shrink-0 text-text-3"
+                />
+              </DropdownMenu.SubTrigger>
+              <DropdownMenu.SubContent
+                sideOffset={6}
+                class="z-50 w-[220px] animate-[folio-scale_140ms_var(--ease-out-quint)] rounded-xl border border-line-subtle bg-raised p-1.5 shadow-3 outline-none"
+              >
+                {#each older as model (model.id)}
+                  {@render modelItem(model, false)}
+                {/each}
+              </DropdownMenu.SubContent>
+            </DropdownMenu.Sub>
+          {/if}
         </DropdownMenu.Group>
       {/each}
-      <DropdownMenu.Separator class="my-1.5 h-px bg-line-subtle" />
-      <DropdownMenu.Group>
-        <DropdownMenu.GroupHeading class="px-2.5 pt-1 pb-1.5">
-          <span class="block text-[12px] font-medium text-text-2">Thinking</span
-          >
-          <span class="block text-[11px] leading-4 text-text-3">
-            Higher thinks longer before answering: slower, and uses more of your
-            plan.
-          </span>
-        </DropdownMenu.GroupHeading>
-        {#each THINKING_LEVELS as level (level)}
-          <DropdownMenu.Item
-            class="flex h-8 cursor-default items-center gap-2 rounded-md pr-2.5 pl-[34px] text-[13px] text-text outline-none select-none data-[highlighted]:bg-hover"
-            closeOnSelect={false}
-            onSelect={() => folio.setThinking(level)}
-          >
-            <span class="flex-1 truncate">{THINKING_NAMES[level]}</span>
-            {#if level === DEFAULT_THINKING}
-              <span class="text-[11px] text-text-3">Default</span>
-            {/if}
-            <span class="flex w-4 justify-end">
-              {#if level === folio.thinking}
-                <Check size={14} strokeWidth={2.25} />
-              {/if}
-            </span>
-          </DropdownMenu.Item>
-        {/each}
-      </DropdownMenu.Group>
       <DropdownMenu.Separator class="my-1.5 h-px bg-line-subtle" />
       <DropdownMenu.Item
         class="flex h-8 cursor-default items-center gap-2 rounded-md px-2.5 text-[13px] text-text-2 outline-none select-none data-[highlighted]:bg-hover data-[highlighted]:text-text"

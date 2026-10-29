@@ -164,8 +164,10 @@
                     strokeWidth={1.75}
                     class="shrink-0 text-text-3"
                   />
-                  <span class="flex-1">Image…</span>
-                  <span class="text-[12px] text-text-3">or paste ⌘V</span>
+                  <span class="min-w-0 flex-1 truncate">Image…</span>
+                  <span class="shrink-0 text-[12px] whitespace-nowrap text-text-3"
+                    >or paste ⌘V</span
+                  >
                 </Command.Item>
               </Command.GroupItems>
             </Command.Group>
@@ -204,7 +206,7 @@
                         <span class="min-w-0 flex-1 truncate" dir="auto"
                           >{candidate.name}</span
                         >
-                        <span class="text-[12px] text-text-3"
+                        <span class="shrink-0 text-[12px] text-text-3"
                           >{candidate.code}</span
                         >
                       </Command.Item>

@@ -15,7 +15,7 @@
   /**
    * The study notes Folio wrote from a course's lectures, as published: an outline of sessions
    * and their topics beside the open topic, whose sections cite the slide pages they came from.
-   * A session's overview says what it covers and what the notes leave out.
+   * A session's overview says what it covers, its worked examples and what is worth keeping.
    */
   let { courseId, item }: { courseId: string; item: string | null } = $props();
   let filter = $state("");
@@ -104,21 +104,26 @@
 
 {#snippet pageChip(documentId: string, page: number)}
   <button
-    class="inline-flex h-6 items-center gap-1.5 rounded-md border border-line-subtle bg-sunken px-2 font-sans text-[12px] leading-none text-text-2 transition-colors hover:border-line hover:text-text dark:bg-raised"
+    class="inline-flex h-6 max-w-full shrink-0 items-center gap-1.5 rounded-md border border-line-subtle bg-sunken px-2 font-sans text-[12px] leading-none whitespace-nowrap text-text-2 transition-colors hover:border-line hover:text-text dark:bg-raised"
     dir="ltr"
     title="Open the slides at page {page}"
     onclick={(event) => openPage(documentId, page, event)}
   >
-    <FileText size={12} strokeWidth={1.75} />
-    <span dir="auto">{documentLabel(documentId)}</span> · Page {page}
+    <FileText size={12} strokeWidth={1.75} class="shrink-0" />
+    <span class="max-w-[240px] min-w-0 truncate" dir="auto"
+      >{documentLabel(documentId)}</span
+    >
+    <span class="shrink-0">· Page {page}</span>
   </button>
 {/snippet}
 
 {#snippet topicLink(slug: string, title: string)}
   <button
-    class="inline-flex h-7 items-center rounded-md border border-line-subtle bg-surface px-2.5 font-sans text-[13px] font-medium text-text-2 shadow-1 transition-colors hover:bg-hover hover:text-text dark:bg-raised"
+    class="inline-flex h-7 max-w-full min-w-0 items-center rounded-md border border-line-subtle bg-surface px-2.5 font-sans text-[13px] font-medium whitespace-nowrap text-text-2 shadow-1 transition-colors hover:bg-hover hover:text-text dark:bg-raised"
     dir="auto"
-    onclick={(event) => open(`topic:${slug}`, event)}>{title}</button
+    {title}
+    onclick={(event) => open(`topic:${slug}`, event)}
+    ><span class="truncate">{title}</span></button
   >
 {/snippet}
 
@@ -364,25 +369,6 @@
             </ul>
           {/if}
 
-          {#if session.leftOut.length}
-            {@render heading("Not in the notes")}
-            <p class="font-sans !text-[13px] !leading-5 text-text-3">
-              Parts of these pages were left out, marked with a yellow dot on
-              the Studying page.
-            </p>
-            <div class="flex flex-col gap-2.5">
-              {#each session.leftOut as gap (gap.page)}
-                <div class="flex items-start gap-3">
-                  {@render pageChip(session.documentId, gap.page)}
-                  <span
-                    class="font-sans text-[14px] leading-6 text-text-2"
-                    dir="auto"
-                    >{gap.reasons.join(" ") || "Folio couldn't place it."}</span
-                  >
-                </div>
-              {/each}
-            </div>
-          {/if}
         </article>
       {:else if notes === undefined}
         <div class="px-8 py-24 text-center text-text-3">Loading…</div>

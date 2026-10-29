@@ -3,12 +3,15 @@
   import type { DocumentRole } from "../../src/desktop/api.ts";
   import ChatList from "../components/ChatList.svelte";
   import DocumentTable from "../components/DocumentTable.svelte";
-  import { ROLE_LABEL, ROLES } from "../lib/labels.ts";
+  import Select from "../components/Select.svelte";
+  import { PENCIL, ROLE_DOT, ROLE_LABEL, ROLES } from "../lib/labels.ts";
   import { folio } from "../lib/state.svelte.ts";
 
   /** Library, Chats and Assignments: the list-shaped places in the sidebar. */
   let { view }: { view: "library" | "chats" | "assignments" } = $props();
 
+  /** The filters' "everything" choice. */
+  const ALL = "all";
   let courseFilter = $state("");
   let roleFilter = $state<DocumentRole | "">("");
   let query = $state("");
@@ -85,27 +88,34 @@
             class="min-w-0 flex-1 bg-transparent outline-none placeholder:text-text-3"
           />
         </label>
-        <select
-          bind:value={courseFilter}
-          class="h-8 rounded-md border border-line-subtle bg-surface px-2 text-text-2 shadow-1 dark:bg-raised"
-          aria-label="Course"
-        >
-          <option value="">All courses</option>
-          {#each folio.courses as course (course.id)}<option value={course.id}
-              >{course.name}</option
-            >{/each}
-        </select>
+        <Select
+          label="Course"
+          value={courseFilter || ALL}
+          options={[
+            { value: ALL, label: "All courses" },
+            ...folio.courses.map((course) => ({
+              value: course.id,
+              label: course.name,
+              dot: PENCIL[course.color],
+            })),
+          ]}
+          onchange={(value) => (courseFilter = value === ALL ? "" : value)}
+        />
         {#if view === "library"}
-          <select
-            bind:value={roleFilter}
-            class="h-8 rounded-md border border-line-subtle bg-surface px-2 text-text-2 shadow-1 dark:bg-raised"
-            aria-label="Role"
-          >
-            <option value="">All roles</option>
-            {#each ROLES as role (role)}<option value={role}
-                >{ROLE_LABEL[role]}</option
-              >{/each}
-          </select>
+          <Select
+            label="Role"
+            value={roleFilter || ALL}
+            options={[
+              { value: ALL, label: "All roles" },
+              ...ROLES.map((role) => ({
+                value: role,
+                label: ROLE_LABEL[role],
+                dot: ROLE_DOT[role],
+              })),
+            ]}
+            onchange={(value) =>
+              (roleFilter = value === ALL ? "" : (value as DocumentRole))}
+          />
         {/if}
       </div>
     {/if}

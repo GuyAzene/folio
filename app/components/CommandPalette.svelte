@@ -154,9 +154,11 @@
                         )}
                       class={item}
                     >
-                      <CourseTile {course} size={16} /><span class="flex-1"
-                        >{course.name}</span
-                      ><span class="text-[12px] text-text-3">{course.code}</span
+                      <CourseTile {course} size={16} /><span
+                        class="min-w-0 flex-1 truncate"
+                        dir="auto">{course.name}</span
+                      ><span class="shrink-0 text-[12px] text-text-3"
+                        >{course.code}</span
                       >
                     </Command.Item>
                   {/each}

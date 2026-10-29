@@ -137,7 +137,13 @@ type SubmittedMessage = UserMessage & {
   folioPage?: SessionFocus & { documentId: string };
   folioAttachments?: Attachment[];
   folioFocus?: FocusSnapshot | null;
+  /** How long the tutor thought about this question, and whether it asked for the fast tier. */
+  folioThinking?: Thinking;
+  folioFast?: true;
 };
+
+/** Asks OpenAI for its priority tier, which Pi's simple stream options cannot request. */
+const priorityTier = (payload: unknown) => ({ ...(payload as object), service_tier: "priority" });
 
 /** What can go with a question besides its text. */
 export interface SendExtras {
@@ -147,6 +153,8 @@ export interface SendExtras {
   focus?: SessionFocus | null;
   /** How long the tutor thinks about this question and the requests that answer it. */
   thinking?: Thinking;
+  /** Answer on OpenAI's priority tier: faster, and uses more of the plan. Only this question. */
+  fast?: boolean;
 }
 
 /** Every course and document the student added in a chat, read from their own messages only. */
@@ -472,8 +480,11 @@ export class Conversation {
       ...(added.length ? { folioAttachments: added.map((item) => item.attachment) } : {}),
       ...(focus !== undefined ? { folioFocus: focus } : {}),
       ...(extras.thinking ? { folioThinking: extras.thinking } : {}),
+      ...(extras.fast ? { folioFast: true } : {}),
     };
     if (extras.thinking) this.#agent.state.thinkingLevel = extras.thinking;
+    // Set on every question, so a fast question never leaves the next one fast.
+    this.#agent.onPayload = extras.fast ? priorityTier : undefined;
     const summarize = this.#trim(input);
     if (focus !== undefined)
       this.#record.focus = focus ? { documentId: focus.documentId, page: focus.page } : null;

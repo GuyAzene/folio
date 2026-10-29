@@ -126,12 +126,19 @@ of what it covers. Nothing saved is deleted, the summary never judges what the s
 understands, and which courses the student added is restated by Folio, not by the model. A
 summary that fails is skipped; one the student stops leaves the chat as it was.
 
+Each question carries how long the tutor thinks (Low to Max) and whether it goes on OpenAI's
+faster priority tier, which uses more of the plan; both are recorded on the question and apply
+to it alone, so a fast question never leaves the next one fast. Models the plan serves before
+Pi's catalog lists them (GPT-6.1 Terra) are declared in `src/model-catalog.ts` as copies of a
+listed sibling, and Pi's own entry replaces the declaration once it ships.
+
 ## Studying a lecture
 
 A study job reads every page of a lecture: its text layer and regions, with close-up re-reads
 where a page needs them. It then drafts study notes by topic, each section citing the pages and
-regions it came from. Every region ends up accounted for: cited, left out with a reason, or
-listed as a gap. The result is published as a new, immutable version of the course's knowledge,
+regions it came from. Every region ends up accounted for: cited, or omitted as page furniture
+with a reason (page numbers, repeated headers, build steps, duplicates). The student never sees
+this accounting; it is a record for diagnosis. The result is published as a new, immutable version of the course's knowledge,
 with a SQLite FTS5 search index. Each step's output is saved, so a job interrupted by a quit or a
 plan limit resumes where it stopped instead of starting over.
 

@@ -81,7 +81,7 @@ export class ChatService {
 
   /** Accepts a message and returns its chat ID; the reply and any failure arrive as events. */
   async send(input: unknown): Promise<{ chatId: string }> {
-    const { chatId, text, submissionId, courseId, focus, modelId, attachments, thinking } =
+    const { chatId, text, submissionId, courseId, focus, modelId, attachments, thinking, fast } =
       validSend(input);
     const models = this.#options.models ?? [this.#options.modelId];
     if (modelId && !models.includes(modelId)) throw new Error("That model is not available.");
@@ -108,7 +108,7 @@ export class ChatService {
     const id = conversation.snapshot.id;
     // A course chat's question carries the page in view, so the tutor's prompt stays the same.
     const extras = conversation.kind === "course" ? { focus: focus ?? null } : {};
-    conversation.send(text, submissionId, { attachments: added, thinking, ...extras }).then(
+    conversation.send(text, submissionId, { attachments: added, thinking, fast, ...extras }).then(
       () => this.#settled(conversation),
       (error: unknown) => {
         this.#options.emit({ type: "error", chatId: id, message: errorMessage(error) });
@@ -280,7 +280,7 @@ export class ChatService {
 
 function validSend(input: unknown): SendInput & { attachments: AttachmentInput[] } {
   if (typeof input !== "object" || input === null) throw new Error("Invalid message.");
-  const { chatId, text, submissionId, courseId, focus, modelId, attachments, thinking } =
+  const { chatId, text, submissionId, courseId, focus, modelId, attachments, thinking, fast } =
     input as Record<string, unknown>;
   if (chatId !== null && (typeof chatId !== "string" || !UUID.test(chatId)))
     throw new Error("Unknown chat.");
@@ -298,6 +298,7 @@ function validSend(input: unknown): SendInput & { attachments: AttachmentInput[]
     throw new Error("That model is not available.");
   if (thinking !== undefined && !THINKING_LEVELS.includes(thinking as Thinking))
     throw new Error("That thinking level is not available.");
+  if (fast !== undefined && typeof fast !== "boolean") throw new Error("Invalid speed.");
   return {
     chatId,
     text,
@@ -307,6 +308,7 @@ function validSend(input: unknown): SendInput & { attachments: AttachmentInput[]
     modelId: (modelId as string | null | undefined) ?? null,
     attachments: validAttachments(attachments),
     ...(thinking !== undefined ? { thinking: thinking as Thinking } : {}),
+    ...(fast ? { fast: true } : {}),
   };
 }
 

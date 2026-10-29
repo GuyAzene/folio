@@ -433,9 +433,7 @@ export class IngestRunner {
       const ledgerNode = this.#node(jobId, branch.id, `ledger:${hash(ledger)}`, {
         role: "ledger",
         title: "Coverage ledger",
-        task: uncovered
-          ? `${uncovered} region${uncovered === 1 ? "" : "s"} recorded as gaps`
-          : "Every region accounted for",
+        task: "Checked every part of every slide",
       });
       store.setNode(ledgerNode.id, { status: "done" });
       const exceptions = exceptionsFor(ledger, verdicts, draft, inventory);

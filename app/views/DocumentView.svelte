@@ -323,19 +323,23 @@
           <div
             class="flex h-9 shrink-0 items-center gap-2 border-b border-line-subtle px-4 text-[12px] text-text-3"
           >
-            <span>Reading</span>
+            <span class="shrink-0">Reading</span>
             {#if course}
               <span
-                class="inline-flex h-[22px] items-center gap-1.5 rounded-md bg-sunken px-1.5 text-text-2 dark:bg-raised"
-                ><CourseTile {course} size={12} />{course.name}</span
+                class="inline-flex h-[22px] max-w-[200px] min-w-0 shrink items-center gap-1.5 rounded-md bg-sunken px-1.5 whitespace-nowrap text-text-2 dark:bg-raised"
+                ><CourseTile {course} size={12} /><span class="truncate" dir="auto"
+                  >{course.name}</span
+                ></span
               >
             {/if}
             <button
-              class="inline-flex h-[22px] min-w-0 items-center gap-1 truncate rounded-md bg-sunken px-1.5 text-text-2 hover:text-text dark:bg-raised"
+              class="inline-flex h-[22px] min-w-0 items-center gap-1 rounded-md bg-sunken px-1.5 whitespace-nowrap text-text-2 hover:text-text dark:bg-raised"
               onclick={() => setPanel("docked")}
             >
-              <MessageSquare size={11} strokeWidth={1.75} />
-              {document.title}, page {location.page}
+              <MessageSquare size={11} strokeWidth={1.75} class="shrink-0" />
+              <span class="truncate" dir="auto"
+                >{document.title}, page {location.page}</span
+              >
             </button>
           </div>
         {/if}

@@ -612,3 +612,37 @@ describe("how long the tutor thinks", () => {
     ).rejects.toThrow("thinking level");
   });
 });
+
+describe("fast replies", () => {
+  it("ask for the priority tier only on a question sent as fast", async () => {
+    const tiers: unknown[] = [];
+    const { service, store, events } = await setup({
+      streamFn: async (model, context, options) => {
+        const payload = await options?.onPayload?.({ model: model.id }, model);
+        tiers.push((payload as { service_tier?: string } | undefined)?.service_tier ?? "standard");
+        return streaming(model, context, options);
+      },
+    });
+    const { chatId } = await service.send({
+      chatId: null,
+      text: "Quick one",
+      submissionId: randomUUID(),
+      fast: true,
+    });
+    await settled(events);
+    events.length = 0;
+    await service.send({ chatId, text: "Take your time", submissionId: randomUUID() });
+    await settled(events);
+    expect(tiers).toEqual(["priority", "standard"]);
+    const questions = (await store.load(chatId)).messages.filter(
+      (message) => message.role === "user",
+    );
+    expect(questions.map((message) => (message as { folioFast?: true }).folioFast)).toEqual([
+      true,
+      undefined,
+    ]);
+    await expect(
+      service.send({ chatId, text: "Hmm", submissionId: randomUUID(), fast: "yes" as never }),
+    ).rejects.toThrow("Invalid speed");
+  });
+});

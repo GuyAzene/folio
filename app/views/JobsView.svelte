@@ -126,11 +126,14 @@
             >
               {heading(job)}
             </h2>
-            <p class="truncate text-[12.5px] leading-[18px] text-text-3">
+            <p
+              class="line-clamp-2 text-[12.5px] leading-[18px] break-words text-text-3"
+              dir="auto"
+            >
               {subline(job)}
             </p>
           </div>
-          <div class="flex items-center gap-1.5">
+          <div class="flex shrink-0 items-center gap-1.5">
             {#if job.resumable}
               <button
                 type="button"

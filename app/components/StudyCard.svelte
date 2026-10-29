@@ -38,14 +38,13 @@
     study.start === null ? "" : formatElapsed((study.end ?? now) - study.start),
   );
 
-  /** "8 pages · 6 topics · 1 to check", from what the document recorded. */
+  /** "8 pages · 6 topics", from what the document recorded. */
   const results = $derived.by(() => {
     const outcome = study.outcome;
     if (!outcome) return plural(study.pages.length, "page");
     return [
       plural(outcome.pages ?? study.pages.length, "page"),
       outcome.topics !== undefined && plural(outcome.topics, "topic"),
-      outcome.uncovered && `${plural(outcome.uncovered, "gap")} noted`,
     ]
       .filter(Boolean)
       .join(" · ");
@@ -148,9 +147,10 @@
                     : "font-medium text-text"}>{stage.label}</span
                 >
                 <span
-                  class="ml-auto flex items-center gap-1.5 text-[12.5px] text-text-3 tabular-nums"
+                  class="ml-auto flex min-w-0 shrink items-center gap-1.5 text-[12.5px] whitespace-nowrap text-text-3 tabular-nums"
                 >
-                  {#if stage.detail}<span>{stage.detail}</span>{/if}
+                  {#if stage.detail}<span class="truncate">{stage.detail}</span
+                    >{/if}
                   {#if stage.model}
                     {#if stage.detail}<span aria-hidden="true">·</span>{/if}
                     <span class="flex items-center gap-1 text-text-2">

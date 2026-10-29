@@ -20,6 +20,7 @@
   import AttachMenu from "./AttachMenu.svelte";
   import CourseTile from "./CourseTile.svelte";
   import ModelPicker from "./ModelPicker.svelte";
+  import ReasoningPicker from "./ReasoningPicker.svelte";
 
   let {
     tabId,
@@ -227,19 +228,19 @@
     <div
       class="flex items-center gap-3 rounded-t-[13px] border-b border-line-subtle bg-sunken px-3.5 py-2.5"
     >
-      <span class="flex-1 text-text-2">
+      <span class="min-w-0 flex-1 text-text-2">
         {folio.connection.signingIn
           ? "Finish signing in with ChatGPT in your browser."
           : "Connect your ChatGPT account to start chatting."}
       </span>
       {#if folio.connection.signingIn}
         <button
-          class="h-7 rounded-md border border-line bg-surface px-2.5 text-[12px] font-medium shadow-1 hover:bg-hover"
+          class="h-7 shrink-0 rounded-md border border-line bg-surface px-2.5 text-[12px] font-medium whitespace-nowrap shadow-1 hover:bg-hover"
           onclick={() => folio.api.cancelSignIn()}>Cancel</button
         >
       {:else}
         <button
-          class="h-7 rounded-md bg-ink px-2.5 text-[12px] font-medium text-on-ink shadow-1 hover:opacity-90"
+          class="h-7 shrink-0 rounded-md bg-ink px-2.5 text-[12px] font-medium whitespace-nowrap text-on-ink shadow-1 hover:opacity-90"
           onclick={() => folio.api.signIn()}>Connect ChatGPT</button
         >
       {/if}
@@ -254,7 +255,9 @@
         <span class="line-clamp-2 font-serif text-[14px] leading-5 text-text"
           >{quote.text}</span
         >
-        <span class="text-[11px] text-text-3">{quote.source}</span>
+        <span class="truncate text-[11px] text-text-3" dir="auto"
+          >{quote.source}</span
+        >
       </div>
       <button
         class="inline-flex size-6 shrink-0 items-center justify-center rounded-md text-text-3 hover:bg-hover hover:text-text"
@@ -352,6 +355,7 @@
         chatModelId={chatId ? (chat?.modelId ?? null) : null}
         onnewchat={onnewchat ?? (() => folio.newChat(courseId))}
       />
+      <ReasoningPicker />
     {/if}
     {#if running}
       <button

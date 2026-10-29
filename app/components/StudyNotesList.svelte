@@ -45,9 +45,6 @@
           <span class="shrink-0 text-[12px] text-text-3">
             {session.topics.length}
             {session.topics.length === 1 ? "topic" : "topics"}
-            {#if session.leftOut.length}
-              · {session.leftOut.length} left out
-            {/if}
           </span>
         </button>
         <div class="ml-[7px] flex flex-col border-l border-line-subtle pl-4">

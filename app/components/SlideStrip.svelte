@@ -68,7 +68,6 @@
 
   // Up to ten pages a row, each at most 112px wide; longer documents wrap into more rows.
   const columns = $derived(Math.max(1, Math.min(pages.length, 10)));
-  const gaps = $derived(pages.filter((cell) => cell.state === "gap").length);
   let ratio = $state(16 / 9);
 
   const STATE: Record<PageCoverageView["state"], string> = {
@@ -76,8 +75,9 @@
     read: "read",
     escalated: "read, then looked at up close",
     represented: "written up",
-    gap: "part of this page isn't in the study notes",
-    unaccounted: "something here needs your decision",
+    // Studies from before 2026-10-29 could end a page in these states; it was still written up.
+    gap: "written up",
+    unaccounted: "written up",
   };
 </script>
 
@@ -113,26 +113,9 @@
       {#if now}
         <span class="scan pointer-events-none absolute inset-0"></span>
       {/if}
-      {#if cell.state === "gap" || cell.state === "unaccounted"}
-        <span
-          class="absolute top-1 right-1 size-2 rounded-full ring-2 ring-surface {cell.state ===
-          'gap'
-            ? 'bg-highlight'
-            : 'bg-danger'}"
-          aria-hidden="true"
-        ></span>
-      {/if}
     </div>
   {/each}
 </div>
-{#if gaps}
-  <p class="mt-2 flex items-center gap-1.5 text-[12px] text-text-3">
-    <span class="size-2 shrink-0 rounded-full bg-highlight" aria-hidden="true"
-    ></span>
-    {gaps === 1 ? "1 page has" : `${gaps} pages have`} parts that aren't in the study
-    notes.
-  </p>
-{/if}
 
 <style>
   /* A soft band passing over a page while a model reads it. */

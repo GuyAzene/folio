@@ -445,7 +445,8 @@ markdown.use({
         };
         const head = `<tr>${token.header.map(cell).join("")}</tr>`;
         const body = token.rows.map((row) => `<tr>${row.map(cell).join("")}</tr>`).join("\n");
-        return `<table dir="${direction}">\n<thead>\n${head}\n</thead>\n${body ? `<tbody>\n${body}\n</tbody>\n` : ""}</table>\n`;
+        // A wide table scrolls on its own instead of squeezing its words apart.
+        return `<div class="table-scroll" dir="${direction}"><table dir="${direction}">\n<thead>\n${head}\n</thead>\n${body ? `<tbody>\n${body}\n</tbody>\n` : ""}</table></div>\n`;
       });
     },
     code(token) {

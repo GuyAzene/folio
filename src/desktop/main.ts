@@ -28,6 +28,7 @@ import { CourseNotes, type ProposalRecord } from "../library/notes.ts";
 import { scanFolder } from "../library/scan.ts";
 import { parseCourseDetails, SYLLABUS_PROMPT, syllabusText } from "../library/syllabus.ts";
 import { checkId, DOCUMENT_ROLES, LibraryStore, type DocumentRole } from "../library/store.ts";
+import { folioModel } from "../model-catalog.ts";
 import { OFFERED_MODELS, SUBSCRIPTIONS } from "../model-choices.ts";
 import { DEFAULT_MODEL } from "../agents.ts";
 import { createSessionStore } from "../session-store.ts";
@@ -97,7 +98,7 @@ const emit = (event: DesktopEvent) => window?.webContents.send(CHANNELS.event, e
 const catalog = createModels();
 catalog.setProvider(openaiProvider());
 const resolveModel = (id: string) => {
-  const model = catalog.getModel("openai", id);
+  const model = folioModel(catalog, id);
   if (!model) throw new Error(`Model '${id}' is not in Pi's catalog.`);
   return model;
 };
@@ -386,7 +387,10 @@ const handlers: Record<InvokeMethod, (...args: unknown[]) => Promise<unknown>> =
         available: subscription.available,
         // Only ChatGPT can be signed in to so far.
         connected: subscription.provider === "openai" && connection.connected,
-        models: subscription.models.map((id) => ({ id, name: resolveModel(id).name })),
+        models: [
+          ...subscription.models.map((id) => ({ id, name: resolveModel(id).name })),
+          ...subscription.older.map((id) => ({ id, name: resolveModel(id).name, older: true })),
+        ],
       })),
       chats,
       unavailableChats: unavailable,

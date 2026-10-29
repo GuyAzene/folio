@@ -10,6 +10,8 @@
   } from "../lib/labels.ts";
   import { folio } from "../lib/state.svelte.ts";
   import CourseTile from "./CourseTile.svelte";
+  import DatePicker from "./DatePicker.svelte";
+  import Select from "./Select.svelte";
 
   let {
     documents,
@@ -29,16 +31,11 @@
     empty?: string;
   } = $props();
 
-  function setDue(document: DocumentView, value: string): void {
-    // A date input gives a local day; store it as the end of that day.
-    const dueAt = value ? new Date(`${value}T23:59:00`).toISOString() : null;
-    void folio.updateDocument(document, { dueAt });
-  }
-  function dueValue(iso: string | null): string {
-    if (!iso) return "";
-    const date = new Date(iso);
-    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-  }
+  const ROLE_OPTIONS = ROLES.map((role) => ({
+    value: role,
+    label: ROLE_LABEL[role],
+    dot: ROLE_DOT[role],
+  }));
 </script>
 
 {#if documents.length}
@@ -47,7 +44,7 @@
       class="flex h-8 items-center gap-4 border-b border-line-subtle bg-sunken px-4 text-[12px] font-medium text-text-3 dark:bg-raised"
     >
       {#if title}
-        <span class="flex-1 text-text-2"
+        <span class="min-w-0 flex-1 truncate text-text-2" dir="auto"
           >{title}<span class="ml-1.5 font-normal text-text-4"
             >{documents.length}</span
           ></span
@@ -128,31 +125,14 @@
           class="w-[150px] shrink-0"
           onclick={(event) => event.stopPropagation()}
         >
-          <label
-            class="relative inline-flex h-6 items-center gap-1.5 rounded-md border border-line-subtle bg-sunken pr-2 pl-2 hover:border-line dark:bg-raised"
-          >
-            <span
-              class="size-1.5 rounded-[2px]"
-              style="background:{ROLE_DOT[document.role]}"
-            ></span>
-            <span class="text-[12px] font-medium text-text-2"
-              >{ROLE_LABEL[document.role]}</span
-            >
-            <select
-              class="absolute inset-0 cursor-default opacity-0"
-              aria-label="Role"
-              value={document.role}
-              onchange={(event) =>
-                folio.updateDocument(document, {
-                  role: (event.currentTarget as HTMLSelectElement)
-                    .value as DocumentRole,
-                })}
-            >
-              {#each ROLES as role (role)}<option value={role}
-                  >{ROLE_LABEL[role]}</option
-                >{/each}
-            </select>
-          </label>
+          <Select
+            variant="chip"
+            label="Role"
+            value={document.role}
+            options={ROLE_OPTIONS}
+            onchange={(role) =>
+              folio.updateDocument(document, { role: role as DocumentRole })}
+          />
         </div>
         {#if showDue}
           <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
@@ -160,16 +140,9 @@
             class="flex w-[166px] shrink-0 flex-col"
             onclick={(event) => event.stopPropagation()}
           >
-            <input
-              type="date"
-              class="h-7 rounded-md border border-transparent bg-transparent px-1 text-[12px] text-text-2 hover:border-line focus:border-line-strong focus:outline-none"
-              value={dueValue(document.dueAt)}
-              aria-label="Due date"
-              onchange={(event) =>
-                setDue(
-                  document,
-                  (event.currentTarget as HTMLInputElement).value,
-                )}
+            <DatePicker
+              value={document.dueAt}
+              onchange={(dueAt) => folio.updateDocument(document, { dueAt })}
             />
             <span class="px-1 text-[11px] text-text-3"
               >{formatDue(document.dueAt)}</span

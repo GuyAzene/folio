@@ -112,6 +112,8 @@ class FolioState {
   modelChoice = $state("");
   /** How long the tutor thinks, for every chat, from the next question on. */
   thinking = $state<Thinking>(DEFAULT_THINKING);
+  /** Questions go on OpenAI's faster tier, which uses more of the plan. */
+  fast = $state(false);
   connection = $state<ConnectionView>({ connected: false, signingIn: false });
   error = $state<string | null>(null);
   notice = $state<string | null>(null);
@@ -155,6 +157,8 @@ class FolioState {
 
   #api: FolioApi | null = null;
   #awaiting: string[] = [];
+  /** Each document's latest pending save, resolving to the revision it left. */
+  #documentSaves = new Map<string, Promise<number>>();
   #saveTimer: ReturnType<typeof setTimeout> | undefined;
   #libraryTimer: ReturnType<typeof setTimeout> | undefined;
   #nonce = 0;
@@ -176,6 +180,7 @@ class FolioState {
       this.defaultModel = boot.model.id;
       this.modelChoice = this.#savedModel() ?? boot.model.id;
       this.thinking = this.#savedThinking() ?? DEFAULT_THINKING;
+      this.fast = this.#savedFast();
       this.chats = boot.chats;
       this.unavailableChats = boot.unavailableChats;
       this.connection = boot.connection;
@@ -450,6 +455,7 @@ class FolioState {
         focus: context.focus,
         modelId: context.chatId ? null : this.modelChoice,
         thinking: this.thinking,
+        ...(this.fast ? { fast: true } : {}),
         ...(added.length ? { attachments: added.map((item) => item.input) } : {}),
       });
       if (!context.chatId) this.#adopt(context.tabId, chatId);
@@ -683,13 +689,26 @@ class FolioState {
     this.#changed();
   }
 
-  async updateDocument(document: DocumentView, patch: DocumentPatch): Promise<void> {
-    try {
-      await this.#api!.updateDocument(document.id, patch, document.revision);
-    } catch (error) {
-      this.error = message(error);
-    }
-    await this.refreshLibrary();
+  /**
+   * Saves a change to a document's details. Changes to one document go one at a time, each from
+   * the revision the previous one returned, so two quick edits never refuse each other.
+   */
+  updateDocument(document: DocumentView, patch: DocumentPatch): Promise<void> {
+    const previous = this.#documentSaves.get(document.id) ?? Promise.resolve(document.revision);
+    const saved = previous.then(async (known) => {
+      const revision = Math.max(known, this.document(document.id)?.revision ?? 0);
+      try {
+        return (await this.#api!.updateDocument(document.id, patch, revision)).revision;
+      } catch (error) {
+        this.error = message(error);
+        return revision;
+      }
+    });
+    this.#documentSaves.set(document.id, saved);
+    return saved.then(async () => {
+      if (this.#documentSaves.get(document.id) === saved) this.#documentSaves.delete(document.id);
+      await this.refreshLibrary();
+    });
   }
 
   // ── Studying ────────────────────────────────────────────────────────────
@@ -837,6 +856,23 @@ class FolioState {
       localStorage.setItem("folio.thinking", level);
     } catch {
       // A per-device convenience; chats fall back to the default level.
+    }
+  }
+
+  setFast(fast: boolean): void {
+    this.fast = fast;
+    try {
+      localStorage.setItem("folio.fast", fast ? "1" : "0");
+    } catch {
+      // A per-device convenience; chats fall back to the standard tier.
+    }
+  }
+
+  #savedFast(): boolean {
+    try {
+      return localStorage.getItem("folio.fast") === "1";
+    } catch {
+      return false;
     }
   }
 

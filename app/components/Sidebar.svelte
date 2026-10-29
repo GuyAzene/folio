@@ -130,17 +130,23 @@
           : 'border-transparent text-text-2 hover:bg-hover hover:text-text'}"
         onclick={(event) => go({ view: place.view } as Location, event)}
       >
-        <place.icon size={15} strokeWidth={1.75} />
-        <span class="flex-1 text-left font-medium">{place.label}</span>
+        <place.icon size={15} strokeWidth={1.75} class="shrink-0" />
+        <span class="min-w-0 flex-1 truncate text-left font-medium"
+          >{place.label}</span
+        >
         {#if place.view === "assignments" && dueSoon}
-          <span class="text-[12px] text-[#c25e0b]">{dueSoon} due soon</span>
+          <span class="shrink-0 text-[12px] whitespace-nowrap text-[#c25e0b]"
+            >{dueSoon} due soon</span
+          >
         {:else if place.view === "jobs"}
           {#if jobsWaiting}
-            <span class="text-[12px] text-text-2">{jobsWaiting} needs you</span>
+            <span class="shrink-0 text-[12px] whitespace-nowrap text-text-2"
+              >{jobsWaiting} needs you</span
+            >
           {/if}
           {#if jobsRunning}
             <span
-              class="mr-0.5 size-1.5 rounded-full bg-highlight ring-2 ring-highlight/30"
+              class="mr-0.5 size-1.5 shrink-0 rounded-full bg-highlight ring-2 ring-highlight/30"
               title="{jobsRunning} running"
             ></span>
             <span class="sr-only">{jobsRunning} running</span>

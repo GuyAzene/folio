@@ -47,15 +47,18 @@
           >{chat.title}</span
         >
         {#if chat.status === "running"}<span
-            class="size-1.5 rounded-full bg-highlight ring-2 ring-highlight/30"
+            class="size-1.5 shrink-0 rounded-full bg-highlight ring-2 ring-highlight/30"
           ></span>{/if}
         {#if showCourse}
-          <span class="text-[12px] text-text-3"
+          <span
+            class="max-w-[160px] min-w-0 shrink truncate text-[12px] text-text-3 max-sm:hidden"
+            dir="auto"
             >{course?.name ??
               (chat.kind === "library" ? "Your courses" : "No course")}</span
           >
         {/if}
-        <span class="w-[72px] text-right text-[12px] text-text-3"
+        <span
+          class="w-[72px] shrink-0 text-right text-[12px] whitespace-nowrap text-text-3"
           >{formatDate(chat.updatedAt)}</span
         >
       </button>

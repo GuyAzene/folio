@@ -517,7 +517,7 @@ function runningJob(): SimJob {
       "a-L",
       "ledger",
       "Coverage ledger",
-      "Give every region a recorded state: represented, omitted or gap",
+      "Checked every part of every slide",
       null,
       "queued",
       { after: ["a-L-review"], ticks: 1, doc: L },
@@ -622,7 +622,7 @@ function runningJob(): SimJob {
       "a-R",
       "ledger",
       "Coverage ledger",
-      "Give every region a recorded state: represented, omitted or gap",
+      "Checked every part of every slide",
       null,
       "queued",
       { after: ["a-R-review"], ticks: 1, doc: R },
@@ -669,7 +669,7 @@ function waitingJob(): SimJob {
       "waiting",
       {
         startedAt: at(start),
-        note: "The draft is ready for your review: 1 gap and 1 diagram described but not verified.",
+        note: "Notes written; one diagram described from the slide.",
       },
     ),
     agent(
@@ -974,7 +974,7 @@ function previewKnowledge(courseId: string): KnowledgeView {
   };
 }
 
-/** Synthetic study notes for Algorithms: Hebrew and English, math, citations, a gap. */
+/** Synthetic study notes for Algorithms: Hebrew and English, math and citations. */
 function previewStudyNotes(courseId: string): StudyNotesView {
   const section = (
     handle: string,
@@ -1011,7 +1011,6 @@ function previewStudyNotes(courseId: string): StudyNotesView {
         openThreads: ["The lecture mentions depth-first search but leaves it for next week."],
         workedExamples: [{ title: "BFS on a six-vertex graph", page: 3 }],
         topics: ["alg-graphs", "alg-bfs", "alg-shortest-paths"],
-        leftOut: [{ page: 1, reasons: ["Course logistics: office hours and grading."] }],
       },
       {
         slug: "alg-R01",
@@ -1023,7 +1022,6 @@ function previewStudyNotes(courseId: string): StudyNotesView {
         openThreads: [],
         workedExamples: [{ title: "Tracing the queue", page: 2 }],
         topics: ["alg-bfs-tree"],
-        leftOut: [],
       },
     ],
     topics: [
@@ -1311,10 +1309,11 @@ export const previewApi: FolioApi = {
           connected: true,
           models: [
             { id: "gpt-6.1-sol", name: "GPT-6.1 Sol" },
-            { id: "gpt-6-sol", name: "GPT-6 Sol" },
+            { id: "gpt-6.1-terra", name: "GPT-6.1 Terra" },
             { id: "gpt-6-astra", name: "GPT-6 Astra" },
             { id: "gpt-6-luna", name: "GPT-6 Luna" },
-            { id: "gpt-5.6-sol", name: "GPT-5.6 Sol" },
+            { id: "gpt-6-sol", name: "GPT-6 Sol", older: true },
+            { id: "gpt-5.6-sol", name: "GPT-5.6 Sol", older: true },
           ],
         },
         { provider: "anthropic", name: "Claude", available: false, connected: false, models: [] },

@@ -219,7 +219,7 @@ export interface StepOutcome {
   /** Claims checked against the page images, and how many the checker could not confirm. */
   claims?: number;
   disagreements?: number;
-  /** Regions Folio could not place, published as stated gaps. */
+  /** Regions still unplaced after revision: a record for diagnosis, never shown as such. */
   uncovered?: number;
 }
 
@@ -312,8 +312,6 @@ export interface StudySessionView {
   workedExamples: { title: string; page: number }[];
   /** Topics this session introduced, in order. */
   topics: string[];
-  /** What the notes leave out, by page, and why. */
-  leftOut: { page: number; reasons: string[] }[];
 }
 
 export interface StudyTopicView {
@@ -386,6 +384,8 @@ export interface ConnectionView {
 export interface ModelView {
   id: string;
   name: string;
+  /** An earlier model, listed under "Older models". */
+  older?: boolean;
 }
 
 /** A subscription and the models Folio offers through it. */
@@ -431,6 +431,8 @@ export interface SendInput {
   attachments?: AttachmentInput[];
   /** How long the tutor thinks about this question; it applies from this question on. */
   thinking?: Thinking;
+  /** Answer this question on OpenAI's faster tier, which uses more of the plan. */
+  fast?: boolean;
 }
 
 export type DesktopEvent =

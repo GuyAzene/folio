@@ -97,19 +97,16 @@ describe("study notes view", () => {
     summary: "",
   });
 
-  it("lists each session's topics and what it left out, by page", () => {
+  it("lists each session's topics, never what the ledger recorded", () => {
     expect(view.generation).toBe(3);
     expect(view.sessions.map((session) => [session.slug, session.topics])).toEqual([
       ["alg-L01", ["alg-graphs", "alg-bfs"]],
       ["alg-R01", ["alg-bfs-tree"]],
     ]);
-    expect(view.sessions[0]!.leftOut).toEqual([
-      { page: 1, reasons: ["Logistics."] },
-      { page: 4, reasons: [] },
-    ]);
     expect(view.sessions[0]!.workedExamples).toEqual([{ title: "A run", page: 3 }]);
-    // The raw page text behind the notes is not part of what the student reads.
+    // The raw page text and the coverage ledger are not part of what the student reads.
     expect(JSON.stringify(view)).not.toContain("raw text that is not shown");
+    expect(JSON.stringify(view)).not.toContain("Logistics.");
   });
 
   it("links prerequisites the course has and the topics that build on each", () => {

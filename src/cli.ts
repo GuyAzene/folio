@@ -6,6 +6,7 @@ import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
 import { createFolioModels, readConnectionStatus } from "./auth.ts";
 import { cacheTable, requestsOf, requestTable } from "./cache-report.ts";
 import { Conversation } from "./conversation.ts";
+import { folioModel } from "./model-catalog.ts";
 import { DEFAULT_DEMO_PROMPT, readDemoPage } from "./demo-source.ts";
 import { DEFAULT_MODEL } from "./agents.ts";
 import { createSessionStore, type SessionStore } from "./session-store.ts";
@@ -374,7 +375,7 @@ async function main(): Promise<void> {
       ...options,
       streamFn,
       resolveModel(modelId) {
-        const model = catalog.getModel("openai", modelId);
+        const model = folioModel(catalog, modelId);
         if (!model)
           throw new Error(`Model '${modelId}' is absent from Pi's catalog. Run vp run models.`);
         return model;

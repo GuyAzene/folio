@@ -194,7 +194,8 @@
   font-size: 15px;
   line-height: 25px;
   color: var(--text);
-  overflow-wrap: anywhere;
+  /* Long words and links wrap only when nothing else fits, never mid-word in a squeezed box. */
+  overflow-wrap: break-word;
   & > * + * {
     margin-top: 12px;
   }
@@ -282,6 +283,10 @@
   & table {
     border-collapse: collapse;
     font-size: 14px;
+  }
+  & .table-scroll {
+    max-width: 100%;
+    overflow-x: auto;
   }
   /* A note's lines each keep their own direction, as in the note editor. */
   & p > .line {
