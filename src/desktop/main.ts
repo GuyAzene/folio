@@ -1,0 +1,705 @@
+import { lstat, readFile } from "node:fs/promises";
+import { basename, dirname, join, resolve, sep } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import type { StreamFn } from "@earendil-works/pi-agent-core";
+import { createModels, type AuthInteraction } from "@earendil-works/pi-ai";
+import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  net,
+  protocol,
+  shell,
+  type IpcMainInvokeEvent,
+} from "electron";
+import { createFolioModels, readConnectionStatus } from "../auth.ts";
+import { writeAtomic } from "../files.ts";
+import { IngestRunner } from "../ingest/pipeline.ts";
+import { piComplete } from "../ingest/pi-complete.ts";
+import { prepareSource } from "../ingest/source.ts";
+import { JobStore } from "../jobs/store.ts";
+import { KnowledgeStore } from "../kb/store.ts";
+import { createAttach } from "../library/attachments.ts";
+import { createRuntimes } from "../library/course-tools.ts";
+import { CourseNotes, type ProposalRecord } from "../library/notes.ts";
+import { scanFolder } from "../library/scan.ts";
+import { parseCourseDetails, SYLLABUS_PROMPT, syllabusText } from "../library/syllabus.ts";
+import { checkId, DOCUMENT_ROLES, LibraryStore, type DocumentRole } from "../library/store.ts";
+import { OFFERED_MODELS, SUBSCRIPTIONS } from "../model-choices.ts";
+import { DEFAULT_MODEL } from "../agents.ts";
+import { createSessionStore } from "../session-store.ts";
+import {
+  CHANNELS,
+  type ConnectionView,
+  type CourseInput,
+  type DesktopBootstrap,
+  type DesktopEvent,
+  type DocumentPatch,
+  type ImportResult,
+  type InvokeMethod,
+  type InvokeResult,
+  type KnowledgeView,
+  type TrashEntryView,
+  type ProposalAction,
+  type SyllabusDraft,
+} from "./api.ts";
+import { ChatService, errorMessage } from "./chat-service.ts";
+import { PageReader } from "../library/page-reader.ts";
+import { Removal } from "../library/removal.ts";
+import { Trash, TRASH_DAYS, type TrashEntry } from "../library/trash.ts";
+import { studyNotesView } from "./study-notes.ts";
+import { courseView, documentView, noteView, proposalView } from "./view.ts";
+import { prepareHome } from "../home.ts";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const rendererRoot = resolve(here, "..", "build", "renderer");
+// Development only: the Vite dev server on loopback. Production serves the built files from a
+// private standard scheme, so module workers (pdf.js) and the CSP's 'self' behave normally.
+const devUrl = process.env.FOLIO_RENDERER_URL;
+if (devUrl && !/^http:\/\/(127\.0\.0\.1|localhost):\d+\/?$/.test(devUrl))
+  throw new Error("FOLIO_RENDERER_URL must be a loopback dev server.");
+const rendererUrl = devUrl ?? "folio://app/index.html";
+const rendererOrigin = new URL(rendererUrl).origin;
+// Everything Folio owns lives in ~/.folio; an earlier build's folder moves there once.
+const home = prepareHome();
+// A disposable test home may use an existing ChatGPT connection, read in place, never copied.
+const connectionHome = resolve(process.env.FOLIO_CONNECTION_HOME ?? home);
+const MAX_WORKSPACE_BYTES = 256 * 1024;
+
+protocol.registerSchemesAsPrivileged([
+  { scheme: "folio", privileges: { standard: true, secure: true, supportFetchAPI: true } },
+]);
+app.setName("Folio");
+// Another home is another instance: its own browser storage and its own single-instance lock.
+if (process.env.FOLIO_HOME) app.setPath("userData", resolve(home, "electron"));
+if (!app.requestSingleInstanceLock()) app.quit();
+
+let window: BrowserWindow | undefined;
+const emit = (event: DesktopEvent) => window?.webContents.send(CHANNELS.event, event);
+
+const catalog = createModels();
+catalog.setProvider(openaiProvider());
+const resolveModel = (id: string) => {
+  const model = catalog.getModel("openai", id);
+  if (!model) throw new Error(`Model '${id}' is not in Pi's catalog.`);
+  return model;
+};
+const connection = createFolioModels({ home: connectionHome });
+const streamFn: StreamFn = async (model, context, options) =>
+  (await connection).models.streamSimple(model, context, options);
+
+let signIn: AbortController | undefined;
+async function connectionView(): Promise<ConnectionView> {
+  const { store } = await connection;
+  return { connected: (await readConnectionStatus(store)).connected, signingIn: !!signIn };
+}
+
+const library = LibraryStore.open({ home });
+const notes = library.then((store) => new CourseNotes(store));
+// One reader of course PDFs for the tutor: page text, and pages as images.
+const pageReader = library.then((store) => new PageReader(store));
+const knowledgeStore = library.then((store) => KnowledgeStore.open(store));
+const jobs = Promise.all([JobStore.open(home), library]).then(([store, courses]) => {
+  const runner = new IngestRunner({
+    store,
+    library: courses,
+    complete: piComplete(async () => (await connection).models, resolveModel),
+    prepare: prepareSource,
+    emit: (job) => emit({ type: "job", job }),
+    async publish(bundle) {
+      const published = await (await knowledgeStore).publish(bundle);
+      emit({ type: "library" });
+      return published.generation;
+    },
+    removed: (id) => emit({ type: "jobRemoved", id }),
+  });
+  // Jobs interrupted by a quit stay stopped until the student resumes them.
+  runner.recover();
+  return { store, runner };
+});
+const sessionStore = createSessionStore({ home });
+const service = Promise.all([sessionStore, library, notes, knowledgeStore, pageReader]).then(
+  ([store, courses, courseNotes, knowledge, pages]) => {
+    const runtimes = createRuntimes(courses, {
+      notes: courseNotes,
+      changed: () => emit({ type: "library" }),
+      knowledge,
+      pages,
+    });
+    return new ChatService({
+      store,
+      streamFn,
+      resolveModel,
+      modelId: DEFAULT_MODEL,
+      models: OFFERED_MODELS,
+      connected: async () => (await connectionView()).connected,
+      emit,
+      courseRuntime: runtimes.course,
+      libraryRuntime: runtimes.library,
+      // Pages, images, lectures and courses the student adds, checked against the chat.
+      attach: createAttach(courses, pages),
+    });
+  },
+);
+
+// Removed things wait 30 days in Folio's Trash, then move on to the Mac's Trash.
+const trash = new Trash(home, { discard: (path) => shell.trashItem(path) });
+const removal = Promise.all([library, notes, sessionStore, knowledgeStore, jobs, service]).then(
+  ([courses, courseNotes, sessions, knowledge, { runner }, chats]) =>
+    new Removal({
+      library: courses,
+      notes: courseNotes,
+      sessions,
+      trash,
+      knowledge,
+      studying() {
+        const active = runner
+          .list()
+          .filter((job) => ["running", "queued", "waiting"].includes(job.status));
+        return {
+          documentIds: active.flatMap((job) => job.documentIds),
+          courseIds: active.map((job) => job.courseId),
+        };
+      },
+      releaseChats: (ids) => chats.release(ids),
+      forgetJobs(courseId) {
+        for (const job of runner.list())
+          if (job.courseId === courseId) {
+            runner.dismiss(job.id);
+            emit({ type: "jobRemoved", id: job.id });
+          }
+      },
+    }),
+);
+
+function trashView(entry: TrashEntry): TrashEntryView {
+  return {
+    id: entry.id,
+    kind: entry.kind,
+    title: entry.title,
+    courseId: entry.courseId,
+    courseName: entry.courseName,
+    removedAt: entry.removedAt,
+    expiresAt: new Date(Date.parse(entry.removedAt) + TRASH_DAYS * 86_400_000).toISOString(),
+    contents: entry.contents ?? null,
+    withStudyNotes: !!entry.knowledge,
+  };
+}
+
+/** After something moved in or out of the Trash: the library, chats and Trash refresh. */
+async function trashChanged(): Promise<void> {
+  emit({ type: "library" });
+  emit({ type: "trash" });
+  await (await service).announceChats();
+}
+
+async function emptyExpired(): Promise<void> {
+  try {
+    if (await trash.purge()) emit({ type: "trash" });
+  } catch {
+    // Tried again at the next check; nothing in Folio depends on it.
+  }
+}
+void emptyExpired();
+setInterval(() => void emptyExpired(), 6 * 3_600_000).unref();
+
+async function startSignIn(): Promise<void> {
+  if (signIn) return;
+  const controller = new AbortController();
+  signIn = controller;
+  emit({ type: "connection", connection: await connectionView() });
+  const { models, store } = await connection;
+  const interaction: AuthInteraction = {
+    signal: controller.signal,
+    // The browser callback completes sign-in; the manual-paste fallback waits until cancelled.
+    prompt: (prompt) =>
+      prompt.type === "select"
+        ? Promise.reject(new Error("Only ChatGPT browser sign-in is supported."))
+        : new Promise<string>((_, reject) => {
+            const signal = prompt.signal ?? controller.signal;
+            signal.addEventListener(
+              "abort",
+              () => reject(new DOMException("Sign-in canceled.", "AbortError")),
+              { once: true },
+            );
+          }),
+    notify(event) {
+      if (event.type === "auth_url" && event.url.startsWith("https://"))
+        void shell.openExternal(event.url);
+    },
+  };
+  try {
+    await models.login("openai", "oauth", interaction, {
+      getDeviceId: store.getDeviceId,
+      agentName: "Folio",
+    });
+  } catch (error) {
+    if (!controller.signal.aborted)
+      emit({ type: "error", chatId: null, message: errorMessage(error) });
+  } finally {
+    signIn = undefined;
+    emit({ type: "connection", connection: await connectionView() });
+  }
+}
+
+async function courses() {
+  const store = await library;
+  const [list, documents] = await Promise.all([store.listCourses(), store.listDocuments()]);
+  return list.map((course) =>
+    courseView(course, documents.filter((document) => document.courseId === course.id).length),
+  );
+}
+
+async function proposal(record: ProposalRecord) {
+  const courseNotes = await notes;
+  const title = record.noteId
+    ? ((await courseNotes.read(record.noteId).catch(() => undefined))?.title ?? "A removed note")
+    : (record.title ?? "New note");
+  return proposalView(record, title, await courseNotes.stale(record));
+}
+
+async function choose(options: Electron.OpenDialogOptions): Promise<string | undefined> {
+  const picked = window
+    ? await dialog.showOpenDialog(window, options)
+    : await dialog.showOpenDialog(options);
+  return picked.canceled ? undefined : picked.filePaths[0];
+}
+
+const MAX_SYLLABUS_BYTES = 50 * 1024 * 1024;
+
+/** Reads the syllabus the student chose and asks the model for the course's name, code and term. */
+async function readSyllabus(path: string): Promise<SyllabusDraft> {
+  const info = await lstat(path).catch(() => undefined);
+  if (!info?.isFile() || info.isSymbolicLink()) throw new Error("Choose a regular file.");
+  if (info.size > MAX_SYLLABUS_BYTES) throw new Error("That syllabus is too large.");
+  const fileName = basename(path);
+  const kind = /\.pdf$/i.test(path) ? "pdf" : /\.(md|markdown)$/i.test(path) ? "markdown" : null;
+  if (!kind) throw new Error("Folio can read PDF and Markdown syllabi.");
+  const draft: SyllabusDraft = { path, fileName, name: "", code: "", term: "", read: false };
+  let text: string;
+  try {
+    text = await syllabusText(new Uint8Array(await readFile(path)), kind);
+  } catch {
+    return { ...draft, note: `Folio couldn't open ${fileName}. Fill in the details yourself.` };
+  }
+  if (!text.trim())
+    return {
+      ...draft,
+      note: "This file has no text Folio can read, for example a scan. Fill in the details yourself.",
+    };
+  if (!(await connectionView()).connected)
+    return { ...draft, note: "Connect ChatGPT and Folio can fill these in from the syllabus." };
+  const reply = await (
+    await connection
+  ).models.completeSimple(
+    resolveModel(DEFAULT_MODEL),
+    {
+      systemPrompt: SYLLABUS_PROMPT,
+      messages: [{ role: "user", content: text, timestamp: Date.now() }],
+    },
+    { maxTokens: 1200 },
+  );
+  const details = parseCourseDetails(
+    reply.content.map((block) => (block.type === "text" ? block.text : "")).join(""),
+  );
+  if (!details)
+    return { ...draft, note: "Folio couldn't find the course details. Fill them in yourself." };
+  return { ...draft, ...details, read: true };
+}
+
+async function knowledgeView(courseId: string): Promise<KnowledgeView | null> {
+  const store = await knowledgeStore;
+  const current = store.current(courseId);
+  const knowledge = await store.knowledge(courseId);
+  if (!current || !knowledge) return null;
+  return {
+    courseId,
+    generation: current.generation,
+    publishedAt: current.publishedAt,
+    summary: current.summary,
+    sessions: knowledge.sessions.map(({ slug, title, documentId }) => ({
+      slug,
+      title,
+      documentId,
+    })),
+    pages: knowledge.pages.length,
+    blocks: knowledge.pages.reduce((sum, page) => sum + page.blocks.length, 0),
+    canRollBack: store.history(courseId).length > 1,
+  };
+}
+
+async function importPaths(
+  courseId: unknown,
+  paths: unknown,
+  role?: unknown,
+): Promise<ImportResult[]> {
+  checkId(courseId);
+  if (!Array.isArray(paths) || paths.some((path) => typeof path !== "string"))
+    throw new Error("Choose files to import.");
+  if (role !== undefined && role !== null && !DOCUMENT_ROLES.includes(role as DocumentRole))
+    throw new Error("Unknown role.");
+  const store = await library;
+  const results: ImportResult[] = [];
+  for (const path of paths as string[]) {
+    try {
+      const { document, duplicate } = await store.importFile(courseId, path, {
+        role: (role as DocumentRole | null | undefined) ?? undefined,
+      });
+      results.push({ name: basename(path), document: documentView(document), duplicate });
+    } catch (error) {
+      results.push({ name: basename(path), error: errorMessage(error) });
+    }
+  }
+  emit({ type: "library" });
+  return results;
+}
+
+const handlers: Record<InvokeMethod, (...args: unknown[]) => Promise<unknown>> = {
+  async bootstrap(): Promise<DesktopBootstrap> {
+    const { chats, unavailable } = await (await service).chats();
+    const model = resolveModel(DEFAULT_MODEL);
+    const connection = await connectionView();
+    return {
+      connection,
+      model: { id: model.id, name: model.name },
+      subscriptions: SUBSCRIPTIONS.map((subscription) => ({
+        provider: subscription.provider,
+        name: subscription.name,
+        available: subscription.available,
+        // Only ChatGPT can be signed in to so far.
+        connected: subscription.provider === "openai" && connection.connected,
+        models: subscription.models.map((id) => ({ id, name: resolveModel(id).name })),
+      })),
+      chats,
+      unavailableChats: unavailable,
+      platform: process.platform,
+    };
+  },
+  openChat: async (id) => (await service).openChat(id),
+  send: async (input) => (await service).send(input),
+  cancel: async (id) => (await service).cancel(id),
+  setFocus: async (id, focus) => (await service).setFocus(id, focus),
+  async signIn() {
+    void startSignIn();
+  },
+  async cancelSignIn() {
+    signIn?.abort();
+  },
+  async signOut() {
+    signIn?.abort();
+    await (await connection).models.logout("openai");
+    emit({ type: "connection", connection: await connectionView() });
+  },
+  listCourses: courses,
+  async createCourse(input) {
+    const course = await (await library).createCourse((input ?? {}) as CourseInput);
+    emit({ type: "library" });
+    return courseView(course, 0);
+  },
+  async updateCourse(id, patch, revision) {
+    checkId(id);
+    await (await library).updateCourse(id, (patch ?? {}) as CourseInput, Number(revision));
+    emit({ type: "library" });
+    return (await courses()).find((course) => course.id === id);
+  },
+  async listDocuments(courseId) {
+    if (courseId !== undefined && courseId !== null) checkId(courseId);
+    const documents = await (
+      await library
+    ).listDocuments({
+      courseId: (courseId as string | null | undefined) ?? undefined,
+    });
+    return documents.map(documentView);
+  },
+  importFiles: importPaths,
+  async chooseFiles(courseId) {
+    checkId(courseId);
+    const options: Electron.OpenDialogOptions = {
+      title: "Add files to this course",
+      buttonLabel: "Add",
+      properties: ["openFile", "multiSelections"],
+      filters: [{ name: "PDF and Markdown", extensions: ["pdf", "md", "markdown"] }],
+    };
+    const picked = window
+      ? await dialog.showOpenDialog(window, options)
+      : await dialog.showOpenDialog(options);
+    return picked.canceled ? [] : importPaths(courseId, picked.filePaths);
+  },
+  async updateDocument(id, patch, revision) {
+    checkId(id);
+    const document = await (
+      await library
+    ).updateDocument(id, (patch ?? {}) as DocumentPatch, Number(revision));
+    emit({ type: "library" });
+    return documentView(document);
+  },
+  async readDocument(id) {
+    checkId(id);
+    return (await (await library).readOriginal(id)).data;
+  },
+  async listNotes(courseId) {
+    if (courseId !== undefined && courseId !== null) checkId(courseId);
+    return (await (await notes).list((courseId as string | null | undefined) ?? undefined)).map(
+      noteView,
+    );
+  },
+  async readNote(id) {
+    checkId(id);
+    const note = await (await notes).read(id);
+    return { note: noteView(note), content: note.content };
+  },
+  async createNote(courseId, title) {
+    checkId(courseId);
+    const note = await (await notes).create(courseId, typeof title === "string" ? title : "");
+    emit({ type: "library" });
+    return noteView(note);
+  },
+  async saveNote(id, content, revision) {
+    checkId(id);
+    if (typeof content !== "string" || typeof revision !== "string")
+      throw new Error("A note and its revision are required.");
+    const note = await (await notes).save(id, content, revision);
+    emit({ type: "library" });
+    return noteView(note);
+  },
+  async appendToNote(id, text) {
+    checkId(id);
+    if (typeof text !== "string" || !text.trim()) throw new Error("Nothing to add.");
+    const note = await (await notes).append(id, text);
+    emit({ type: "library" });
+    return noteView(note);
+  },
+  async listProposals() {
+    return Promise.all((await (await notes).listProposals()).map(proposal));
+  },
+  async resolveProposal(id, action) {
+    checkId(id);
+    if (!["keep", "insert", "discard"].includes(action as string))
+      throw new Error("Unknown action.");
+    try {
+      return await proposal(await (await notes).resolve(id, action as ProposalAction));
+    } finally {
+      emit({ type: "library" });
+    }
+  },
+  async scanFolder(path) {
+    const folder =
+      typeof path === "string"
+        ? path
+        : await choose({
+            title: "Choose a course folder",
+            buttonLabel: "Scan",
+            properties: ["openDirectory"],
+          });
+    return folder ? scanFolder(folder) : null;
+  },
+  async readSyllabus(path) {
+    const file =
+      typeof path === "string"
+        ? path
+        : await choose({
+            title: "Choose the course syllabus",
+            buttonLabel: "Read",
+            properties: ["openFile"],
+            filters: [{ name: "PDF and Markdown", extensions: ["pdf", "md", "markdown"] }],
+          });
+    return file ? readSyllabus(file) : null;
+  },
+  listJobs: async () => (await jobs).runner.list(),
+  async startIngest(courseId, documentIds) {
+    checkId(courseId);
+    if (!Array.isArray(documentIds) || documentIds.some((id) => typeof id !== "string"))
+      throw new Error("Choose lectures or recitations to study.");
+    if (!(await connectionView()).connected)
+      throw new Error("Connect your ChatGPT account in Settings to study documents.");
+    return (await jobs).runner.start(courseId, documentIds as string[]);
+  },
+  async pauseJob(id) {
+    checkId(id);
+    return (await jobs).runner.pause(id);
+  },
+  async resumeJob(id) {
+    checkId(id);
+    if (!(await connectionView()).connected)
+      throw new Error("Connect your ChatGPT account in Settings to resume.");
+    return (await jobs).runner.resume(id);
+  },
+  async cancelJob(id) {
+    checkId(id);
+    return (await jobs).runner.cancel(id);
+  },
+  async dismissJob(id) {
+    checkId(id);
+    (await jobs).runner.dismiss(id);
+  },
+  async knowledge(courseId) {
+    checkId(courseId);
+    return knowledgeView(courseId);
+  },
+  async studyNotes(courseId) {
+    checkId(courseId);
+    const store = await knowledgeStore;
+    const current = store.current(courseId);
+    const knowledge = await store.knowledge(courseId);
+    return current && knowledge ? studyNotesView(knowledge, current) : null;
+  },
+  async rollbackKnowledge(courseId) {
+    checkId(courseId);
+    (await knowledgeStore).rollback(courseId);
+    emit({ type: "library" });
+    return (await knowledgeView(courseId))!;
+  },
+  async trashDocuments(ids) {
+    if (!Array.isArray(ids) || !ids.length) throw new Error("Choose files to remove.");
+    ids.forEach(checkId);
+    const remove = await removal;
+    const entries: TrashEntry[] = [];
+    try {
+      for (const id of ids as string[]) entries.push(await remove.removeDocument(id));
+    } finally {
+      await trashChanged();
+    }
+    return entries.map(trashView);
+  },
+  async trashNote(id) {
+    checkId(id);
+    const entry = await (await removal).removeNote(id as string);
+    await trashChanged();
+    return trashView(entry);
+  },
+  async trashChat(id) {
+    checkId(id);
+    const entry = await (await removal).removeChat(id as string);
+    await trashChanged();
+    return trashView(entry);
+  },
+  async trashCourse(id) {
+    checkId(id);
+    const entry = await (await removal).removeCourse(id as string);
+    await trashChanged();
+    return trashView(entry);
+  },
+  async listTrash() {
+    return (await trash.list()).map(trashView);
+  },
+  async restoreFromTrash(id) {
+    checkId(id);
+    await (await removal).restore(id as string);
+    await trashChanged();
+  },
+  async deleteFromTrash(id) {
+    checkId(id);
+    await trash.discard(id as string);
+    emit({ type: "trash" });
+  },
+  async emptyTrash() {
+    for (const entry of await trash.list()) await trash.discard(entry.id);
+    emit({ type: "trash" });
+  },
+  async loadWorkspace() {
+    try {
+      return JSON.parse(await readFile(resolve(home, "workspace.json"), "utf8")) as unknown;
+    } catch {
+      return null;
+    }
+  },
+  async saveWorkspace(state) {
+    // Open tabs and reading positions only: restoring them never starts model work.
+    const raw = JSON.stringify(state);
+    if (raw === undefined || raw.length > MAX_WORKSPACE_BYTES)
+      throw new Error("The workspace state is too large.");
+    await writeAtomic(resolve(home, "workspace.json"), raw);
+  },
+};
+
+function trusted(event: IpcMainInvokeEvent): boolean {
+  const url = event.senderFrame?.url;
+  if (!url || event.sender !== window?.webContents) return false;
+  return new URL(url).origin === rendererOrigin;
+}
+
+ipcMain.handle(
+  CHANNELS.invoke,
+  async (event, method: unknown, ...args: unknown[]): Promise<InvokeResult<unknown>> => {
+    if (!trusted(event)) return { ok: false, error: "Untrusted request." };
+    if (typeof method !== "string" || !Object.hasOwn(handlers, method))
+      return { ok: false, error: "Unknown request." };
+    try {
+      return { ok: true, value: await handlers[method as InvokeMethod](...args) };
+    } catch (error) {
+      return { ok: false, error: errorMessage(error) };
+    }
+  },
+);
+
+function serveRenderer(): void {
+  protocol.handle("folio", (request) => {
+    const url = new URL(request.url);
+    const path = resolve(rendererRoot, `.${decodeURIComponent(url.pathname)}`);
+    if (url.host !== "app" || !path.startsWith(`${rendererRoot}${sep}`))
+      return new Response("Not found", { status: 404 });
+    return net.fetch(pathToFileURL(path).href);
+  });
+}
+
+function createWindow(): void {
+  window = new BrowserWindow({
+    width: 1360,
+    height: 860,
+    minWidth: 640,
+    minHeight: 480,
+    title: "Folio",
+    show: false,
+    titleBarStyle: "hiddenInset",
+    trafficLightPosition: { x: 18, y: 18 },
+    // Light is Folio's default theme; the renderer applies a saved dark preference.
+    backgroundColor: "#f3f3f4",
+    webPreferences: {
+      preload: join(here, "preload.cjs"),
+      contextIsolation: true,
+      sandbox: true,
+      nodeIntegration: false,
+      spellcheck: true,
+    },
+  });
+  window.once("ready-to-show", () => window?.show());
+  window.on("closed", () => (window = undefined));
+  // Links open in the browser; the window itself never navigates away from Folio.
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith("https://")) void shell.openExternal(url);
+    return { action: "deny" };
+  });
+  window.webContents.on("will-navigate", (event, url) => {
+    if (new URL(url).origin !== rendererOrigin || !devUrl) event.preventDefault();
+  });
+  void window.loadURL(rendererUrl);
+}
+
+let quitting = false;
+app.on("before-quit", (event) => {
+  if (quitting) return;
+  event.preventDefault();
+  quitting = true;
+  signIn?.abort();
+  // Closing settles running replies as interrupted and releases each chat's lease.
+  void service
+    .then((chats) => chats.close())
+    .catch(() => undefined)
+    .finally(() => app.quit());
+});
+app.on("second-instance", () => {
+  if (window?.isMinimized()) window.restore();
+  window?.focus();
+});
+app.on("window-all-closed", () => {
+  if (process.platform !== "darwin") app.quit();
+});
+app.on("activate", () => {
+  if (!window) createWindow();
+});
+void app.whenReady().then(() => {
+  serveRenderer();
+  createWindow();
+});

@@ -1,0 +1,442 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/* Folio design tokens (Paper: Folio — Design System). Light is the default theme. */
+:root {
+  --bg: #f3f3f4;
+  --surface: #ffffff;
+  --raised: #ffffff;
+  --sunken: #f7f7f8;
+  --hover: #18181b0a;
+  --press: #18181b12;
+  --selected: #ffffff;
+  --line-subtle: #ececee;
+  --line: #e4e4e7;
+  --line-strong: #d4d4d8;
+  --text: #18181b;
+  --text-2: #52525b;
+  --text-3: #71717a;
+  --text-4: #a1a1aa;
+  --ink: #18181b;
+  --on-ink: #ffffff;
+  --highlight: #ffe433;
+  --highlight-wash: #fff3a3;
+  --danger: #d3392b;
+  --danger-wash: #fcebe9;
+  --success: #1e8e4e;
+  --info: #2b59c3;
+  /* Agent tree: live work is blue, finished work green, as in Affect UI's agent tree. */
+  --live: #006dcbf2;
+  --live-wash: #008ff519;
+  --live-line: #82bcff;
+  --done: #007d2ee0;
+  --done-wash: #00a43319;
+  --shadow-card: 0 0 0 0.5px #0000000f, 0 1px 1px -1px #0000001a, 0 1px 2px #0000000d;
+  --shadow-1: 0 1px 2px #18181b0f;
+  --shadow-2: 0 8px 24px -6px #18181b1f, 0 2px 4px #18181b0a;
+  --shadow-3: 0 24px 64px -12px #18181b2e, 0 4px 12px #18181b0f;
+  /* Code in notes. */
+  --code-keyword: #cf222e;
+  --code-string: #0a3069;
+  --code-number: #0550ae;
+  --code-comment: #6e7781;
+  --code-function: #8250df;
+  --code-type: #953800;
+  --code-property: #0550ae;
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  --bg: #0e0e10;
+  --surface: #161618;
+  --raised: #1e1e21;
+  --sunken: #111113;
+  --hover: #ffffff0b;
+  --press: #ffffff14;
+  --selected: #232327;
+  --line-subtle: #1f1f23;
+  --line: #2a2a2e;
+  --line-strong: #3a3a40;
+  --text: #ededef;
+  --text-2: #a1a1aa;
+  --text-3: #7c7c85;
+  --text-4: #56565e;
+  --ink: #f4f4f5;
+  --on-ink: #18181b;
+  --highlight-wash: #ffe43333;
+  --danger: #f0614f;
+  --danger-wash: #f0614f1f;
+  --live: #7ab8ff;
+  --live-wash: #2f8cff24;
+  --live-line: #2d5f99;
+  --done: #5fd38d;
+  --done-wash: #34c46a1f;
+  --shadow-card: 0 0 0 1px #ffffff12, 0 1px 2px #00000066;
+  --shadow-1: 0 0 0 1px #ffffff08;
+  --shadow-2: 0 0 0 1px #ffffff0f, 0 12px 32px -8px #00000099;
+  --shadow-3: 0 0 0 1px #ffffff12, 0 24px 64px -12px #000000b3;
+  --code-keyword: #ff7b72;
+  --code-string: #a5d6ff;
+  --code-number: #79c0ff;
+  --code-comment: #8b949e;
+  --code-function: #d2a8ff;
+  --code-type: #ffa657;
+  --code-property: #79c0ff;
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-raised: var(--raised);
+  --color-sunken: var(--sunken);
+  --color-hover: var(--hover);
+  --color-press: var(--press);
+  --color-selected: var(--selected);
+  --color-line-subtle: var(--line-subtle);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-text: var(--text);
+  --color-text-2: var(--text-2);
+  --color-text-3: var(--text-3);
+  --color-text-4: var(--text-4);
+  --color-ink: var(--ink);
+  --color-on-ink: var(--on-ink);
+  --color-highlight: var(--highlight);
+  --color-highlight-wash: var(--highlight-wash);
+  --color-danger: var(--danger);
+  --color-danger-wash: var(--danger-wash);
+  --color-success: var(--success);
+  --color-info: var(--info);
+  --color-live: var(--live);
+  --color-live-wash: var(--live-wash);
+  --color-live-line: var(--live-line);
+  --color-done: var(--done);
+  --color-done-wash: var(--done-wash);
+  --shadow-card: var(--shadow-card);
+  --shadow-1: var(--shadow-1);
+  --shadow-2: var(--shadow-2);
+  --shadow-3: var(--shadow-3);
+  --font-sans: "Inter Variable", "Noto Sans Hebrew Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Newsreader Variable", "Frank Ruhl Libre Variable", ui-serif, Georgia, serif;
+  --font-mono:
+    "Geist Mono Variable", ui-monospace, "SF Mono", "Noto Sans Hebrew Variable", monospace;
+  --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@layer base {
+  html,
+  body,
+  #app {
+    height: 100%;
+  }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    line-height: 18px;
+    -webkit-font-smoothing: antialiased;
+    font-feature-settings: "cv11";
+    overflow: hidden;
+  }
+  button {
+    cursor: default;
+  }
+  ::selection {
+    background: var(--highlight-wash);
+    color: var(--text);
+  }
+  :focus-visible {
+    outline: 2px solid var(--info);
+    outline-offset: 2px;
+  }
+}
+
+@utility drag {
+  -webkit-app-region: drag;
+  user-select: none;
+}
+@utility no-drag {
+  -webkit-app-region: no-drag;
+}
+
+/* Thin, quiet scrollbars that only darken on hover. */
+@utility scroll-quiet {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  &:hover {
+    scrollbar-color: var(--line-strong) transparent;
+  }
+}
+
+/* Rendered Markdown in Folio's replies. */
+/* Long-form reading (notes, Markdown documents): larger headings than chat replies. */
+@utility prose-reading {
+  & h1 {
+    font-size: 28px;
+    line-height: 36px;
+    margin-top: 0;
+  }
+  & h2 {
+    font-size: 21px;
+    line-height: 30px;
+    margin-top: 28px;
+  }
+  & h3 {
+    font-size: 18px;
+    line-height: 26px;
+  }
+}
+
+@utility prose-folio {
+  font-size: 15px;
+  line-height: 25px;
+  color: var(--text);
+  overflow-wrap: anywhere;
+  & > * + * {
+    margin-top: 12px;
+  }
+  & h1,
+  & h2,
+  & h3 {
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    margin-top: 22px;
+  }
+  & h1 {
+    font-size: 19px;
+    line-height: 26px;
+  }
+  & h2 {
+    font-size: 17px;
+    line-height: 24px;
+  }
+  & h3 {
+    font-size: 15px;
+    line-height: 22px;
+  }
+  & ul,
+  & ol {
+    padding-inline-start: 22px;
+  }
+  & ul {
+    list-style: disc;
+  }
+  & ol {
+    list-style: decimal;
+  }
+  & li + li {
+    margin-top: 4px;
+  }
+  & li::marker {
+    color: var(--text-3);
+  }
+  & strong {
+    font-weight: 600;
+  }
+  & em {
+    font-style: normal;
+    font-weight: 500;
+  }
+  & a {
+    color: var(--info);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    text-decoration-color: color-mix(in srgb, var(--info) 35%, transparent);
+  }
+  & code {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    padding: 1px 5px;
+    border-radius: 5px;
+    background: var(--sunken);
+    border: 1px solid var(--line-subtle);
+  }
+  & pre {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    line-height: 21px;
+    padding: 14px 16px;
+    border-radius: 10px;
+    background: var(--sunken);
+    border: 1px solid var(--line-subtle);
+    overflow-x: auto;
+  }
+  & pre code {
+    padding: 0;
+    border: 0;
+    background: none;
+  }
+  & blockquote {
+    border-inline-start: 2px solid var(--line-strong);
+    padding-inline-start: 14px;
+    color: var(--text-2);
+  }
+  & hr {
+    border: 0;
+    border-top: 1px solid var(--line);
+    margin: 20px 0;
+  }
+  & table {
+    border-collapse: collapse;
+    font-size: 14px;
+  }
+  /* A note's lines each keep their own direction, as in the note editor. */
+  & p > .line {
+    display: block;
+  }
+  /* A Hebrew table sits on the right, even inside a left-to-right container. */
+  & table[dir="rtl"] {
+    margin-left: auto;
+  }
+  /* GitHub task lists: the box stands where the bullet would be, as in the note editor. */
+  & li:has(> input[type="checkbox"]:first-child) {
+    list-style: none;
+  }
+  & li > input[type="checkbox"]:first-child {
+    appearance: none;
+    box-sizing: border-box;
+    width: 1em;
+    height: 1em;
+    margin: 0;
+    margin-inline: -1.3em 0.3em;
+    vertical-align: -0.15em;
+    border-radius: 4px;
+    border: 1.5px solid var(--line-strong);
+    background: var(--surface);
+  }
+  & li > input[type="checkbox"]:first-child:checked {
+    border-color: var(--ink);
+    background: var(--ink)
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4 8.5l2.5 2.5L12 5.5' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+      center / 100%;
+  }
+  & li:has(> input[type="checkbox"]:first-child:checked) {
+    color: var(--text-3);
+    text-decoration: line-through;
+    text-decoration-color: var(--text-4);
+  }
+  & th,
+  & td {
+    border: 1px solid var(--line);
+    padding: 6px 10px;
+    text-align: start;
+  }
+  & th {
+    background: var(--sunken);
+    font-weight: 600;
+  }
+  /* Math: inline formulas sit in the line; display formulas scroll sideways if too wide. */
+  & .math[data-mode="display"] {
+    display: block;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+  & .math .katex-display {
+    margin: 0.4em 0;
+  }
+  /* An inline formula never breaks across lines: split inside Hebrew text, its pieces read
+     in the wrong order. */
+  & .math[data-mode="inline"] {
+    white-space: nowrap;
+  }
+  /* Math that is still being written shows as its source until it closes. */
+  & .math-pending {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: var(--text-3);
+    white-space: pre-wrap;
+  }
+  /* A soft caret trails the text while Folio is still writing. */
+  &.is-streaming > :last-child::after {
+    content: "";
+    display: inline-block;
+    width: 3px;
+    height: 1em;
+    margin-inline-start: 3px;
+    vertical-align: -0.12em;
+    border-radius: 2px;
+    background: var(--text-3);
+    animation: folio-caret 900ms ease-in-out infinite;
+  }
+}
+
+@keyframes folio-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes folio-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes folio-scale {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+/* Folio's mark while working: its lines re-write themselves. */
+@keyframes folio-write {
+  0%,
+  100% {
+    transform: scaleX(1);
+  }
+  50% {
+    transform: scaleX(0.35);
+  }
+}
+@keyframes folio-caret {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+  }
+}
+
+/* KaTeX's fonts have no Hebrew: Hebrew inside \text{} falls back to the Hebrew serif. */
+.katex {
+  font-family: KaTeX_Main, "Frank Ruhl Libre Variable", math, "Times New Roman", serif;
+}
+
+/* In dark mode the ticked box is light, so its check is dark. */
+[data-theme="dark"] .prose-folio li > input[type="checkbox"]:first-child:checked,
+[data-theme="dark"] .cm-editor .cm-task-box:checked {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4 8.5l2.5 2.5L12 5.5' fill='none' stroke='%2318181b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+/* <mark> in notes and replies uses Folio's highlight, not the browser's bright yellow. */
+.prose-folio mark,
+.cm-editor mark {
+  background: var(--highlight-wash);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 2px;
+}

@@ -1,0 +1,196 @@
+import { EditorView, WidgetType } from "@codemirror/view";
+import { estimateDirection } from "../direction.ts";
+import { renderMarkdown } from "../markdown.ts";
+import { renderTex } from "../tex.ts";
+
+/**
+ * What the live preview draws in place of Markdown source. Every widget is rebuilt only when
+ * its content changes (`eq`), and a click on most of them puts the cursor into the source.
+ */
+
+/** A KaTeX formula, inline or on its own line. */
+export class MathWidget extends WidgetType {
+  readonly tex: string;
+  readonly display: boolean;
+  readonly block: boolean;
+  constructor(tex: string, display: boolean, block = false) {
+    super();
+    this.tex = tex;
+    this.display = display;
+    this.block = block;
+  }
+  eq(other: MathWidget): boolean {
+    return other.tex === this.tex && other.display === this.display && other.block === this.block;
+  }
+  toDOM(): HTMLElement {
+    const element = document.createElement(this.block ? "div" : "span");
+    element.className = this.block ? "cm-math-block math" : "cm-math math";
+    element.dir = "ltr";
+    element.dataset.mode = this.display ? "display" : "inline";
+    element.innerHTML = renderTex(this.tex, this.display);
+    return element;
+  }
+  ignoreEvent(): boolean {
+    return false;
+  }
+}
+
+/**
+ * Part of the note drawn as HTML: a table, an HTML block, or inline tags. It is rendered and
+ * sanitized only when it comes into view; markup that sanitizes to nothing shows as source.
+ */
+export class HtmlWidget extends WidgetType {
+  readonly source: string;
+  readonly block: boolean;
+  constructor(source: string, block: boolean) {
+    super();
+    this.source = source;
+    this.block = block;
+  }
+  eq(other: HtmlWidget): boolean {
+    return other.source === this.source && other.block === this.block;
+  }
+  toDOM(): HTMLElement {
+    const element = document.createElement(this.block ? "div" : "span");
+    const html = this.block
+      ? renderMarkdown(this.source, { note: true })
+      : renderMarkdown(this.source, { note: true })
+          .trim()
+          .replace(/^<p[^>]*>([\s\S]*)<\/p>$/, "$1");
+    if (!html.trim()) {
+      element.className = "cm-html-tag";
+      element.textContent = this.source;
+      return element;
+    }
+    element.className = this.block
+      ? "cm-rendered-block prose-folio prose-reading"
+      : "cm-rendered-inline";
+    element.innerHTML = html;
+    // A block takes the direction the renderer gave it (a table, say) or that of its words
+    // (raw HTML such as <details>), so a Hebrew block sits on the right.
+    if (this.block)
+      element.dir =
+        element.firstElementChild?.getAttribute("dir") ??
+        estimateDirection(element.textContent ?? "").direction ??
+        "auto";
+    return element;
+  }
+  // Links inside rendered HTML open; anything else puts the cursor into the source.
+  ignoreEvent(event: Event): boolean {
+    return event.target instanceof Element && !!event.target.closest("a[href]");
+  }
+}
+
+export class ImageWidget extends WidgetType {
+  readonly src: string;
+  readonly alt: string;
+  constructor(src: string, alt: string) {
+    super();
+    this.src = src;
+    this.alt = alt;
+  }
+  eq(other: ImageWidget): boolean {
+    return other.src === this.src && other.alt === this.alt;
+  }
+  toDOM(): HTMLElement {
+    const image = document.createElement("img");
+    image.className = "cm-image";
+    image.src = this.src;
+    image.alt = this.alt;
+    // Only local and data images load; anything else shows its description instead.
+    image.onerror = () => {
+      const missing = document.createElement("span");
+      missing.className = "cm-image-missing";
+      missing.textContent = this.alt || "Image";
+      image.replaceWith(missing);
+    };
+    return image;
+  }
+  ignoreEvent(): boolean {
+    return false;
+  }
+}
+
+export class BulletWidget extends WidgetType {
+  eq(): boolean {
+    return true;
+  }
+  toDOM(): HTMLElement {
+    const bullet = document.createElement("span");
+    bullet.className = "cm-bullet";
+    bullet.textContent = "•";
+    return bullet;
+  }
+  ignoreEvent(): boolean {
+    return false;
+  }
+}
+
+/** A task's box. Clicking it ticks the task in the source: "[ ]" becomes "[x]". */
+export class CheckboxWidget extends WidgetType {
+  readonly checked: boolean;
+  constructor(checked: boolean) {
+    super();
+    this.checked = checked;
+  }
+  eq(other: CheckboxWidget): boolean {
+    return other.checked === this.checked;
+  }
+  toDOM(view: EditorView): HTMLElement {
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.className = "cm-task-box";
+    box.checked = this.checked;
+    box.tabIndex = -1;
+    box.setAttribute("aria-label", this.checked ? "Done" : "Not done");
+    box.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      const at = view.posAtDOM(box);
+      const marker = view.state.sliceDoc(at, at + 3);
+      if (!/^\[[ xX]\]$/.test(marker)) return;
+      view.dispatch({
+        changes: { from: at + 1, to: at + 2, insert: this.checked ? " " : "x" },
+        userEvent: "input.toggle",
+      });
+    });
+    return box;
+  }
+  ignoreEvent(): boolean {
+    return true;
+  }
+}
+
+export class RuleWidget extends WidgetType {
+  eq(): boolean {
+    return true;
+  }
+  toDOM(): HTMLElement {
+    const rule = document.createElement("span");
+    rule.className = "cm-rule";
+    return rule;
+  }
+  ignoreEvent(): boolean {
+    return false;
+  }
+}
+
+/** The language of a code block, shown where its opening fence was. */
+export class LabelWidget extends WidgetType {
+  readonly text: string;
+  constructor(text: string) {
+    super();
+    this.text = text;
+  }
+  eq(other: LabelWidget): boolean {
+    return other.text === this.text;
+  }
+  toDOM(): HTMLElement {
+    const label = document.createElement("span");
+    label.className = "cm-code-label";
+    label.textContent = this.text;
+    return label;
+  }
+  ignoreEvent(): boolean {
+    return false;
+  }
+}

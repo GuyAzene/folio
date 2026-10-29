@@ -1,0 +1,38 @@
+# Dependencies and generated output
+node_modules/
+dist/
+dist-desktop/
+build/
+coverage/
+*.tsbuildinfo
+
+# Local credentials, installation identity, and scratch data
+.local/
+.cache/
+.vite/
+.vite-plus/
+.playwright-cli/
+output/playwright/
+.env
+.env.*
+!.env.example
+auth.json
+connection.json
+sessions/
+*.log
+
+# Editor and OS files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local package archives
+*.tgz
+
+# Local preview configuration
+.claude/launch.json
+
+# Private working notes: a separate repository
+.private/
