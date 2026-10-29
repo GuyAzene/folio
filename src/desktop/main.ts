@@ -21,6 +21,7 @@ import { IngestRunner } from "../ingest/pipeline.ts";
 import { piComplete } from "../ingest/pi-complete.ts";
 import { prepareSource } from "../ingest/source.ts";
 import { JobStore } from "../jobs/store.ts";
+import { withoutDocuments } from "../kb/knowledge.ts";
 import { KnowledgeStore } from "../kb/store.ts";
 import { createAttach } from "../library/attachments.ts";
 import { createRuntimes } from "../library/course-tools.ts";
@@ -50,6 +51,7 @@ import {
   type ImportResult,
   type InvokeMethod,
   type InvokeResult,
+  type JobOrigin,
   type KnowledgeView,
   type TrashEntryView,
   type ProposalAction,
@@ -130,11 +132,54 @@ const jobs = Promise.all([JobStore.open(home), library]).then(([store, courses])
       return published.generation;
     },
     removed: (id) => emit({ type: "jobRemoved", id }),
+    connected: async () => (await connectionView()).connected,
   });
-  // Jobs interrupted by a quit stay stopped until the student resumes them.
+  // Jobs interrupted by a quit go back in the queue and continue where they stopped.
   runner.recover();
   return { store, runner };
 });
+
+/**
+ * Lectures and recitations are studied as soon as they arrive, after a moment in which a wrong
+ * role can still be fixed for free. The runner skips anything already studying, cancelled by
+ * the student, or not a PDF lecture or recitation.
+ */
+const STUDY_DELAY = Number(process.env.FOLIO_STUDY_DELAY_MS ?? 15_000);
+/** The never-studied backlog is looked for a little after start, once the window is up. */
+const BACKLOG_DELAY = process.env.FOLIO_STUDY_DELAY_MS ? STUDY_DELAY : 5_000;
+function studySoon(courseId: string, documentIds: string[], origin: JobOrigin): void {
+  if (!documentIds.length) return;
+  setTimeout(() => {
+    void jobs
+      .then(({ runner }) => runner.queue(courseId, documentIds, origin))
+      .catch((error: unknown) => console.error("Folio could not queue a study:", error));
+  }, STUDY_DELAY).unref();
+}
+
+const teaching = (document: { role: string; kind: string }) =>
+  (document.role === "lecture" || document.role === "recitation") && document.kind === "pdf";
+
+/** Every lecture and recitation in the library that was never studied, queued once at start. */
+setTimeout(() => {
+  void Promise.all([library, knowledgeStore])
+    .then(async ([courses, knowledge]) => {
+      const documents = (await courses.listDocuments()).filter(teaching);
+      const byCourse = new Map<string, string[]>();
+      for (const document of documents) {
+        const studied = (await knowledge.knowledge(document.courseId))?.sessions.some(
+          (session) => session.documentId === document.id,
+        );
+        if (!studied)
+          byCourse.set(document.courseId, [
+            ...(byCourse.get(document.courseId) ?? []),
+            document.id,
+          ]);
+      }
+      const { runner } = await jobs;
+      for (const [courseId, ids] of byCourse) await runner.queue(courseId, ids, "backlog");
+    })
+    .catch((error: unknown) => console.error("Folio could not queue unstudied lectures:", error));
+}, BACKLOG_DELAY).unref();
 const sessionStore = createSessionStore({ home });
 const service = Promise.all([sessionStore, library, notes, knowledgeStore, pageReader]).then(
   ([store, courses, courseNotes, knowledge, pages]) => {
@@ -171,15 +216,12 @@ const removal = Promise.all([library, notes, sessionStore, knowledgeStore, jobs,
       sessions,
       trash,
       knowledge,
-      studying() {
-        const active = runner
-          .list()
-          .filter((job) => ["running", "queued", "waiting"].includes(job.status));
-        return {
-          documentIds: active.flatMap((job) => job.documentIds),
-          courseIds: active.map((job) => job.courseId),
-        };
-      },
+      stopStudying: (scope) =>
+        runner.withdraw((job) =>
+          "courseId" in scope
+            ? job.courseId === scope.courseId
+            : job.documentIds.some((id) => scope.documentIds.includes(id)),
+        ),
       releaseChats: (ids) => chats.release(ids),
       forgetJobs(courseId) {
         for (const job of runner.list())
@@ -258,6 +300,7 @@ async function startSignIn(): Promise<void> {
   } finally {
     signIn = undefined;
     emit({ type: "connection", connection: await connectionView() });
+    (await jobs).runner.connectionChanged();
   }
 }
 
@@ -359,17 +402,20 @@ async function importPaths(
     throw new Error("Unknown role.");
   const store = await library;
   const results: ImportResult[] = [];
+  const added: string[] = [];
   for (const path of paths as string[]) {
     try {
       const { document, duplicate } = await store.importFile(courseId, path, {
         role: (role as DocumentRole | null | undefined) ?? undefined,
       });
       results.push({ name: basename(path), document: documentView(document), duplicate });
+      if (!duplicate && teaching(document)) added.push(document.id);
     } catch (error) {
       results.push({ name: basename(path), error: errorMessage(error) });
     }
   }
   emit({ type: "library" });
+  studySoon(courseId, added, "upload");
   return results;
 }
 
@@ -411,6 +457,7 @@ const handlers: Record<InvokeMethod, (...args: unknown[]) => Promise<unknown>> =
     signIn?.abort();
     await (await connection).models.logout("openai");
     emit({ type: "connection", connection: await connectionView() });
+    (await jobs).runner.connectionChanged();
   },
   listCourses: courses,
   async createCourse(input) {
@@ -449,9 +496,31 @@ const handlers: Record<InvokeMethod, (...args: unknown[]) => Promise<unknown>> =
   },
   async updateDocument(id, patch, revision) {
     checkId(id);
-    const document = await (
-      await library
-    ).updateDocument(id, (patch ?? {}) as DocumentPatch, Number(revision));
+    const store = await library;
+    const before = await store.document(id);
+    const change = (patch ?? {}) as DocumentPatch;
+    const moved = change.courseId !== undefined && change.courseId !== before.courseId;
+    const after = { ...before, ...change };
+    // A lecture that stops being one, or leaves its course, stops being studied first, so
+    // nothing reads it or publishes notes from it while it changes.
+    const leaving = teaching(before) && (!teaching(after) || moved);
+    if (leaving)
+      await (await jobs).runner.withdraw((job) => job.documentIds.includes(id as string));
+    const document = await store.updateDocument(id, change, Number(revision));
+    if (leaving) {
+      const knowledge = await knowledgeStore;
+      const studied = (await knowledge.knowledge(before.courseId))?.sessions.some(
+        (session) => session.documentId === id,
+      );
+      if (studied)
+        await knowledge.revise(
+          before.courseId,
+          (current) => withoutDocuments(current, [id as string]),
+          `${before.title} is no longer studied`,
+        );
+    }
+    if (teaching(document) && (!teaching(before) || moved))
+      studySoon(document.courseId, [document.id], "upload");
     emit({ type: "library" });
     return documentView(document);
   },

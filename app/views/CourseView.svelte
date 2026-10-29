@@ -12,7 +12,6 @@
   import Composer from "../components/Composer.svelte";
   import CourseTile from "../components/CourseTile.svelte";
   import DocumentTable from "../components/DocumentTable.svelte";
-  import FolioMark from "../components/FolioMark.svelte";
   import StudyNotesList from "../components/StudyNotesList.svelte";
   import { COURSE_TABS, MATERIAL_SECTIONS } from "../lib/course-tabs.ts";
   import { formatDate } from "../lib/labels.ts";
@@ -39,16 +38,6 @@
     })).filter((section) => section.documents.length),
   );
   const knowledge = $derived(folio.knowledge[courseId] ?? null);
-  /** Lectures and recitations Folio has not studied and is not studying. */
-  const unstudied = $derived(
-    documents.filter(
-      (document) =>
-        (document.role === "lecture" || document.role === "recitation") &&
-        document.kind === "pdf" &&
-        !folio.studied(document.id) &&
-        !folio.studying(document.id),
-    ),
-  );
   const teaching = $derived(
     documents.filter(
       (document) =>
@@ -159,20 +148,6 @@
           {/if}
         </div>
         <div class="flex shrink-0 gap-1.5">
-          {#if unstudied.length}
-            <button
-              class="flex h-8 items-center gap-2 rounded-md border border-line bg-surface px-3 font-medium shadow-1 hover:bg-hover dark:bg-raised"
-              title="Folio reads every page and adds study notes to the course"
-              onclick={() =>
-                folio.study(
-                  courseId,
-                  unstudied.map((document) => document.id),
-                )}
-            >
-              <FolioMark size={14} />
-              Study {unstudied.length} new
-            </button>
-          {/if}
           <DropdownMenu.Root>
             <DropdownMenu.Trigger
               class="inline-flex size-8 shrink-0 items-center justify-center rounded-md text-text-3 transition-colors duration-150 hover:bg-hover hover:text-text active:bg-press data-[state=open]:bg-hover data-[state=open]:text-text"

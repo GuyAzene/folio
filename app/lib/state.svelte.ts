@@ -732,13 +732,15 @@ class FolioState {
     );
   }
 
-  /** Starts studying lectures or recitations, then shows the job's agent tree. */
+  /**
+   * Studies lectures or recitations now, ahead of anything Folio queued on its own. Folio already
+   * studies what is added; this is for studying a document again.
+   */
   async study(courseId: string, documentIds: string[]): Promise<void> {
     try {
       const job = await this.#api!.startIngest(courseId, documentIds);
       this.#putJob(job);
-      this.notice = `Folio is studying ${documentIds.length === 1 ? "the document" : `${documentIds.length} documents`}. You can keep working.`;
-      this.navigate({ view: "jobs" });
+      this.notice = `Folio is studying ${documentIds.length === 1 ? "it" : `${documentIds.length} documents`} again. You can keep working.`;
     } catch (error) {
       this.error = message(error);
     }

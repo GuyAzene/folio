@@ -6,6 +6,7 @@ import type {
   AgentNodeView,
   AgentRole,
   AgentStatus,
+  JobOrigin,
   JobView,
   PageCoverageView,
   StepOutcome,
@@ -19,6 +20,9 @@ export class JobError extends Error {}
 export interface JobRecord {
   id: string;
   kind: "ingest";
+  origin: JobOrigin;
+  /** Queued, but held until ChatGPT is connected. */
+  waitingFor: "connection" | null;
   courseId: string;
   documentIds: string[];
   title: string;
@@ -94,6 +98,10 @@ CREATE TABLE IF NOT EXISTS steps (
   output TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS declined (
+  document_id TEXT PRIMARY KEY,
+  declined_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS rejections (
   id INTEGER PRIMARY KEY,
   job_id TEXT NOT NULL,
@@ -129,6 +137,12 @@ export class JobStore {
     const columns = db.prepare("PRAGMA table_info(nodes)").all() as { name: string }[];
     if (!columns.some((column) => column.name === "outcome"))
       db.exec("ALTER TABLE nodes ADD COLUMN outcome TEXT");
+    // Jobs from before automatic studying were all started by the student.
+    const jobColumns = db.prepare("PRAGMA table_info(jobs)").all() as { name: string }[];
+    if (!jobColumns.some((column) => column.name === "origin"))
+      db.exec("ALTER TABLE jobs ADD COLUMN origin TEXT NOT NULL DEFAULT 'student'");
+    if (!jobColumns.some((column) => column.name === "waiting_for"))
+      db.exec("ALTER TABLE jobs ADD COLUMN waiting_for TEXT");
     await chmod(file, 0o600);
     return new JobStore(db);
   }
@@ -137,10 +151,14 @@ export class JobStore {
     this.#db.close();
   }
 
-  createJob(input: Pick<JobRecord, "courseId" | "documentIds" | "title">): JobRecord {
+  createJob(
+    input: Pick<JobRecord, "courseId" | "documentIds" | "title"> & { origin?: JobOrigin },
+  ): JobRecord {
     const job: JobRecord = {
       id: randomUUID(),
       kind: "ingest",
+      origin: input.origin ?? "student",
+      waitingFor: null,
       courseId: input.courseId,
       documentIds: input.documentIds,
       title: input.title,
@@ -155,11 +173,12 @@ export class JobStore {
     };
     this.#db
       .prepare(
-        "INSERT INTO jobs (id, kind, course_id, document_ids, title, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO jobs (id, kind, origin, course_id, document_ids, title, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
       )
       .run(
         job.id,
         job.kind,
+        job.origin,
         job.courseId,
         JSON.stringify(job.documentIds),
         job.title,
@@ -192,11 +211,19 @@ export class JobStore {
     patch: Partial<
       Pick<
         JobRecord,
-        "status" | "pages" | "pagesRead" | "regions" | "regionsAccounted" | "title" | "cancelled"
+        | "status"
+        | "pages"
+        | "pagesRead"
+        | "regions"
+        | "regionsAccounted"
+        | "title"
+        | "cancelled"
+        | "waitingFor"
       >
     >,
   ): JobRecord {
     const columns: Record<string, string> = {
+      waitingFor: "waiting_for",
       status: "status",
       pages: "pages",
       pagesRead: "pages_read",
@@ -286,6 +313,23 @@ export class JobStore {
       this.#db.exec("ROLLBACK");
       throw error;
     }
+  }
+
+  /** Documents whose study the student cancelled: Folio does not start them again on its own. */
+  declined(): Set<string> {
+    const rows = this.#db.prepare("SELECT document_id FROM declined").all() as {
+      document_id: string;
+    }[];
+    return new Set(rows.map((row) => row.document_id));
+  }
+
+  setDeclined(documentIds: string[], declined: boolean): void {
+    for (const id of documentIds)
+      if (declined)
+        this.#db
+          .prepare("INSERT OR REPLACE INTO declined (document_id, declined_at) VALUES (?, ?)")
+          .run(id, now());
+      else this.#db.prepare("DELETE FROM declined WHERE document_id = ?").run(id);
   }
 
   /** Moves a node to a new status, stamping its start and end times. */
@@ -405,6 +449,8 @@ export class JobStore {
     return {
       id: job.id,
       kind: job.kind,
+      origin: job.origin,
+      waitingFor: job.waitingFor,
       courseId: job.courseId,
       documentIds: job.documentIds,
       title: job.title,
@@ -432,6 +478,8 @@ function jobRecord(row: Record<string, unknown>): JobRecord {
   return {
     id: row.id as string,
     kind: "ingest",
+    origin: ((row.origin as JobOrigin | null) ?? "student") as JobOrigin,
+    waitingFor: (row.waiting_for as "connection" | null) ?? null,
     courseId: row.course_id as string,
     documentIds: JSON.parse(row.document_ids as string) as string[],
     title: row.title as string,

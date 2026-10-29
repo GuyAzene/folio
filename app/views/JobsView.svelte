@@ -61,7 +61,7 @@
       case "running":
         return `Studying for ${course}`;
       case "queued":
-        return "Waiting to start";
+        return job.waitingFor === "connection" ? "Waiting for ChatGPT" : "Up next";
       case "stopped":
         return job.resumable ? "Paused" : "Cancelled";
       case "failed":
@@ -75,8 +75,11 @@
 
   function subline(job: JobView): string {
     switch (job.status) {
-      case "running":
       case "queued":
+        if (job.waitingFor === "connection")
+          return `${what(job)} · Connect your ChatGPT account in Settings; studying starts on its own.`;
+        return `${what(job)} · Starts when the studies ahead of it finish. The notes are added to the course when they're done.`;
+      case "running":
         return `${what(job)} · You can keep working; the notes are added to the course when they're done.`;
       case "stopped":
         return job.resumable
@@ -172,8 +175,8 @@
       <div
         class="mt-10 rounded-xl border border-dashed border-line-strong px-6 py-12 text-center text-text-3"
       >
-        Nothing is being studied. Open a course and choose Study on its lectures
-        or recitations.
+        Nothing is being studied. Folio studies lectures and recitations as soon
+        as you add them to a course.
       </div>
     {/each}
   </div>

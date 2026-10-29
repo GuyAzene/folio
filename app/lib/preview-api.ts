@@ -637,6 +637,8 @@ function runningJob(): SimJob {
   return {
     id: id(61),
     kind: "ingest",
+    origin: "upload",
+    waitingFor: null,
     courseId: id(1),
     documentIds: [L, R],
     title: "Lecture 1 and Recitation 1",
@@ -766,6 +768,8 @@ function waitingJob(): SimJob {
   return {
     id: id(62),
     kind: "ingest",
+    origin: "upload",
+    waitingFor: null,
     courseId: id(2),
     documentIds: [D],
     title: "Lecture 2 Regular languages",
@@ -904,6 +908,8 @@ function doneJob(): SimJob {
   return {
     id: id(63),
     kind: "ingest",
+    origin: "upload",
+    waitingFor: null,
     courseId: id(2),
     documentIds: [D],
     title: "Lecture 1 Finite automata",
@@ -1134,6 +1140,8 @@ function jobView(job: SimJob): JobView {
   return structuredClone({
     id: job.id,
     kind: job.kind,
+    origin: job.origin,
+    waitingFor: job.waitingFor,
     courseId: job.courseId,
     documentIds: job.documentIds,
     title: job.title,

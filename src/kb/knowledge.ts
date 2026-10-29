@@ -65,8 +65,9 @@ export interface Acknowledgement {
 }
 
 /**
- * Merges a reviewed draft into the course's knowledge. A re-studied session replaces its own
- * session record and blocks; pages extend by slug; nothing from other sessions is touched.
+ * Merges a reviewed draft into the course's knowledge. A re-studied document replaces its own
+ * session record and blocks, whatever slug they had; pages extend by slug; nothing from other
+ * documents is touched, even one whose session already has the slug this one asks for.
  */
 export function mergeDraft(
   previous: Knowledge,
@@ -75,11 +76,24 @@ export function mergeDraft(
 ): Knowledge {
   const next: Knowledge = structuredClone(previous);
   for (const document of bundle.documents) {
-    const { session, draft } = document;
+    const { draft } = document;
+    const held = (slug: string) =>
+      next.sessions.some(
+        (existing) => existing.slug === slug && existing.documentId !== document.documentId,
+      );
+    let slug = document.session.slug;
+    for (let copy = 2; held(slug); copy++) slug = `${document.session.slug}-${copy}`;
+    const session = { ...document.session, slug };
+    const replaced = new Set([
+      slug,
+      ...next.sessions
+        .filter((existing) => existing.documentId === document.documentId)
+        .map((existing) => existing.slug),
+    ]);
     next.prefix = session.prefix;
-    next.sessions = next.sessions.filter((existing) => existing.slug !== session.slug);
+    next.sessions = next.sessions.filter((existing) => !replaced.has(existing.slug));
     for (const page of next.pages)
-      page.blocks = page.blocks.filter((block) => block.session !== session.slug);
+      page.blocks = page.blocks.filter((block) => !replaced.has(block.session));
 
     const ledger = document.ledger.map((entry) => {
       const accepted = acknowledgements.find(

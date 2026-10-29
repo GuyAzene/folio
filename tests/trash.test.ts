@@ -22,12 +22,13 @@ afterEach(async () => {
 
 /** What is busy can change during a test: the stores read it when asked. */
 interface Busy {
-  studying: string[];
-  courses: string[];
+  /** Each request to stop studying, and a gate the stop waits on before it resolves. */
+  stops: unknown[];
+  gate?: Promise<void>;
   replying: string[];
 }
 
-async function setup(busy: Busy = { studying: [], courses: [], replying: [] }) {
+async function setup(busy: Busy = { stops: [], replying: [] }) {
   const home = await mkdtemp(resolve(tmpdir(), "folio-trash-test-"));
   homes.push(home);
   const library = await LibraryStore.open({ home });
@@ -48,7 +49,10 @@ async function setup(busy: Busy = { studying: [], courses: [], replying: [] }) {
     sessions,
     trash,
     knowledge,
-    studying: () => ({ documentIds: busy.studying, courseIds: busy.courses }),
+    async stopStudying(scope) {
+      busy.stops.push(scope);
+      await busy.gate;
+    },
     async releaseChats(ids) {
       if (ids.some((id) => busy.replying.includes(id)))
         throw new Error("Folio is still replying in that chat. Stop the reply first.");
@@ -117,8 +121,8 @@ describe("Folio's Trash", () => {
     expect((await knowledge.knowledge(course.id))!.pages.length).toBeGreaterThan(0);
   });
 
-  it("keeps a file Folio is studying, and a chat it is replying in", async () => {
-    const busy: Busy = { studying: [], courses: [], replying: [] };
+  it("stops studying a file before it moves, and keeps a chat that is replying", async () => {
+    const busy: Busy = { stops: [], replying: [] };
     const { removal, library, sessions, course, pdf } = await setup(busy);
     const lecture = await pdf("Lecture 1.pdf");
     const chat = await sessions.create({
@@ -126,14 +130,22 @@ describe("Folio's Trash", () => {
       scope: { courseId: course.id, library: 1 },
       focus: null,
     });
-    busy.studying.push(lecture.id);
-    busy.courses.push(course.id);
     busy.replying.push(chat.id);
-    await expect(removal.removeDocument(lecture.id)).rejects.toThrow("is studying");
-    await expect(removal.removeCourse(course.id)).rejects.toThrow("is studying");
-    await expect(removal.removeChat(chat.id)).rejects.toThrow("still replying");
+    let stopped!: () => void;
+    busy.gate = new Promise((done) => (stopped = done));
+    const removing = removal.removeDocument(lecture.id);
+    await new Promise((settle) => setTimeout(settle, 20));
+    // Nothing moves while the study is still stopping.
     expect(await library.listDocuments()).toHaveLength(1);
+    stopped();
+    await removing;
+    expect(busy.stops).toEqual([{ documentIds: [lecture.id] }]);
+    expect(await library.listDocuments()).toHaveLength(0);
+    await expect(removal.removeChat(chat.id)).rejects.toThrow("still replying");
     expect(await sessions.list()).toHaveLength(1);
+    busy.replying.length = 0;
+    await removal.removeCourse(course.id);
+    expect(busy.stops.at(-1)).toEqual({ courseId: course.id });
   });
 
   it("moves a note with Folio's pending edit for it, and a chat, and restores both", async () => {

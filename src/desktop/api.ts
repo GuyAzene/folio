@@ -259,9 +259,18 @@ export interface PageCoverageView {
   state: "pending" | "read" | "escalated" | "represented" | "gap" | "unaccounted";
 }
 
+/**
+ * Why a study started: the student asked, a lecture was added, an unstudied one was found in the
+ * library, or an earlier study is being redone.
+ */
+export type JobOrigin = "student" | "upload" | "backlog" | "restudy";
+
 export interface JobView {
   id: string;
   kind: "ingest";
+  origin: JobOrigin;
+  /** A queued job that is waiting for ChatGPT to be connected before it can start. */
+  waitingFor: "connection" | null;
   courseId: string;
   documentIds: string[];
   title: string;

@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { FileText, Lock, Trash2 } from "@lucide/svelte";
+  import { Ellipsis, FileText, Lock, RotateCw, Trash2 } from "@lucide/svelte";
+  import { DropdownMenu } from "bits-ui";
   import type { DocumentRole, DocumentView } from "../../src/desktop/api.ts";
   import {
     formatDate,
@@ -26,10 +27,13 @@
     title?: string | null;
     showCourse?: boolean;
     showDue?: boolean;
-    /** Lectures and recitations show whether Folio has studied them, with a Study action. */
+    /** Lectures and recitations show whether Folio has studied them or is studying them. */
     showStudy?: boolean;
     empty?: string;
   } = $props();
+
+  const menuItem =
+    "flex h-8 cursor-default items-center gap-2.5 rounded-md px-2.5 text-[13px] text-text outline-none select-none data-[highlighted]:bg-hover data-[disabled]:opacity-50";
 
   const ROLE_OPTIONS = ROLES.map((role) => ({
     value: role,
@@ -99,16 +103,6 @@
                 <span class="size-1.5 animate-pulse rounded-full bg-highlight"
                 ></span>Studying
               </span>
-            {:else if document.kind === "pdf"}
-              <button
-                type="button"
-                class="h-6 shrink-0 rounded-md px-2 text-[12px] font-medium text-text-2 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-press hover:text-text focus-visible:opacity-100"
-                title="Folio reads every page and adds study notes to the course"
-                onclick={(event) => {
-                  event.stopPropagation();
-                  void folio.study(document.courseId, [document.id]);
-                }}>Study</button
-              >
             {/if}
           {/if}
         </div>
@@ -156,18 +150,44 @@
             >{formatDate(document.importedAt)}</span
           >
         {/if}
-        <button
-          type="button"
-          class="flex size-7 shrink-0 items-center justify-center rounded-md text-text-4 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-press hover:text-danger focus-visible:opacity-100"
-          title="Move to Trash"
-          aria-label="Move {document.title} to Trash"
-          onclick={(event) => {
-            event.stopPropagation();
-            void folio.trashDocuments([document.id]);
-          }}
-        >
-          <Trash2 size={14} strokeWidth={1.75} />
-        </button>
+        <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+        <div class="shrink-0" onclick={(event) => event.stopPropagation()}>
+          <DropdownMenu.Root>
+            <DropdownMenu.Trigger
+              class="flex size-7 items-center justify-center rounded-md text-text-4 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-press hover:text-text focus-visible:opacity-100 data-[state=open]:bg-press data-[state=open]:text-text data-[state=open]:opacity-100"
+              aria-label="More for {document.title}"
+            >
+              <Ellipsis size={15} strokeWidth={1.75} />
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Portal>
+              <DropdownMenu.Content
+                side="bottom"
+                align="end"
+                sideOffset={4}
+                class="z-50 min-w-[200px] animate-[folio-scale_140ms_var(--ease-out-quint)] rounded-xl border border-line-subtle bg-raised p-1.5 shadow-3 outline-none"
+              >
+                {#if (document.role === "lecture" || document.role === "recitation") && document.kind === "pdf"}
+                  <DropdownMenu.Item
+                    class={menuItem}
+                    disabled={folio.studying(document.id)}
+                    onSelect={() => folio.study(document.courseId, [document.id])}
+                  >
+                    <RotateCw size={14} strokeWidth={1.75} class="text-text-3" />
+                    {folio.studied(document.id) ? "Study again" : "Study now"}
+                  </DropdownMenu.Item>
+                  <DropdownMenu.Separator class="my-1.5 h-px bg-line-subtle" />
+                {/if}
+                <DropdownMenu.Item
+                  class="{menuItem} text-danger"
+                  onSelect={() => folio.trashDocuments([document.id])}
+                >
+                  <Trash2 size={14} strokeWidth={1.75} />
+                  Move to Trash
+                </DropdownMenu.Item>
+              </DropdownMenu.Content>
+            </DropdownMenu.Portal>
+          </DropdownMenu.Root>
+        </div>
       </div>
     {/each}
   </div>

@@ -1,5 +1,11 @@
 import { createHash } from "node:crypto";
-import type { AgentNodeView, JobView, PageCoverageView, StepOutcome } from "../desktop/api.ts";
+import type {
+  AgentNodeView,
+  JobOrigin,
+  JobView,
+  PageCoverageView,
+  StepOutcome,
+} from "../desktop/api.ts";
 import type { JobStore, NodeInput } from "../jobs/store.ts";
 import type { CourseRecord, DocumentRecord, LibraryStore } from "../library/store.ts";
 import type { SessionInfo } from "./draft.ts";
@@ -79,7 +85,14 @@ export interface IngestOptions {
   roles?: RoleModels;
   /** Parallel reader and reviewer requests across all jobs. */
   concurrency?: number;
+  /** Jobs studied at once; the rest wait their turn. */
+  parallelJobs?: number;
+  /** Whether ChatGPT is connected. Queued jobs wait for it; without this, it always is. */
+  connected?: () => Promise<boolean>;
 }
+
+/** The order queued jobs start in: what the student asked for, new files, the rest, redos. */
+const PRIORITY: Record<JobOrigin, number> = { student: 0, upload: 1, backlog: 2, restudy: 3 };
 
 /** What code decided about one region after the author wrote. */
 export type RegionState = "represented" | "described" | "omitted" | "gap" | "unaccounted";
@@ -151,7 +164,10 @@ export class IngestRunner {
   readonly #options: IngestOptions;
   readonly #roles: RoleModels;
   readonly #running = new Map<string, AbortController>();
+  /** Each running job's run, so a caller can wait until it has really stopped. */
+  readonly #runs = new Map<string, Promise<void>>();
   readonly #limit: <T>(line: string, task: () => Promise<T>) => Promise<T>;
+  #filling: Promise<void> = Promise.resolve();
 
   constructor(options: IngestOptions) {
     this.#options = options;
@@ -159,14 +175,23 @@ export class IngestRunner {
     this.#limit = fairLimiter(options.concurrency ?? 3);
   }
 
-  /** Marks jobs interrupted by a quit or crash; they resume only when the student asks. */
+  /**
+   * Picks up jobs interrupted by a quit or crash: they go back in the queue and continue from
+   * their checkpoints. Paused and cancelled jobs stay as the student left them.
+   */
   recover(): void {
     const { store } = this.#options;
     for (const job of store.jobs())
       if (job.status === "running" || job.status === "queued") {
         store.settleNodes(job.id, "stopped", "Interrupted when Folio closed.");
-        store.updateJob(job.id, { status: "stopped" });
+        store.updateJob(job.id, { status: job.cancelled ? "stopped" : "queued" });
       }
+    this.#fill();
+  }
+
+  /** ChatGPT was connected or disconnected: jobs waiting for it start, or wait. */
+  connectionChanged(): void {
+    this.#fill();
   }
 
   list(): JobView[] {
@@ -174,6 +199,7 @@ export class IngestRunner {
     return store.jobs().map((job) => store.view(job.id));
   }
 
+  /** Studies these documents because the student asked, ahead of anything Folio queued itself. */
   async start(courseId: string, documentIds: string[]): Promise<JobView> {
     const { library, store } = this.#options;
     const course = await library.course(courseId);
@@ -190,13 +216,68 @@ export class IngestRunner {
       if (document.kind !== "pdf") throw new Error("Folio can study PDF lectures for now.");
       documents.push(document);
     }
+    const busy = documents.find((document) => this.#active(document.id));
+    if (busy) throw new Error(`Folio is already studying “${busy.title}”.`);
+    store.setDeclined(
+      documents.map((document) => document.id),
+      false,
+    );
     const job = store.createJob({
       courseId: course.id,
       documentIds: documents.map((document) => document.id),
       title: `Study ${documents.map((document) => document.title).join(", ")}`,
     });
-    this.#launch(job.id);
+    this.#emit(job.id);
+    this.#fill();
     return store.view(job.id);
+  }
+
+  /**
+   * Queues a study of each document on Folio's own initiative, one job per document. Documents
+   * that are not PDF lectures or recitations, that already have a job, or whose study the student
+   * cancelled are left alone; so is a re-study of a document that was never studied.
+   */
+  async queue(courseId: string, documentIds: string[], origin: JobOrigin): Promise<JobView[]> {
+    const { library, store } = this.#options;
+    const declined = store.declined();
+    const queued: JobView[] = [];
+    for (const id of new Set(documentIds)) {
+      const document = await library.document(id).catch(() => null);
+      if (
+        !document ||
+        document.courseId !== courseId ||
+        (document.role !== "lecture" && document.role !== "recitation") ||
+        document.kind !== "pdf" ||
+        declined.has(id) ||
+        store.jobs().some((job) => job.documentIds.includes(id) && job.status !== "done")
+      )
+        continue;
+      const job = store.createJob({
+        courseId,
+        documentIds: [id],
+        title: `Study ${document.title}`,
+        origin,
+      });
+      queued.push(this.#emit(job.id));
+    }
+    if (queued.length) this.#fill();
+    return queued;
+  }
+
+  /**
+   * Stops and forgets every unfinished job that matches, and resolves once each has really
+   * stopped: a document that is moving to the Trash or stops being a lecture is no longer read
+   * or published while its files change.
+   */
+  async withdraw(matches: (job: { courseId: string; documentIds: string[] }) => boolean) {
+    const { store } = this.#options;
+    const jobs = store.jobs().filter((job) => job.status !== "done" && matches(job));
+    for (const job of jobs) this.#running.get(job.id)?.abort();
+    await Promise.allSettled(jobs.flatMap((job) => this.#runs.get(job.id) ?? []));
+    for (const job of jobs) {
+      store.deleteJob(job.id);
+      this.#options.removed?.(job.id);
+    }
   }
 
   pause(id: string): JobView {
@@ -207,11 +288,13 @@ export class IngestRunner {
     return this.#emit(id);
   }
 
+  /** Stops a job for good; Folio will not study its documents again unless the student asks. */
   cancel(id: string): JobView {
     const { store } = this.#options;
     this.#running.get(id)?.abort();
     store.settleNodes(id, "stopped", "Cancelled.");
-    store.updateJob(id, { status: "stopped", cancelled: true });
+    store.updateJob(id, { status: "stopped", cancelled: true, waitingFor: null });
+    store.setDeclined(store.job(id).documentIds, true);
     return this.#emit(id);
   }
 
@@ -230,14 +313,60 @@ export class IngestRunner {
     if (job.status === "done") throw new Error("This job already finished.");
     if (job.cancelled)
       throw new Error("This job was cancelled. Study the documents again to start over.");
-    this.#launch(id);
-    return store.view(id);
+    store.updateJob(id, { status: "queued" });
+    this.#fill();
+    return this.#emit(id);
+  }
+
+  /** True while a document has a job that is queued, running or waiting on the plan. */
+  #active(documentId: string): boolean {
+    return this.#options.store
+      .jobs()
+      .some(
+        (job) =>
+          job.documentIds.includes(documentId) &&
+          (job.status === "queued" || job.status === "running" || job.status === "waiting"),
+      );
+  }
+
+  /** Starts queued jobs, in order, while there is room and ChatGPT is connected. */
+  #fill(): void {
+    this.#filling = this.#filling.then(async () => {
+      const { store } = this.#options;
+      const queued = store
+        .jobs()
+        .filter((job) => job.status === "queued" && !this.#running.has(job.id))
+        .sort(
+          (a, b) =>
+            PRIORITY[a.origin] - PRIORITY[b.origin] || a.createdAt.localeCompare(b.createdAt),
+        );
+      if (!queued.length) return;
+      const connected = (await this.#options.connected?.().catch(() => false)) ?? true;
+      for (const job of queued) {
+        const waitingFor = connected ? null : "connection";
+        if (job.waitingFor !== waitingFor) {
+          store.updateJob(job.id, { waitingFor });
+          this.#emit(job.id);
+        }
+        if (connected && this.#running.size < (this.#options.parallelJobs ?? 2))
+          this.#launch(job.id);
+      }
+    });
+    // One failed pass must not stop the next: the queue is filled again on every change.
+    this.#filling = this.#filling.catch((error: unknown) =>
+      console.error("Folio could not start a queued study:", error),
+    );
   }
 
   #launch(id: string): void {
     const controller = new AbortController();
     this.#running.set(id, controller);
-    void this.#run(id, controller.signal).finally(() => this.#running.delete(id));
+    const run = this.#run(id, controller.signal).finally(() => {
+      this.#running.delete(id);
+      this.#runs.delete(id);
+      this.#fill();
+    });
+    this.#runs.set(id, run);
   }
 
   #emit(id: string): JobView {
@@ -251,6 +380,7 @@ export class IngestRunner {
     // Counters are rebuilt by every run; finished steps replay from their checkpoints.
     store.updateJob(jobId, {
       status: "running",
+      waitingFor: null,
       pages: 0,
       regions: 0,
       pagesRead: 0,
@@ -267,11 +397,15 @@ export class IngestRunner {
       const job = store.job(jobId);
       const course = await library.course(job.courseId);
       const documents = await Promise.all(job.documentIds.map((id) => library.document(id)));
+      // Sessions are numbered and paired across the whole course, not only this job's files.
+      const studied = (await library.listDocuments({ courseId: course.id }))
+        .filter((document) => document.role === "lecture" || document.role === "recitation")
+        .sort((a, b) => a.importedAt.localeCompare(b.importedAt) || a.id.localeCompare(b.id));
       // Documents are independent: one that fails does not stop the others, and whatever
       // finished is added to the course. Resume redoes only what did not finish.
       const results = await Promise.allSettled(
-        documents.map((document, index) =>
-          this.#document(jobId, root.id, course, document, index, documents, signal),
+        documents.map((document) =>
+          this.#document(jobId, root.id, course, document, studied, signal),
         ),
       );
       signal.throwIfAborted();
@@ -338,8 +472,7 @@ export class IngestRunner {
     rootId: string,
     course: CourseRecord,
     document: DocumentRecord,
-    index: number,
-    all: DocumentRecord[],
+    courseDocuments: DocumentRecord[],
     signal: AbortSignal,
   ): Promise<DocumentDraft> {
     const { store, library, prepare } = this.#options;
@@ -377,7 +510,7 @@ export class IngestRunner {
       this.#emit(jobId);
       signal.throwIfAborted();
 
-      const session = sessionInfo(course, document, index, all);
+      const session = sessionInfo(course, document, courseDocuments);
       const brief = await this.#brief(jobId, branch.id, document, source, signal);
       const regions = await this.#read(jobId, branch.id, document, source, brief, signal);
       let draft = await this.#author(
@@ -1356,27 +1489,46 @@ function pageState(ledger: LedgerEntry[], page: number): PageCoverageView["state
   return "represented";
 }
 
-/** Course prefix and session slug, such as "alg" and "alg-L01". */
+/**
+ * Course prefix and session slug, such as "alg" and "alg-L01". A document is numbered by the
+ * number in its title, or else by its place among the course's lectures (or recitations) in the
+ * order they were added; no two documents of a course share a slug, and a lecture and a
+ * recitation with the same number are paired.
+ */
 export function sessionInfo(
   course: CourseRecord,
   document: DocumentRecord,
-  index: number,
-  all: DocumentRecord[],
+  courseDocuments: DocumentRecord[],
 ): SessionInfo {
   const prefix = coursePrefix(course.name);
   const type = document.role === "recitation" ? "recitation" : "lecture";
-  const number = /(\d+)/.exec(document.title)?.[1] ?? String(index + 1);
-  const slug = `${prefix}-${type === "lecture" ? "L" : "R"}${number.padStart(2, "0")}`;
+  const letter = (other: DocumentRecord) => (other.role === "recitation" ? "R" : "L");
+  const all = courseDocuments.some((other) => other.id === document.id)
+    ? courseDocuments
+    : [...courseDocuments, document];
+  const numbers = new Map<string, string>();
+  const slugs = new Map<string, string>();
+  const taken = new Set<string>();
+  for (const kind of ["L", "R"])
+    all
+      .filter((other) => letter(other) === kind)
+      .forEach((other, index) => {
+        const number = (/(\d+)/.exec(other.title)?.[1] ?? String(index + 1)).padStart(2, "0");
+        let slug = `${prefix}-${kind}${number}`;
+        for (let copy = 2; taken.has(slug); copy++) slug = `${prefix}-${kind}${number}-${copy}`;
+        taken.add(slug);
+        numbers.set(other.id, number);
+        slugs.set(other.id, slug);
+      });
+  const slug = slugs.get(document.id)!;
   const paired = all
     .filter(
       (other) =>
         other.id !== document.id &&
-        other.role !== document.role &&
-        /(\d+)/.exec(other.title)?.[1] === number,
+        letter(other) !== letter(document) &&
+        numbers.get(other.id) === numbers.get(document.id),
     )
-    .map(
-      (other) => `${prefix}-${other.role === "recitation" ? "R" : "L"}${number.padStart(2, "0")}`,
-    );
+    .map((other) => slugs.get(other.id)!);
   return {
     prefix,
     slug,

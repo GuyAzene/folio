@@ -134,13 +134,25 @@ listed sibling, and Pi's own entry replaces the declaration once it ships.
 
 ## Studying a lecture
 
+Adding a lecture or recitation to a course is what starts its study; reading or explaining a
+document never does. A PDF lecture or recitation is queued a moment after it is added (time to
+fix a wrong role for free), and once after start Folio queues every lecture and recitation it
+never studied. Studies run two at a time: what the student asked for first, then new files, then
+the backlog, then redos. Without a ChatGPT connection they wait and start when it returns. A
+study the student cancels is not started again unless they ask. A file that moves to the Trash,
+leaves its course or stops being a lecture has its study stopped first, and Folio waits until
+nothing reads it any more before it moves; its study notes leave the course with it.
+
 A study job reads every page of a lecture: its text layer and regions, with close-up re-reads
 where a page needs them. It then drafts study notes by topic, each section citing the pages and
 regions it came from. Every region ends up accounted for: cited, or omitted as page furniture
 with a reason (page numbers, repeated headers, build steps, duplicates). The student never sees
-this accounting; it is a record for diagnosis. The result is published as a new, immutable version of the course's knowledge,
-with a SQLite FTS5 search index. Each step's output is saved, so a job interrupted by a quit or a
-plan limit resumes where it stopped instead of starting over.
+this accounting; it is a record for diagnosis. The result is published as a new, immutable
+version of the course's knowledge, with a SQLite FTS5 search index. Each document is a session
+numbered across its course (by the number in its title, or its place among the course's
+lectures), and a re-studied document replaces its own session. Each step's output is saved, so a
+job interrupted by a quit or a plan limit resumes where it stopped instead of starting over;
+after a quit, interrupted studies go back in the queue on their own.
 
 ## Notes
 

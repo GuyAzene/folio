@@ -34,6 +34,8 @@ function job(nodes: AgentNodeView[], read: number): JobView {
   return {
     id: "job",
     kind: "ingest",
+    origin: "upload",
+    waitingFor: null,
     courseId: "course",
     documentIds: ["doc"],
     title: "Study",

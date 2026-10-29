@@ -10,8 +10,8 @@ import type { Trash, TrashEntry } from "./trash.ts";
  * What removing something means in Folio. Each item moves into the Trash with what belongs to
  * it — a note with Folio's pending edits for it, a course with its files, notes, chats and
  * study notes — and comes back the same way. Removing a studied file also takes its study notes
- * out of the course (a new version), and restoring the file brings them back. Nothing that is
- * in use moves: a file being studied, a chat that is replying.
+ * out of the course (a new version), and restoring the file brings them back. A file being
+ * studied stops being studied before it moves; a chat that is replying does not move.
  */
 export interface RemovalOptions {
   library: LibraryStore;
@@ -19,8 +19,11 @@ export interface RemovalOptions {
   sessions: SessionStore;
   trash: Trash;
   knowledge?: KnowledgeStore;
-  /** Documents and courses with a job studying them right now. */
-  studying?: () => { documentIds: string[]; courseIds: string[] };
+  /**
+   * Stops and forgets the studies of these documents, or of every file in this course, and
+   * resolves once nothing is reading or publishing them any more.
+   */
+  stopStudying?: (scope: { documentIds: string[] } | { courseId: string }) => Promise<void>;
   /** Closes these chats, refusing if one is replying. */
   releaseChats?: (ids: string[]) => Promise<void>;
   /** Clears the job history of a removed course. */
@@ -37,10 +40,7 @@ export class Removal {
   async removeDocument(id: string): Promise<TrashEntry> {
     const { library, trash, knowledge } = this.#options;
     const document = await library.document(id);
-    if (this.#studying().documentIds.includes(id))
-      throw new LibraryError(
-        `Folio is studying "${document.title}" right now. Pause or cancel that first.`,
-      );
+    await this.#options.stopStudying?.({ documentIds: [id] });
     const course = await library.course(document.courseId);
     const studied = (await knowledge?.knowledge(course.id))?.sessions.some(
       (session) => session.documentId === id,
@@ -109,10 +109,7 @@ export class Removal {
   async removeCourse(id: string): Promise<TrashEntry> {
     const { library, notes, sessions, trash, knowledge } = this.#options;
     const course = await library.course(id);
-    if (this.#studying().courseIds.includes(id))
-      throw new LibraryError(
-        `Folio is studying files in ${course.name} right now. Pause or cancel that first.`,
-      );
+    await this.#options.stopStudying?.({ courseId: id });
     const documents = await library.listDocuments({ courseId: id });
     const chats = (await sessions.list()).filter((summary) => summary.scope.courseId === id);
     const noteCount = (await notes.list(id)).length;
@@ -158,9 +155,5 @@ export class Removal {
         );
     }
     return entry;
-  }
-
-  #studying(): { documentIds: string[]; courseIds: string[] } {
-    return this.#options.studying?.() ?? { documentIds: [], courseIds: [] };
   }
 }
