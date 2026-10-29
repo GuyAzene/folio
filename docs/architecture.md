@@ -145,9 +145,15 @@ nothing reads it any more before it moves; its study notes leave the course with
 
 A study job reads every page of a lecture: its text layer and regions, with close-up re-reads
 where a page needs them. It then drafts study notes by topic, each section citing the pages and
-regions it came from. Every region ends up accounted for: cited, or omitted as page furniture
-with a reason (page numbers, repeated headers, build steps, duplicates). The student never sees
-this accounting; it is a record for diagnosis. The result is published as a new, immutable
+regions it came from, and an independent checker tests the draft's claims against the page
+images. Up to three revision rounds follow, each on what is still wrong: regions not yet written
+up (read again up close first, if no close-up has read them) and claims the checker doubted.
+Whatever every round still missed is written up from the slide itself, as a cited section marked
+as not reviewed, so no part of a slide is dropped. A sentence the page contradicts leaves its
+section; every claim still unconfirmed is kept on its section for the tutor, never shown to the
+student as a warning. Every region ends up cited, or omitted as page furniture with a reason
+(page numbers, repeated headers, build steps, duplicates); the student never sees this
+accounting, which is a record for diagnosis. The result is published as a new, immutable
 version of the course's knowledge, with a SQLite FTS5 search index. Each document is a session
 numbered across its course (by the number in its title, or its place among the course's
 lectures), and a re-studied document replaces its own session. Each step's output is saved, so a

@@ -131,10 +131,23 @@ export function knowledgeTools(
       let used = 0;
       const parts: string[] = [];
       const sources: { documentId: string; title: string; page: number }[] = [];
+      // What the published knowledge records about a block beyond its text, for the tutor only.
+      const stored = new Map(
+        published.pages.flatMap((page) => page.blocks.map((block) => [block.handle, block])),
+      );
       for (const block of blocks) {
         const title = titles.get(block.documentId) ?? block.session;
         const pages = [...new Set(block.locators.map((locator) => locator.page))];
-        const text = `[${block.handle}] ${block.title}\nCite as: (${title}, ${pageWord(pages)})\n\n${block.body}`;
+        const own = stored.get(block.handle);
+        const notes = [
+          ...(own?.unreviewed
+            ? [
+                "Written straight from the slide; not checked like the rest. Read the page if it matters.",
+              ]
+            : []),
+          ...(own?.disputed ?? []).map((item) => `Unconfirmed: "${item.text}" (${item.note}).`),
+        ];
+        const text = `[${block.handle}] ${block.title}\nCite as: (${title}, ${pageWord(pages)})\n\n${block.body}${notes.length ? `\n\n[For you, not the student: ${notes.join(" ")}]` : ""}`;
         if (used + text.length > READ_BUDGET && parts.length) {
           parts.push(
             `[Budget reached: ${blocks.length - parts.length} more section(s) not shown. Read them in another call.]`,

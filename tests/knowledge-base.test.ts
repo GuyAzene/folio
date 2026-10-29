@@ -149,6 +149,30 @@ describe("knowledge base", () => {
     );
   });
 
+  it("tells the tutor, not the student, which sections came straight from a slide or are doubted", async () => {
+    const { library, store, course } = await setup();
+    const doubted = bundle(course.id, "00000000-0000-4000-8000-0000000000aa", "alg-L01");
+    const [marking, definition] = [
+      doubted.documents[0]!.draft.pages[0]!.blocks[0]!,
+      doubted.documents[0]!.draft.pages[1]!.blocks[0]!,
+    ];
+    marking.disputed = [{ text: "Marked on enqueue.", note: "The slide says otherwise" }];
+    definition.unreviewed = true;
+    await store.publish(doubted);
+    const read = knowledgeTools(store, library, course.id).find(
+      (tool) => tool.name === "read_sections",
+    )!;
+    const result = await read.execute("call_1", { handles: ["alg-bfs", "alg-graphs"] });
+    const text = (result.content[0] as { text: string }).text;
+    expect(text).toContain('[For you, not the student: Unconfirmed: "Marked on enqueue."');
+    expect(text).toContain("Written straight from the slide; not checked like the rest.");
+    // What the student reads stays the section itself.
+    const notes = (await store.knowledge(course.id))!;
+    expect(
+      JSON.stringify(notes.pages.flatMap((page) => page.blocks.map((b) => b.body))),
+    ).not.toContain("Unconfirmed");
+  });
+
   it("reads a topic's sections by the topic's handle, and cuts a long map at a whole line", async () => {
     const { library, store, course } = await setup();
     await store.publish(bundle(course.id, "00000000-0000-4000-8000-0000000000aa", "alg-L01"));

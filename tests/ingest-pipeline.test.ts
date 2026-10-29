@@ -11,6 +11,8 @@ import {
   hash,
   IngestRunner,
   PUBLISH_FAILED,
+  settleDisputes,
+  withFallbacks,
   type DraftBundle,
   type PreparedSource,
 } from "../src/ingest/pipeline.ts";
@@ -478,26 +480,92 @@ describe("ingestion pipeline", () => {
     });
   });
 
-  it("publishes what it could not place as gaps, and notes claims the checker disputed", async () => {
+  it("revises three times, then writes up from the slide what it still missed, and keeps doubts for the tutor", async () => {
     const models = fakeModels({ stubborn: true, doubt: true });
     const { store, runner, course, lecture, published, finished } = await setup(models.complete);
     const job = await runner.start(course.id, [lecture.id]);
     await finished(job.id);
     expect(store.job(job.id).status).toBe("done");
+    expect(models.calls.filter((call) => call.system.startsWith("You write"))).toHaveLength(4);
+    const authors = store.nodes(job.id).filter((node) => node.role === "author");
+    expect(authors.map((node) => [node.title, node.attempt])).toEqual([
+      ["Author", 1],
+      ["Author · revision 1", 2],
+      ["Author · revision 2", 3],
+      ["Author · revision 3", 4],
+    ]);
     const [document] = published[0]!.documents;
-    expect(document!.ledger.find((entry) => entry.region === "p2.r1")).toMatchObject({
-      state: "gap",
-      reason: expect.stringContaining("Folio could not place this region"),
+    // Nothing is left as a gap: the diagram the author kept missing is written up from the slide.
+    expect(document!.ledger.map((entry) => entry.state)).not.toContain("gap");
+    expect(document!.ledger.find((entry) => entry.region === "p2.r1")?.state).toBe("described");
+    const blocks = document!.draft.pages.flatMap((page) => page.blocks);
+    expect(blocks.find((block) => block.unreviewed)).toMatchObject({
+      title: "Also on page 2",
+      body: expect.stringContaining("Automaton with states q0 and q1."),
+      locators: [{ page: 2, region: "p2.r1", location: "as on the slide" }],
     });
-    const block = document!.draft.pages[0]!.blocks[0]!;
-    expect(block.body).toContain(
-      '> Not confirmed against the slides: "Each vertex is marked visited when it enters the queue."',
-    );
-    expect(block.gaps).toHaveLength(1);
+    // The doubted claim is kept for the tutor, never written into what the student reads.
+    const marking = blocks.find((block) => block.id === "bfs-marking")!;
+    expect(marking.body).not.toContain("Not confirmed");
+    expect(marking.disputed).toEqual([
+      {
+        text: "Each vertex is marked visited when it enters the queue.",
+        note: "The slide says otherwise: The page says it is marked when dequeued.",
+      },
+    ]);
     expect(store.nodes(job.id).find((node) => node.role === "document")?.outcome).toMatchObject({
       uncovered: 1,
       disagreements: 1,
     });
+  });
+
+  it("writes a text region every revision missed from the slide's own words, so it counts as covered", () => {
+    const regions = Object.fromEntries(
+      INVENTORY.pages.flatMap((page) =>
+        page.regions.map((region) => [
+          region.id,
+          {
+            id: region.id,
+            type: "text",
+            content: region.text,
+            claims: [],
+            flags: [],
+            escalated: false,
+            unreadable: "",
+          },
+        ]),
+      ),
+    ) as Parameters<typeof computeLedger>[1];
+    const forgetful = draft(true);
+    forgetful.pages[0]!.blocks[0]!.locators = forgetful.pages[0]!.blocks[0]!.locators.filter(
+      (locator) => locator.region !== "p1.r2",
+    );
+    const before = computeLedger(INVENTORY, regions, forgetful);
+    expect(before.find((entry) => entry.region === "p1.r2")?.state).toBe("unaccounted");
+    const filled = withFallbacks(forgetful, before, INVENTORY, regions, "Graph traversal");
+    const after = computeLedger(INVENTORY, regions, filled);
+    expect(after.find((entry) => entry.region === "p1.r2")?.state).toBe("represented");
+    expect(filled.pages[0]!.blocks.at(-1)).toMatchObject({
+      body: "Also on this slide: Each vertex is marked visited when it enters the queue. The running time is O(V + E).",
+      unreviewed: true,
+    });
+  });
+
+  it("takes out a sentence the slide contradicts", () => {
+    const base = draft(true);
+    base.pages[0]!.blocks[0]!.body =
+      "Each vertex is marked visited when it enters the queue. So the running time is O(V + E).";
+    const settled = settleDisputes(base, {
+      c1: {
+        claim: "c1",
+        verdict: "contradicted",
+        note: "Marked when dequeued.",
+        region: "p1.r2",
+        text: "Each vertex is marked visited when it enters the queue.",
+      },
+    });
+    expect(settled.pages[0]!.blocks[0]!.body).toBe("So the running time is O(V + E).");
+    expect(settled.pages[0]!.blocks[0]!.claims).toEqual([]);
   });
 
   it("retires an earlier failed run once the same documents are studied, and dismisses jobs", async () => {

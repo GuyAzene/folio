@@ -32,6 +32,7 @@ import {
   reviewerSchema,
   type AuthorDraft,
   type Brief,
+  type DraftPage,
   type EscalatedRegion,
   type ReadPage,
   type ReadRegion,
@@ -141,6 +142,8 @@ export interface DraftBundle {
 const READ_EDGE = 1568;
 const AUTHOR_EDGE = 1024;
 const RECALL_FLOOR = 0.8;
+/** How hard the author thinks in each revision round; there are as many rounds as entries. */
+const REVISION_EFFORT: ModelRequest["reasoning"][] = ["medium", "high", "high"];
 const LEDGER_RECALL_FLOOR = 0.5;
 const HARD_FLAGS = new Set([
   "hebrew_in_image",
@@ -528,8 +531,27 @@ export class IngestRunner {
       let ledger = computeLedger(inventory, regions, draft);
       let verdicts = await this.#review(jobId, branch.id, document, source, draft, {}, signal);
 
-      const issues = revisionIssues(ledger, verdicts);
-      if (issues.length) {
+      // Up to three rounds, each on what is still wrong: regions not yet written up are read
+      // again up close first, then the author fixes them and any claim the checker doubted.
+      for (const [index, reasoning] of REVISION_EFFORT.entries()) {
+        const issues = revisionIssues(ledger, verdicts);
+        if (!issues.length) break;
+        const round = index + 1;
+        // A close-up helps a region that was never read up close, or still could not be read;
+        // one the author left out after a good reading needs the author, not another look.
+        const closer = ledger.flatMap((entry) => {
+          const region = inventory.pages
+            .find((page) => page.page === entry.page)
+            ?.regions.find((candidate) => candidate.id === entry.region);
+          const reading = regions[entry.region];
+          return entry.state === "unaccounted" &&
+            region &&
+            (!reading?.escalated || !!reading.unreadable)
+            ? [{ region, reason: entry.reason, first: reading }]
+            : [];
+        });
+        if (closer.length)
+          await this.#escalate(jobId, branch.id, document, source, closer, regions, signal, round);
         draft = await this.#author(
           jobId,
           branch.id,
@@ -540,24 +562,17 @@ export class IngestRunner {
           regions,
           session,
           signal,
-          { draft, issues },
+          { draft, issues, round, reasoning },
         );
         ledger = computeLedger(inventory, regions, draft);
         verdicts = await this.#review(jobId, branch.id, document, source, draft, verdicts, signal);
       }
-      // Nothing waits for the student: regions Folio could not place become stated gaps, and
-      // claims the checker could not confirm are noted on their sections, where the tutor reads.
+      // Whatever every round still missed is written up from the slide itself, and claims the
+      // checker still doubts are settled for the tutor, never shown to the student as warnings.
       const uncovered = ledger.filter((entry) => entry.state === "unaccounted").length;
-      ledger = ledger.map((entry) =>
-        entry.state === "unaccounted"
-          ? {
-              ...entry,
-              state: "gap" as const,
-              reason: `Folio could not place this region, so nothing was written from it (${entry.reason}).`,
-            }
-          : entry,
-      );
-      draft = noteDisputes(draft, verdicts);
+      draft = withFallbacks(draft, ledger, inventory, regions, document.title);
+      ledger = computeLedger(inventory, regions, draft);
+      draft = settleDisputes(draft, verdicts);
       for (const page of inventory.pages)
         store.setCoverage(jobId, document.id, page.page, pageState(ledger, page.page));
       store.updateJob(jobId, {
@@ -768,18 +783,24 @@ export class IngestRunner {
     return regions;
   }
 
+  /**
+   * Re-reads hard regions up close, page by page. During reading, `from` is the reader step
+   * that found them; during a revision round, it is the document and the round makes a new read.
+   */
   async #escalate(
     jobId: string,
-    readerKey: string,
+    from: string,
     document: DocumentRecord,
     source: PreparedSource,
     items: { region: Region; reason: string; first?: ReadRegion }[],
     regions: DocumentDraft["regions"],
     signal: AbortSignal,
+    round = 0,
   ): Promise<void> {
     const { store } = this.#options;
     // The reader step that found these regions; documents read at the same time share page numbers.
-    const parent = store.nodesByKey(jobId, readerKey).at(-1);
+    const parent = round ? { id: from } : store.nodesByKey(jobId, from).at(-1);
+    const readerKey = from;
     const byPage = Map.groupBy(items, (item) => item.region.page);
     for (const [page, group] of byPage) {
       signal.throwIfAborted();
@@ -792,6 +813,7 @@ export class IngestRunner {
         readerKey,
         page,
         group.map((item) => item.region.id),
+        ...(round ? [round] : []),
       ]);
       const result = await this.#step(
         jobId,
@@ -799,7 +821,7 @@ export class IngestRunner {
         key,
         {
           role: "escalation",
-          title: `Page ${page} close-up`,
+          title: round ? `Page ${page} close-up · round ${round}` : `Page ${page} close-up`,
           task: `Re-read ${group.length} hard region${group.length === 1 ? "" : "s"}: ${[...new Set(group.map((item) => item.reason.split(":")[0]))].join("; ")}`,
           model,
           pages: [page],
@@ -862,7 +884,12 @@ export class IngestRunner {
     regions: DocumentDraft["regions"],
     session: SessionInfo,
     signal: AbortSignal,
-    revision: { draft: AuthorDraft; issues: string[] } | null,
+    revision: {
+      draft: AuthorDraft;
+      issues: string[];
+      round: number;
+      reasoning: ModelRequest["reasoning"];
+    } | null,
   ): Promise<AuthorDraft> {
     const model = this.#roles.author;
     const { inventory } = source;
@@ -881,12 +908,12 @@ export class IngestRunner {
       key,
       {
         role: "author",
-        title: revision ? "Author · revision" : "Author",
+        title: revision ? `Author · revision ${revision.round}` : "Author",
         task: revision
           ? `Fix ${revision.issues.length} issue${revision.issues.length === 1 ? "" : "s"} found by the ledger and the reviewer`
           : `Write the wiki for ${document.title}`,
         model,
-        attempt: revision ? 2 : 1,
+        attempt: revision ? revision.round + 1 : 1,
       },
       async (node) => {
         const regionLines = Object.entries(regions)
@@ -919,7 +946,14 @@ export class IngestRunner {
           );
         const written = await this.#call<AuthorDraft>(
           node,
-          { model, system: AUTHOR_SYSTEM, content, maxTokens: 32000, reasoning: "medium", signal },
+          {
+            model,
+            system: AUTHOR_SYSTEM,
+            content,
+            maxTokens: 32000,
+            reasoning: revision?.reasoning ?? "medium",
+            signal,
+          },
           authorSchema,
         );
         this.#options.store.setNode(node.id, { outcome: draftOutcome(written) });
@@ -1317,7 +1351,7 @@ export function computeLedger(
       block.locators.some((locator) => locator.region === id),
     );
     const omitted = draft.omitted.find((entry) => entry.region === id);
-    const gap = draft.gaps.find((entry) => entry.region === id);
+    const gap = draft.gaps?.find((entry) => entry.region === id);
     let state: RegionState = "unaccounted";
     let reason = "not cited, omitted or listed as a gap";
     if (citing.length) {
@@ -1370,19 +1404,27 @@ function revisionIssues(ledger: LedgerEntry[], verdicts: DocumentDraft["verdicts
       .filter((entry) => entry.state === "unaccounted")
       .map(
         (entry) =>
-          `Region ${entry.region} (page ${entry.page}) is ${entry.reason}. Cite it, omit it with an allowed reason, or list it as a gap.`,
+          `Region ${entry.region} (page ${entry.page}) is ${entry.reason}. Write it up in a block that cites it, using what the reader and the close-up found, or omit it only if it is page furniture.`,
       ),
     ...Object.values(verdicts)
-      .filter((verdict) => verdict.verdict === "contradicted")
-      .map(
-        (verdict) =>
-          `The claim "${verdict.text}" (${verdict.region}) is contradicted by the page: ${verdict.note}`,
+      .filter((verdict) => verdict.verdict !== "supported")
+      .map((verdict) =>
+        verdict.verdict === "contradicted"
+          ? `The claim "${verdict.text}" (${verdict.region}) is contradicted by the page: ${verdict.note} Correct it to what the page says.`
+          : `The claim "${verdict.text}" (${verdict.region}) could not be checked against the page: ${verdict.note} Rewrite it as the page shows it, or cite the region that shows it.`,
       ),
   ];
 }
 
-/** Each claim the checker could not confirm, noted on the section that makes it. */
-export function noteDisputes(draft: AuthorDraft, verdicts: DocumentDraft["verdicts"]): AuthorDraft {
+/**
+ * Settles the claims the checker still could not confirm after the last revision. A sentence the
+ * page contradicts leaves the section; every unconfirmed claim is kept on its block for the
+ * tutor, never shown to the student as a warning.
+ */
+export function settleDisputes(
+  draft: AuthorDraft,
+  verdicts: DocumentDraft["verdicts"],
+): AuthorDraft {
   const disputed = Object.values(verdicts).filter((verdict) => verdict.verdict !== "supported");
   if (!disputed.length) return draft;
   return {
@@ -1390,26 +1432,109 @@ export function noteDisputes(draft: AuthorDraft, verdicts: DocumentDraft["verdic
     pages: draft.pages.map((page) => ({
       ...page,
       blocks: page.blocks.map((block) => {
-        const notes = disputed
-          .filter((verdict) =>
-            block.claims.some(
-              (claim) => claim.text === verdict.text && claim.region === verdict.region,
-            ),
-          )
-          .map(
-            (verdict) =>
-              `Not confirmed against the slides: "${verdict.text}"${verdict.note ? ` (${verdict.note})` : ""}`,
-          );
-        return notes.length
-          ? {
-              ...block,
-              body: `${block.body.trim()}\n\n${notes.map((note) => `> ${note}`).join("\n>\n")}`,
-              gaps: [...block.gaps, ...notes],
-            }
-          : block;
+        const own = disputed.filter((verdict) =>
+          block.claims.some(
+            (claim) => claim.text === verdict.text && claim.region === verdict.region,
+          ),
+        );
+        if (!own.length) return block;
+        let body = block.body;
+        for (const verdict of own.filter((item) => item.verdict === "contradicted"))
+          body = withoutClaim(body, verdict.text);
+        return {
+          ...block,
+          body,
+          claims: block.claims.filter(
+            (claim) =>
+              !own.some(
+                (verdict) =>
+                  verdict.verdict === "contradicted" &&
+                  verdict.text === claim.text &&
+                  verdict.region === claim.region,
+              ),
+          ),
+          disputed: own.map((verdict) => ({
+            text: verdict.text,
+            note: `${verdict.verdict === "contradicted" ? "The slide says otherwise" : "Could not be checked against the slide"}${verdict.note ? `: ${verdict.note}` : ""}`,
+          })),
+        };
       }),
     })),
   };
+}
+
+/** The body without the sentence that makes this claim, when the claim's words are in it. */
+function withoutClaim(body: string, claim: string): string {
+  const needle = claim.trim().replace(/\s+/g, " ");
+  if (!needle) return body;
+  const sentences = body.split(/(?<=[.!?])\s+/);
+  const kept = sentences.filter((sentence) => !sentence.replace(/\s+/g, " ").includes(needle));
+  return kept.length < sentences.length ? kept.join(" ") : body;
+}
+
+/**
+ * Writes up, straight from the slide, every region still unplaced after the last revision: a
+ * cited block on the topic its page is mostly about, so no part of a slide is dropped. Text keeps
+ * the slide's own words (the text layer, or what the reader read); a figure keeps the reader's
+ * description. These blocks are marked as not reviewed.
+ */
+export function withFallbacks(
+  draft: AuthorDraft,
+  ledger: LedgerEntry[],
+  inventory: SourceInventory,
+  regions: DocumentDraft["regions"],
+  sessionTitle: string,
+): AuthorDraft {
+  const left = ledger.filter((entry) => entry.state === "unaccounted");
+  if (!left.length) return draft;
+  const pages: DraftPage[] = structuredClone(draft.pages);
+  const cites = (page: DraftPage, number: number) =>
+    page.blocks.reduce(
+      (sum, block) => sum + block.locators.filter((locator) => locator.page === number).length,
+      0,
+    );
+  /** The topic most cited on this page, else on the nearest earlier page, else the first. */
+  const topicFor = (number: number): DraftPage => {
+    for (let at = number; at >= 1; at--) {
+      const best = pages
+        .map((page) => ({ page, count: cites(page, at) }))
+        .filter((candidate) => candidate.count > 0)
+        .sort((a, b) => b.count - a.count)[0];
+      if (best) return best.page;
+    }
+    if (!pages.length)
+      pages.push({
+        slug: "from-the-slides",
+        title: sessionTitle,
+        type: "concept",
+        prerequisites: [],
+        intuition: "",
+        blocks: [],
+      });
+    return pages[0]!;
+  };
+  const found = new Map(inventory.pages.flatMap((page) => page.regions.map((r) => [r.id, r])));
+  for (const entry of left) {
+    const region = found.get(entry.region);
+    const reading = regions[entry.region];
+    const words = region?.kind === "text" && region.text.trim() ? region.text.trim() : "";
+    const content = words || reading?.content.trim() || "";
+    if (!content) continue;
+    topicFor(entry.page).blocks.push({
+      id: `slide-${entry.region.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}`,
+      title: `Also on page ${entry.page}`,
+      body: words ? `Also on this slide: ${content}` : content,
+      locators: [{ page: entry.page, region: entry.region, location: "as on the slide" }],
+      keywords_en: [],
+      keywords_he: [],
+      aliases: [],
+      questions: [],
+      claims: [],
+      interpretations: [],
+      unreviewed: true,
+    });
+  }
+  return { ...draft, pages };
 }
 
 function draftOutcome(draft: AuthorDraft): StepOutcome {
