@@ -88,7 +88,7 @@ export function knowledgeTools(
           ? hits
               .map(
                 (hit) =>
-                  `[${hit.handle}] ${hit.title} (${hit.session}, p.${hit.pages.join(", ")})\n  ${hit.snippet}`,
+                  `[${hit.handle}] ${hit.title} (${hit.session}, ${pageWord(hit.pages)})\n  ${hit.snippet}`,
               )
               .join("\n")
           : `No reviewed section of ${course.name} matched. Try other words, the Hebrew term, or a broader topic.`,
@@ -97,7 +97,7 @@ export function knowledgeTools(
               "Unreviewed page text that matched (verify with read_page before teaching from it):",
               ...pages.map(
                 (page) =>
-                  `- ${titles.get(page.documentId) ?? page.session}, p.${page.page}: ${page.snippet}`,
+                  `- ${titles.get(page.documentId) ?? page.session}, page ${page.page}: ${page.snippet}`,
               ),
             ]
           : []),
@@ -112,7 +112,7 @@ export function knowledgeTools(
   const read: AgentTool = {
     name: "read_sections",
     label: "Read course sections",
-    description: `Read up to ${MAX_READ} whole sections of the course's study notes by handle, with how to cite each one.`,
+    description: `Read up to ${MAX_READ} whole sections of the course's study notes by handle, with how to cite each one. A topic's handle from the topic map reads all of that topic's sections.`,
     parameters: object({
       ...courseKey,
       handles: Type.Array(Type.String(), { minItems: 1, maxItems: MAX_READ }),
@@ -125,15 +125,16 @@ export function knowledgeTools(
         input.handles.some((handle) => typeof handle !== "string")
       )
         throw new LibraryError("read_sections needs one or more handles from search_course.");
-      const { index, sessions, titles } = await scope(input.courseId);
-      const blocks = index.read((input.handles as string[]).slice(0, MAX_READ), sessions);
+      const { index, sessions, titles, published } = await scope(input.courseId);
+      const requested = (input.handles as string[]).slice(0, MAX_READ);
+      const blocks = index.read(withTopics(requested, published, sessions), sessions);
       let used = 0;
       const parts: string[] = [];
       const sources: { documentId: string; title: string; page: number }[] = [];
       for (const block of blocks) {
         const title = titles.get(block.documentId) ?? block.session;
         const pages = [...new Set(block.locators.map((locator) => locator.page))];
-        const text = `[${block.handle}] ${block.title}\nCite as: (${title}, p.${pages.join(", ")})\n\n${block.body}`;
+        const text = `[${block.handle}] ${block.title}\nCite as: (${title}, ${pageWord(pages)})\n\n${block.body}`;
         if (used + text.length > READ_BUDGET && parts.length) {
           parts.push(
             `[Budget reached: ${blocks.length - parts.length} more section(s) not shown. Read them in another call.]`,
@@ -144,8 +145,16 @@ export function knowledgeTools(
         parts.push(text);
         for (const page of pages) sources.push({ documentId: block.documentId, title, page });
       }
-      const missing = (input.handles as string[]).filter(
-        (handle) => !blocks.some((block) => block.handle === handle),
+      const missing = requested.filter(
+        (handle) =>
+          !blocks.some(
+            (block) =>
+              block.handle === handle ||
+              published.pages.some(
+                (page) =>
+                  page.slug === handle && page.blocks.some((item) => item.handle === block.handle),
+              ),
+          ),
       );
       if (missing.length)
         parts.push(
@@ -188,10 +197,27 @@ export function knowledgeTools(
     name: "topic_map",
     label: "List the course's topics",
     description:
-      "List the course's studied lectures and recitations in order, with the topics and sections each one covers. Use it to trace a concept through the course or connect lectures.",
-    parameters: object(courseKey),
+      "List the course's studied lectures and recitations in order, with the topics and sections each one covers. Use it to trace a concept through the course or connect lectures. For a long course, name one session to see all of its sections.",
+    parameters: object({
+      ...courseKey,
+      session: Type.Optional(
+        Type.String({ description: "One session's slug from the map, to list its sections." }),
+      ),
+    }),
     execute: async (_toolCallId, params) => {
-      const { published } = await scope((params as { courseId?: unknown }).courseId);
+      const input = params as { courseId?: unknown; session?: unknown };
+      const { published } = await scope(input.courseId);
+      if (input.session !== undefined) {
+        const session = published.sessions.find((candidate) => candidate.slug === input.session);
+        if (!session)
+          throw new LibraryError(
+            "That session is not in this course's topic map. Use a session slug from topic_map.",
+          );
+        return {
+          content: [{ type: "text", text: topicMap({ ...published, sessions: [session] }) }],
+          details: { sessions: 1 },
+        };
+      }
       return {
         content: [{ type: "text", text: topicMap(published) }],
         details: { sessions: published.sessions.length },
@@ -202,7 +228,29 @@ export function knowledgeTools(
   return [search, read, related, topics];
 }
 
-/** The course's studied topics as an indented outline for the prompt; pages only when long. */
+/** "page 4" or "pages 4, 5", as citations are written. */
+function pageWord(pages: number[]): string {
+  return `${pages.length === 1 ? "page" : "pages"} ${pages.join(", ")}`;
+}
+
+/**
+ * Section handles to read, where a topic's handle from the topic map (shown alone when the map is
+ * long) stands for every section of that topic in the chat's sessions.
+ */
+function withTopics(handles: string[], knowledge: Knowledge, sessions: string[]): string[] {
+  const out = handles.flatMap((handle) => {
+    const page = knowledge.pages.find((candidate) => candidate.slug === handle);
+    return page
+      ? page.blocks.filter((block) => sessions.includes(block.session)).map((block) => block.handle)
+      : [handle];
+  });
+  return [...new Set(out)];
+}
+
+/**
+ * The course's studied topics as an indented outline for the prompt. A long course lists topics
+ * without their sections, and one too long even for that stops at a whole line and says so.
+ */
 export function topicMap(knowledge: Knowledge, limit = 24_000): string {
   const full = (withBlocks: boolean) =>
     knowledge.sessions
@@ -224,5 +272,11 @@ export function topicMap(knowledge: Knowledge, limit = 24_000): string {
       })
       .join("\n");
   const detailed = full(true);
-  return detailed.length <= limit ? detailed : full(false).slice(0, limit);
+  if (detailed.length <= limit) return detailed;
+  const brief = full(false);
+  if (brief.length <= limit) return brief;
+  const more =
+    "\n[The map stops here. List one session's topics with topic_map and its session slug.]";
+  const cut = brief.lastIndexOf("\n", limit - more.length);
+  return `${brief.slice(0, Math.max(cut, 0))}${more}`;
 }

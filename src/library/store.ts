@@ -225,9 +225,14 @@ export class LibraryStore {
 
   async listDocuments(filter: { courseId?: string } = {}): Promise<DocumentRecord[]> {
     const documents = await this.#list(this.#documents, "document.json", validDocument);
+    // Same titles keep a fixed order, so the tutor's document list reads the same every time.
     return documents
       .filter((document) => !filter.courseId || document.courseId === filter.courseId)
-      .sort((a, b) => a.title.localeCompare(b.title, undefined, { numeric: true }));
+      .sort(
+        (a, b) =>
+          a.title.localeCompare(b.title, undefined, { numeric: true }) ||
+          (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+      );
   }
 
   async document(id: string): Promise<DocumentRecord> {

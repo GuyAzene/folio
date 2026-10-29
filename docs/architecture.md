@@ -41,8 +41,11 @@ There are three kinds of chat, fixed when a chat is created:
 
 The tutor's tools (`list_documents`, `read_page`, `search_course`, `read_sections`,
 `related_sections`, `topic_map`, `list_notes`, `read_note` and `propose_note_edit`) check every
-argument in application code against what the chat may read. The prompt is rebuilt before each
-request from the current state, so a saved chat never carries stale permissions.
+argument in application code against what the chat may read. The app installs its own prompt
+before each request, so a saved chat never carries stale permissions. That prompt stays the same
+from turn to turn, which lets the provider reuse the start of each request: what changes with a
+question travels on the question instead. A course chat's question records the page the student
+had open, and the tutor is told when it changes; what the student adds says how to read it.
 
 The student can widen a course chat, and only the student: a lecture or course added with the
 composer's **+** is recorded on the student's own message, and the tools work out the chat's
@@ -51,8 +54,9 @@ to them. The student's own notes stay with their course even when that course is
 elsewhere.
 
 `read_page` returns the page's text and the page itself as an image, so diagrams count. Every
-request resends the conversation, so only the three most recent messages with images keep them;
-earlier ones say an image was there.
+request resends the conversation, so at most the six most recent messages with images keep them,
+and earlier ones say an image was there. Older images are let go five at a time rather than one
+per new image, so most requests repeat the one before.
 
 ## Studying a lecture
 

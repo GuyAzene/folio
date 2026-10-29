@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vite-plus/test";
 import { bundle } from "./fixtures/draft-bundle.ts";
 import { matchQuery, normalizeText, strippedForms } from "../src/kb/normalize.ts";
 import { KnowledgeStore } from "../src/kb/store.ts";
-import { knowledgeTools } from "../src/kb/tools.ts";
+import { knowledgeTools, topicMap } from "../src/kb/tools.ts";
 import { LibraryStore } from "../src/library/store.ts";
 
 const homes: string[] = [];
@@ -138,6 +138,42 @@ describe("knowledge base", () => {
     const text = (result.content[0] as { text: string }).text;
     expect(text.indexOf("alg-L01")).toBeLessThan(text.indexOf("alg-L02"));
     expect(text).toContain("Breadth-first search [alg-bfs]");
+
+    // One session alone, as a long course's map points to.
+    const one = await map.execute("call_2", { session: "alg-L02" });
+    const oneText = (one.content[0] as { text: string }).text;
+    expect(oneText).toContain("alg-L02");
+    expect(oneText).not.toContain("alg-L01");
+    await expect(map.execute("call_3", { session: "alg-L99" })).rejects.toThrow(
+      "not in this course's topic map",
+    );
+  });
+
+  it("reads a topic's sections by the topic's handle, and cuts a long map at a whole line", async () => {
+    const { library, store, course } = await setup();
+    await store.publish(bundle(course.id, "00000000-0000-4000-8000-0000000000aa", "alg-L01"));
+    const read = knowledgeTools(store, library, course.id).find(
+      (tool) => tool.name === "read_sections",
+    )!;
+    const result = await read.execute("call_1", { handles: ["alg-bfs"] });
+    const text = (result.content[0] as { text: string }).text;
+    expect(text).toContain("[alg-bfs-marking-alg-l01]");
+    expect(text).not.toContain("Not found");
+    expect(text).toMatch(/Cite as: \(.*, pages? \d/);
+
+    // A long course lists topics without sections, and a longer one stops at a whole line.
+    await store.publish(bundle(course.id, "00000000-0000-4000-8000-0000000000bb", "alg-L02"));
+    const knowledge = (await store.knowledge(course.id))!;
+    const detailed = topicMap(knowledge);
+    const brief = topicMap(knowledge, detailed.length - 1);
+    expect(brief).toContain("[alg-bfs]");
+    expect(brief).not.toContain("[alg-bfs-marking-alg-l01]");
+    const cut = topicMap(knowledge, brief.length - 1);
+    expect(cut.length).toBeLessThanOrEqual(brief.length - 1);
+    expect(cut).toContain("[The map stops here.");
+    const kept = cut.slice(0, cut.indexOf("\n[The map stops here."));
+    expect(kept.length).toBeGreaterThan(0);
+    expect(brief.startsWith(`${kept}\n`)).toBe(true);
   });
 
   it("refuses to publish unaccounted regions unless the student accepts them as gaps", async () => {

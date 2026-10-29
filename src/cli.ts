@@ -4,6 +4,7 @@ import type { AgentEvent, AgentMessage, StreamFn } from "@earendil-works/pi-agen
 import { createModels, type AuthInteraction, type AuthPrompt } from "@earendil-works/pi-ai";
 import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
 import { createFolioModels, readConnectionStatus } from "./auth.ts";
+import { cacheTable, requestsOf, requestTable } from "./cache-report.ts";
 import { Conversation } from "./conversation.ts";
 import { DEFAULT_DEMO_PROMPT, readDemoPage } from "./demo-source.ts";
 import { DEFAULT_MODEL } from "./agents.ts";
@@ -20,6 +21,7 @@ const HELP = `Folio · terminal client
   vp run start --new           Start another conversation; preserve the old one
   vp run start --resume <id>   Open a saved conversation (offline viewing works)
   vp run sessions              List saved conversations without an account
+  vp run cache [--chat <id>]   How much of each request the provider reused from its cache
   vp run start --prompt "..."   Send one prompt and exit
   vp run models                Show Pi's bundled model catalog
   vp run logout                Remove Folio's local credentials
@@ -129,6 +131,20 @@ async function listSavedSessions(store: SessionStore, currentId?: string): Promi
   await warnUnavailableSessions(store);
 }
 
+/** Reads saved chats only: no account, no request. */
+async function reportCache(store: SessionStore, chatId?: string): Promise<void> {
+  const usage = async (id: string) => {
+    const record = await store.load(id);
+    return { id, title: record.title, requests: requestsOf(record.messages) };
+  };
+  if (chatId) {
+    console.log(requestTable(await usage(chatId)));
+    return;
+  }
+  const sessions = await store.list();
+  console.log(cacheTable(await Promise.all(sessions.map((session) => usage(session.id)))));
+}
+
 async function warnUnavailableSessions(store: SessionStore): Promise<void> {
   for (const unavailable of await store.listUnavailable()) {
     console.error(`[Saved session ${unavailable.id} is unavailable: ${unavailable.error}]`);
@@ -233,6 +249,7 @@ async function main(): Promise<void> {
       page: { type: "string" },
       new: { type: "boolean" },
       resume: { type: "string" },
+      chat: { type: "string" },
     },
     allowPositionals: true,
   });
@@ -243,7 +260,17 @@ async function main(): Promise<void> {
     return;
   }
   if (
-    !["chat", "resume", "sessions", "demo", "login", "logout", "status", "models"].includes(command)
+    ![
+      "chat",
+      "resume",
+      "sessions",
+      "cache",
+      "demo",
+      "login",
+      "logout",
+      "status",
+      "models",
+    ].includes(command)
   ) {
     throw new Error(`Unknown command '${command}'. Run vp run start --help.`);
   }
@@ -261,6 +288,10 @@ async function main(): Promise<void> {
   }
   if (command === "sessions") {
     await listSavedSessions(await createSessionStore());
+    return;
+  }
+  if (command === "cache") {
+    await reportCache(await createSessionStore(), values.chat);
     return;
   }
 

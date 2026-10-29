@@ -42,6 +42,7 @@
     "@types/node": "24.19.2",
     "@types/proper-lockfile": "4.1.4",
     "electron": "44.9.3",
+    "fast-check": "4.10.2",
     "prettier": "3.9.10",
     "prettier-plugin-svelte": "4.1.1",
     "svelte-check": "4.7.7",

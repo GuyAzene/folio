@@ -247,7 +247,7 @@ function isolateNumbers(html: string): string {
   return html.replace(NUMBER_RUN, (run) => `<span dir="ltr">${run}</span>`);
 }
 
-// An English parenthetical inside right-to-left text, such as a citation "(Lecture 3, p.4)",
+// An English parenthetical inside right-to-left text, such as a citation "(Lecture 3, page 4)",
 // stays one left-to-right island with its own parentheses, even where the line wraps.
 const LATIN_ASIDE = /\(([^()<>]*?)\)/g;
 

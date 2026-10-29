@@ -134,7 +134,7 @@ afterEach(async () => {
 });
 
 describe("course chats", () => {
-  it("reads a page of its own course, with the course and current page in the prompt", async () => {
+  it("reads a page of its own course, told the course and the page in view", async () => {
     const { algorithms, lecture, open } = await setup();
     const requests: TranscriptContext[] = [];
     const chat = await open(readThenAnswer({ documentId: lecture.id, page: 2 }, requests), {
@@ -144,14 +144,17 @@ describe("course chats", () => {
       focus: { documentId: lecture.id, page: 2 },
     });
     expect(chat.kind).toBe("course");
-    await chat.send("Why only once?");
+    await chat.send("Why only once?", randomUUID(), { focus: { documentId: lecture.id, page: 2 } });
     expect(getCurrentTools(requests[0]!.messages).map((tool) => tool.name)).toEqual([
       "list_documents",
       "read_page",
     ]);
     const prompt = JSON.stringify(requests[0]!.messages[0]);
     expect(prompt).toContain('course \\"Algorithms\\" (CS 201)');
-    expect(prompt).toContain("page 2 of 3");
+    expect(prompt).not.toContain("page 2 of 3");
+    expect(JSON.stringify(requests[0]!.messages[1])).toContain(
+      'The student is reading \\"lecture1\\", page 2 of 3.',
+    );
     const result = chat.snapshot.messages.find((message) => message.role === "toolResult");
     expect(result).toMatchObject({ isError: false, details: { title: "lecture1", page: 2 } });
     expect(JSON.stringify(result)).toContain("enqueued at most once");
@@ -273,7 +276,7 @@ describe("pages as images", () => {
 
   it("send only the most recent page images, while the saved chat keeps them all", () => {
     const image = { type: "image" as const, data: "AAAA", mimeType: "image/jpeg" };
-    const turns = Array.from({ length: 5 }, (_, n) => ({
+    const turns = Array.from({ length: 8 }, (_, n) => ({
       role: "user" as const,
       content: [{ type: "text" as const, text: `page ${n + 1}` }, image],
       timestamp: n,
@@ -283,7 +286,8 @@ describe("pages as images", () => {
       typeof message.content === "string"
         ? 0
         : message.content.filter((block) => block.type === "image").length;
-    expect(sent.map(imagesIn)).toEqual([0, 0, 1, 1, 1]);
+    // Eight messages with images: the first five are let go together, the last three keep theirs.
+    expect(sent.map(imagesIn)).toEqual([0, 0, 0, 0, 0, 1, 1, 1]);
     expect(JSON.stringify(sent[0])).toContain("not sent again");
     expect(turns.every((turn) => turn.content.length === 2 && turn.content[1] === image)).toBe(
       true,
@@ -303,16 +307,16 @@ describe("what the student adds to a chat", () => {
     await expect(tool("list_documents").execute("call_2", { courseId: other.id })).rejects.toThrow(
       "not part of this chat",
     );
-    expect(await runtime.prompt(null)).toContain("You cannot see other courses");
+    const before = await runtime.prompt();
+    expect(before).toContain("You cannot see other courses");
 
     grants = { courses: [other.id], documents: [] };
     const page = await tool("read_page").execute("call_3", { documentId: elsewhere.id, page: 1 });
     expect(JSON.stringify(page.content)).toContain("Private course");
     const listed = await tool("list_documents").execute("call_4", { courseId: other.id });
     expect(JSON.stringify(listed.content)).toContain(elsewhere.title);
-    const prompt = await runtime.prompt(null);
-    expect(prompt).toContain(`courseId: ${other.id}`);
-    expect(prompt).toContain("You cannot see any other course");
+    // What was added travels on the student's message; the prompt stays the same.
+    expect(await runtime.prompt()).toBe(before);
   });
 
   it("opens an added lecture, not the rest of its course", async () => {
@@ -329,7 +333,7 @@ describe("what the student adds to a chat", () => {
     await expect(readPage.execute("call_2", { documentId: elsewhere.id, page: 1 })).rejects.toThrow(
       "not part of this chat",
     );
-    expect(await runtime.prompt(null)).toContain(`documentId: ${third.id}`);
+    expect(await runtime.prompt()).not.toContain(third.id);
   });
 
   it("takes grants from the student's own messages, and keeps them when the chat reopens", async () => {
@@ -404,7 +408,7 @@ describe("what the student adds to a chat", () => {
       timestamp: 0,
       folioAttachments: [{ kind: "image", name: "work.png", thumbnail: "AAAA" }],
     };
-    const pages = Array.from({ length: 3 }, (_, n) => ({
+    const pages = Array.from({ length: 6 }, (_, n) => ({
       role: "user" as const,
       content: [{ type: "text" as const, text: `page ${n + 1}` }, image],
       timestamp: n + 1,
@@ -416,11 +420,100 @@ describe("what the student adds to a chat", () => {
   });
 });
 
+describe("a prompt the provider can reuse", () => {
+  /** Each request must repeat the one before it and only add to the end. */
+  function expectAppendOnly(requests: TranscriptContext[]) {
+    for (let index = 1; index < requests.length; index++) {
+      const before = requests[index - 1]!.messages;
+      expect(requests[index]!.messages.slice(0, before.length)).toEqual(before);
+    }
+  }
+
+  it("keeps the prompt the same across page turns, added courses and tool rounds", async () => {
+    const { algorithms, other, lecture, open } = await setup();
+    const requests: TranscriptContext[] = [];
+    const chat = await open(readThenAnswer({ documentId: lecture.id, page: 1 }, requests), {
+      newSession: true,
+      kind: "course",
+      courseId: algorithms.id,
+    });
+    const at = (page: number) => ({ focus: { documentId: lecture.id, page } });
+    await chat.send("What is on this page?", randomUUID(), at(1));
+    await chat.send("And this one?", randomUUID(), at(2));
+    await chat.send("Same page, another question.", randomUUID(), at(2));
+    await chat.send("Compare with the other course.", randomUUID(), {
+      ...at(2),
+      attachments: [
+        {
+          attachment: { kind: "course", courseId: other.id },
+          note: `the course "Private course", courseId ${other.id}`,
+        },
+      ],
+    });
+    await chat.send("Back to reading nothing.", randomUUID(), { focus: null });
+    expect(requests).toHaveLength(10);
+    const heads = new Set(requests.map((request) => JSON.stringify(request.messages[0])));
+    expect(heads.size).toBe(1);
+    expectAppendOnly(requests);
+    // The page is mentioned when it changes, and not again for the same page.
+    const notes = requests
+      .at(-1)!
+      .messages.filter((message) => message.role === "user")
+      .map(
+        (message) => JSON.stringify(message).match(/<folio_context>(.*?)<\/folio_context>/)?.[1],
+      );
+    expect(notes).toEqual([
+      'The student is reading \\"lecture1\\", page 1 of 3.',
+      'The student is reading \\"lecture1\\", page 2 of 3.',
+      undefined,
+      undefined,
+      "The student is not reading a document now.",
+    ]);
+    expect(chat.snapshot.focus).toBeNull();
+  });
+
+  it("keeps what an earlier question said when the document is renamed later", async () => {
+    const { algorithms, library, lecture, open } = await setup();
+    const requests: TranscriptContext[] = [];
+    const chat = await open(readThenAnswer({ documentId: lecture.id, page: 1 }, requests), {
+      newSession: true,
+      kind: "course",
+      courseId: algorithms.id,
+    });
+    await chat.send("First question.", randomUUID(), {
+      focus: { documentId: lecture.id, page: 1 },
+    });
+    await library.updateDocument(lecture.id, { title: "Renamed lecture" }, lecture.revision);
+    await chat.send("Second question.", randomUUID(), {
+      focus: { documentId: lecture.id, page: 1 },
+    });
+    // The document list in the prompt follows the rename; the earlier question does not.
+    expect(requests.at(-1)!.messages[1]).toEqual(requests[0]!.messages[1]);
+    expect(JSON.stringify(requests[0]!.messages[1])).toContain("lecture1");
+  });
+
+  it("counts a page that left the course as not reading", async () => {
+    const { algorithms, elsewhere, open } = await setup();
+    const requests: TranscriptContext[] = [];
+    const chat = await open(readThenAnswer({ documentId: elsewhere.id, page: 1 }, requests), {
+      newSession: true,
+      kind: "course",
+      courseId: algorithms.id,
+    });
+    await chat.send("Explain this.", randomUUID(), {
+      focus: { documentId: elsewhere.id, page: 1 },
+    });
+    const question = chat.snapshot.messages.find((message) => message.role === "user");
+    expect(question).toMatchObject({ folioFocus: null });
+    expect(JSON.stringify(requests[0]!.messages[1])).not.toContain("folio_context");
+  });
+});
+
 describe("teaching rules", () => {
   it("go into every course and library chat's prompt", async () => {
     const { runtimes, algorithms } = await setup();
-    const course = await (await runtimes.course(algorithms.id, randomUUID())).prompt(null);
-    const library = await (await runtimes.library(randomUUID())).prompt(null);
+    const course = await (await runtimes.course(algorithms.id, randomUUID())).prompt();
+    const library = await (await runtimes.library(randomUUID())).prompt();
     expect(course).toContain(TEACHING_RULES);
     expect(library).toContain(TEACHING_RULES);
   });

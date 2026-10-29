@@ -101,7 +101,9 @@ export class ChatService {
       existing ??
       (await this.#create(courseId ?? null, focus ?? null, modelId ?? this.#options.modelId));
     const id = conversation.snapshot.id;
-    conversation.send(text, submissionId, { attachments: added }).then(
+    // A course chat's question carries the page in view, so the tutor's prompt stays the same.
+    const extras = conversation.kind === "course" ? { focus: focus ?? null } : {};
+    conversation.send(text, submissionId, { attachments: added, ...extras }).then(
       () => this.#settled(conversation),
       (error: unknown) => {
         this.#options.emit({ type: "error", chatId: id, message: errorMessage(error) });

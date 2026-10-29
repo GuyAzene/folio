@@ -251,7 +251,7 @@ describe("desktop chat service", () => {
     const runtime = async () => ({
       tools: [],
       prompt: async () => "Synthetic course prompt",
-      checkFocus: async () => {},
+      checkFocus: async () => ({ title: "Synthetic lecture", pages: 3 }),
     });
     const { service, store, events } = await setup({
       streamFn: (model, context, options) => {
@@ -342,6 +342,23 @@ describe("desktop chat service", () => {
     expect(older.messages[0]).toMatchObject({
       attachments: [{ kind: "page", documentId, page: 2 }],
     });
+
+    // A reply stopped in the middle of reading a page does not keep "reading" forever.
+    const stopped = chatView({
+      ...record,
+      status: "interrupted",
+      messages: [
+        { role: "user", content: "Read page 3", timestamp: 0 },
+        {
+          ...assistant("", "aborted"),
+          content: [{ type: "toolCall", id: "call_1", name: "read_page", arguments: { page: 3 } }],
+        },
+      ],
+    } as never);
+    expect(stopped.messages[1]).toMatchObject({
+      state: "interrupted",
+      steps: [{ label: "Couldn't read page 3", state: "failed" }],
+    });
   });
 
   it("refuses attachments it can't take, before any chat is created", async () => {
@@ -349,7 +366,7 @@ describe("desktop chat service", () => {
       courseRuntime: async () => ({
         tools: [],
         prompt: async () => "Synthetic course prompt",
-        checkFocus: async () => {},
+        checkFocus: async () => ({ title: "Synthetic lecture", pages: 3 }),
       }),
       attach: async () => {
         throw new Error("That page is not part of this chat.");
@@ -394,7 +411,7 @@ describe("desktop chat service", () => {
       courseRuntime: async () => ({
         tools: [],
         prompt: async () => "Synthetic course prompt",
-        checkFocus: async () => {},
+        checkFocus: async () => ({ title: "Synthetic lecture", pages: 3 }),
       }),
     });
     const { chatId } = await service.send({

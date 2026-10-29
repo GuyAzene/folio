@@ -1,7 +1,8 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, Message, ToolResultMessage } from "@earendil-works/pi-ai";
+import fc from "fast-check";
 import { describe, expect, it } from "vite-plus/test";
-import { modelContextMessages, validateTranscript } from "../src/transcript.ts";
+import { imagesDropped, modelContextMessages, validateTranscript } from "../src/transcript.ts";
 
 const baseline = { role: "system", content: "Current application scope", timestamp: 0 } as const;
 const user = { role: "user", content: "Explain demo page 1.", timestamp: 1 } as const;
@@ -197,6 +198,57 @@ describe("model context recovery projection", () => {
     ]);
     expect(modelContextMessages([user, unsafe, assistant()]).some((m) => m.role === "system")).toBe(
       false,
+    );
+  });
+});
+
+describe("what each request repeats", () => {
+  const image = { type: "image" as const, data: "AAAA", mimeType: "image/jpeg" };
+  const question = (n: number, extra: Record<string, unknown> = {}) =>
+    ({
+      role: "user",
+      content: [{ type: "text", text: `Question ${n}` }, image],
+      timestamp: n,
+      ...extra,
+    }) as unknown as AgentMessage;
+
+  it("puts the page note after the question's text and before its images", () => {
+    const focus = { v: 1, documentId: "d", page: 4, title: "Lecture 2", pages: 9 };
+    const [sent] = modelContextMessages([question(1, { folioFocus: focus })]);
+    expect(sent!.content).toEqual([
+      { type: "text", text: "Question 1" },
+      {
+        type: "text",
+        text: '<folio_context>The student is reading "Lecture 2", page 4 of 9.</folio_context>',
+      },
+      image,
+    ]);
+  });
+
+  it("leaves questions without a recorded page exactly as they were saved", () => {
+    const saved = [question(1), { role: "user", content: "Plain text", timestamp: 2 }];
+    expect(modelContextMessages(saved as AgentMessage[])).toEqual(saved);
+  });
+
+  it("lets older images go in batches, never bringing one back", () => {
+    fc.assert(
+      fc.property(fc.integer({ min: 1, max: 60 }), (count) => {
+        const sent = modelContextMessages(Array.from({ length: count }, (_, n) => question(n)));
+        const kept = sent.map((message) => JSON.stringify(message).includes('"image"'));
+        const keptCount = kept.filter(Boolean).length;
+        expect(keptCount).toBeGreaterThanOrEqual(Math.min(count, 2));
+        expect(keptCount).toBeLessThanOrEqual(6);
+        // The kept images are always the most recent ones.
+        expect(kept.indexOf(true)).toBe(count - keptCount);
+        // One more image either changes nothing earlier or lets a whole batch go at once.
+        const next = modelContextMessages(Array.from({ length: count + 1 }, (_, n) => question(n)));
+        const unchanged = sent.every(
+          (message, index) => JSON.stringify(message) === JSON.stringify(next[index]),
+        );
+        const dropped = imagesDropped(count + 1) - imagesDropped(count);
+        expect(unchanged ? 0 : dropped).toBe(dropped);
+        expect(dropped === 0 || dropped === 5).toBe(true);
+      }),
     );
   });
 });

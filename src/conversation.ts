@@ -34,11 +34,28 @@ export type ConversationKind = "demo" | "chat" | "course" | "library";
 /** What a course chat may do, built by the app for one course and enforced in its tools. */
 export interface CourseRuntime {
   tools: AgentTool[];
-  /** Rebuilt before every request so the prompt reflects the student's current page. */
-  prompt(focus: SessionFocus | null): Promise<string>;
+  /**
+   * The app's prompt, installed before every request. It stays the same from turn to turn, so
+   * the provider can reuse the start of the request; what changes per question (the page being
+   * read, what was added) travels on the student's message instead.
+   */
+  prompt(): Promise<string>;
   /** Throws unless the document belongs to this course and the page exists. */
-  checkFocus(focus: SessionFocus): Promise<void>;
+  checkFocus(focus: SessionFocus): Promise<FocusAbout>;
 }
+
+/** What the tutor is told about a page the student is reading. */
+export interface FocusAbout {
+  title: string;
+  pages: number;
+}
+
+/**
+ * The page a course chat's student was reading when they asked, recorded on their message at
+ * send time (null: not reading). The title is kept as it was then, so renaming the document later
+ * never changes what earlier questions said.
+ */
+export type FocusSnapshot = { v: 1; documentId: string; page: number } & FocusAbout;
 
 export interface OpenConversationOptions {
   store: SessionStore;
@@ -89,12 +106,15 @@ type SubmittedMessage = UserMessage & {
   /** Chats saved before attachments: the page in view, sent with the question as an image. */
   folioPage?: SessionFocus & { documentId: string };
   folioAttachments?: Attachment[];
+  folioFocus?: FocusSnapshot | null;
 };
 
 /** What can go with a question besides its text. */
 export interface SendExtras {
   /** What the student added, each with what the tutor is told and, for pages and images, the image. */
   attachments?: { attachment: Attachment; note: string; image?: ImageContent }[];
+  /** A course chat's page in view as the question is sent; null when no document is open. */
+  focus?: SessionFocus | null;
 }
 
 /** Every course and document the student added in a chat, read from their own messages only. */
@@ -304,7 +324,7 @@ export class Conversation {
           messages: this.#record.messages,
           sessionId: this.#record.id,
           tools: runtime.tools,
-          prompt: () => runtime.prompt(this.#record.focus),
+          prompt: () => runtime.prompt(),
         })
       : this.#record.focus === null
         ? createChatAgent(model, this.#options.streamFn, {
@@ -394,6 +414,7 @@ export class Conversation {
 
   async #send(text: string, submissionId: string, extras: SendExtras): Promise<void> {
     const added = extras.attachments ?? [];
+    const focus = await this.#focusSnapshot(extras.focus);
     // The typed text stays first, so the chat shows only what the student wrote.
     const input: SubmittedMessage = {
       role: "user",
@@ -410,7 +431,10 @@ export class Conversation {
       timestamp: Date.now(),
       folioSubmissionId: submissionId,
       ...(added.length ? { folioAttachments: added.map((item) => item.attachment) } : {}),
+      ...(focus !== undefined ? { folioFocus: focus } : {}),
     };
+    if (focus !== undefined)
+      this.#record.focus = focus ? { documentId: focus.documentId, page: focus.page } : null;
     if (!this.#record.messages.some((message) => message.role === "user"))
       this.#record.title = chatTitle(text);
     this.#record.status = "running";
@@ -458,6 +482,22 @@ export class Conversation {
       );
   }
 
+  /**
+   * The page a course chat's question was asked from, checked against the course. A page that
+   * is no longer readable (the document moved or was removed) counts as not reading.
+   */
+  async #focusSnapshot(
+    focus: SessionFocus | null | undefined,
+  ): Promise<FocusSnapshot | null | undefined> {
+    if (focus === undefined || this.kind !== "course" || !this.#runtime) return undefined;
+    if (!focus?.documentId) return null;
+    const { documentId, page } = focus;
+    return this.#runtime.checkFocus(focus).then(
+      (about) => ({ v: 1, documentId, page, title: about.title, pages: about.pages }),
+      () => null,
+    );
+  }
+
   cancel(): void {
     this.#cancelRequested = true;
     this.#agent.abort();
@@ -479,7 +519,7 @@ export class Conversation {
     return source;
   }
 
-  /** Course chats follow the page the student is reading; it shapes the next request's prompt. */
+  /** Course chats remember the page the student is reading, so a reopened chat starts there. */
   async setCourseFocus(focus: SessionFocus | null): Promise<void> {
     if (!this.#runtime) throw new Error("Only course chats follow a document.");
     if (this.#closed) throw new Error("This chat is closed.");

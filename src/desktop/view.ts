@@ -33,7 +33,7 @@ export function visibleText(content: unknown): string {
     .join("\n\n");
 }
 
-type Step = StepView & { id: string };
+type Step = StepView & { id: string; tool: string };
 type Turn = Omit<ChatMessageView, "steps" | "sources" | "proposals"> & {
   steps: Step[];
   sources: SourceView[];
@@ -60,7 +60,7 @@ function finishedLabel(name: string, details: unknown, failed: boolean, fallback
   if (name === "read_page") {
     const reading = details as Partial<SourceView> | undefined;
     if (failed) return fallback.replace("Reading", "Couldn't read");
-    if (reading?.title && reading.page) return `Read ${reading.title}, p.${reading.page}`;
+    if (reading?.title && reading.page) return `Read ${reading.title}, page ${reading.page}`;
   }
   if (name === "search_course")
     return failed ? "Couldn't search the course" : "Searched the course";
@@ -119,6 +119,7 @@ export function chatView(record: SessionRecord, streaming?: string): ChatView {
         if (block.type === "toolCall")
           turn.steps.push({
             id: block.id,
+            tool: block.name,
             label: runningLabel(block.name, block.arguments),
             state: "running",
           });
@@ -169,6 +170,16 @@ export function chatView(record: SessionRecord, streaming?: string): ChatView {
         turn.proposals.push(proposalId);
     }
   }
+  // A step whose reply stopped before it finished (interrupted, failed, or closed mid-call) did
+  // not happen; only the reply still arriving has steps in progress.
+  const live = record.status === "running" ? turn : undefined;
+  for (const view of messages)
+    if (view.role === "assistant" && view !== live)
+      for (const step of (view as Turn).steps)
+        if (step.state === "running") {
+          step.state = "failed";
+          step.label = finishedLabel(step.tool, undefined, true, step.label);
+        }
   if (record.status === "running") {
     if (!turn) {
       turn = {

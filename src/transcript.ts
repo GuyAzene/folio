@@ -176,12 +176,15 @@ export function validateTranscript(messages: unknown): asserts messages is Agent
  */
 export function modelContextMessages(messages: AgentMessage[]): Message[] {
   const context: Message[] = [];
+  // The page the tutor was last told about; a question says so only when it changed.
+  let focus = NOT_READING;
   for (let index = 0; index < messages.length; index++) {
     const message = messages[index]!;
     if (message.role === "system") {
       if (index === 0) context.push(message);
     } else if (message.role === "user") {
-      context.push(message);
+      context.push(withFocusNote(message, focus));
+      if (Object.hasOwn(message, "folioFocus")) focus = focusKey(message);
     } else if (message.role === "assistant") {
       const toolCalls = message.content.filter((block) => block.type === "toolCall");
       const results: Extract<Message, { role: "toolResult" }>[] = [];
@@ -219,27 +222,74 @@ export function modelContextMessages(messages: AgentMessage[]): Message[] {
   return withRecentImages(context);
 }
 
-/** How many messages (questions or tool results) keep their images in each request. */
-export const RECENT_IMAGES = 3;
+type FocusNote = { documentId: string; page: number; title: string; pages: number } | null;
+const NOT_READING = "none";
+
+function focusKey(message: object): string {
+  const focus = (message as { folioFocus?: FocusNote }).folioFocus;
+  return focus ? `${focus.documentId}:${focus.page}` : NOT_READING;
+}
+
+/**
+ * A course chat's question carries the page the student had open (`folioFocus`, recorded when it
+ * was sent). The tutor is told in a short note after the question's text, and only when the page
+ * changed since the last question, so every earlier message reads exactly as it did before and
+ * the prompt never has to mention pages. The wording is fixed: changing it changes old requests.
+ */
+function withFocusNote(message: Extract<Message, { role: "user" }>, previous: string): Message {
+  if (!Object.hasOwn(message, "folioFocus") || focusKey(message) === previous) return message;
+  const focus = (message as { folioFocus?: FocusNote }).folioFocus;
+  const note = {
+    type: "text" as const,
+    text: focus
+      ? `<folio_context>The student is reading "${focus.title}", page ${focus.page} of ${focus.pages}.</folio_context>`
+      : "<folio_context>The student is not reading a document now.</folio_context>",
+  };
+  if (typeof message.content === "string")
+    return { ...message, content: [{ type: "text", text: message.content }, note] };
+  // After the question's text and what the student added, before any images.
+  const at = message.content.findIndex((block) => block.type === "image");
+  const content = [...message.content];
+  content.splice(at === -1 ? content.length : at, 0, note);
+  return { ...message, content };
+}
+
+/** At most this many messages (questions or tool results) keep their images in a request. */
+export const MAX_IMAGES = 6;
+/** Images are dropped this many messages at a time, so most requests repeat the one before. */
+const IMAGE_BATCH = 5;
 const EARLIER_PAGE =
   "[A page image from earlier is not sent again; read the page again to look at it.]";
 const EARLIER_OWN_IMAGE =
   "[An image the student added earlier is not sent again; ask them to add it again if you need it.]";
 
 /**
+ * How many of the first `count` messages with images send their images as text instead: none
+ * up to MAX_IMAGES, then a whole batch at a time, keeping between 2 and MAX_IMAGES.
+ */
+export function imagesDropped(count: number): number {
+  return count <= MAX_IMAGES ? 0 : IMAGE_BATCH * Math.floor((count - 2) / IMAGE_BATCH);
+}
+
+/**
  * Every request resends the whole conversation, so images would pile up turn after turn. Only
- * the most recent few messages keep theirs; earlier ones say what was there. The saved chat
- * keeps every image; this changes only what is sent.
+ * the most recent messages keep theirs; earlier ones say what was there. Older images are let go
+ * in batches rather than one per new image, because rewriting an earlier message makes the
+ * provider read everything after it again instead of reusing what it already read. The saved
+ * chat keeps every image; this changes only what is sent.
  */
 function withRecentImages(context: Message[]): Message[] {
-  let kept = 0;
   const out = [...context];
-  for (let index = out.length - 1; index >= 0; index--) {
-    const message = out[index]!;
-    if (message.role !== "user" && message.role !== "toolResult") continue;
+  const withImages = out.flatMap((message, index) =>
+    (message.role === "user" || message.role === "toolResult") &&
+    typeof message.content !== "string" &&
+    message.content.some((block) => block.type === "image")
+      ? [index]
+      : [],
+  );
+  for (const index of withImages.slice(0, imagesDropped(withImages.length))) {
+    const message = out[index] as Extract<Message, { role: "user" | "toolResult" }>;
     if (typeof message.content === "string") continue;
-    if (!message.content.some((block) => block.type === "image")) continue;
-    if (++kept <= RECENT_IMAGES) continue;
     // A question's images follow its attachments in order: pages, or the student's own images.
     const kinds = (
       (message as { folioAttachments?: { kind: string }[] }).folioAttachments ?? []

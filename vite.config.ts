@@ -28,6 +28,7 @@ export default defineConfig({
       start: { command: "node src/cli.ts", cache: false },
       chat: { command: "node src/cli.ts", cache: false },
       sessions: { command: "node src/cli.ts sessions", cache: false },
+      cache: { command: "node src/cli.ts cache", cache: false },
       resume: { command: "node src/cli.ts chat", cache: false },
       login: { command: "node src/cli.ts login", cache: false },
       status: { command: "node src/cli.ts status", cache: false },

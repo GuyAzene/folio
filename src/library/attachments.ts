@@ -13,15 +13,22 @@ export interface AttachReach {
 
 export type ResolvedAttachment = NonNullable<SendExtras["attachments"]>[number];
 
+export interface AttachOptions {
+  prepare?: (bytes: Uint8Array) => Promise<PreparedImage>;
+  /** Whether Folio has studied a course, so the tutor knows how to read one that was added. */
+  studied?: (courseId: string) => boolean;
+}
+
 /**
  * Checks what the student added to a question against the library and the chat, and turns each
  * item into what is saved and what the tutor is told. Pages must be readable in the chat
  * (courses and lectures added in the same question count); images are decoded and re-encoded.
+ * The tutor's note says how to read each item, so the chat's prompt never has to list them.
  */
 export function createAttach(
   library: LibraryStore,
   pages: PageReader,
-  prepare: (bytes: Uint8Array) => Promise<PreparedImage> = prepareImage,
+  { prepare = prepareImage, studied = () => false }: AttachOptions = {},
 ): (reach: AttachReach, inputs: AttachmentInput[]) => Promise<ResolvedAttachment[]> {
   async function documentOf(id: string): Promise<DocumentRecord> {
     return library.document(id).catch(() => {
@@ -58,13 +65,13 @@ export function createAttach(
         });
         resolved.push({
           attachment: { kind: "course", courseId: course.id },
-          note: `the course "${course.name}"${course.code ? ` (${course.code})` : ""}, courseId ${course.id}`,
+          note: `the course "${course.name}"${course.code ? ` (${course.code})` : ""}, courseId ${course.id} (${studied(course.id) ? "studied: search_course, read_sections and topic_map take this courseId" : "not studied yet: list_documents lists its documents, read them with read_page"})`,
         });
       } else if (input.kind === "document") {
         const document = await documentOf(input.documentId);
         resolved.push({
           attachment: { kind: "document", documentId: document.id },
-          note: `"${document.title}" from "${await courseName(document.courseId)}"${document.pages ? `, ${document.pages} pages` : ""}, documentId ${document.id}`,
+          note: `"${document.title}" from "${await courseName(document.courseId)}"${document.pages ? `, ${document.pages} pages` : ""}, documentId ${document.id} (read it with read_page)`,
         });
       } else if (input.kind === "page") {
         const document = await documentOf(input.documentId);

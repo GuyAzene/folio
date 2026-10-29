@@ -139,7 +139,7 @@ const service = Promise.all([sessionStore, library, notes, knowledgeStore, pageR
       courseRuntime: runtimes.course,
       libraryRuntime: runtimes.library,
       // Pages, images, lectures and courses the student adds, checked against the chat.
-      attach: createAttach(courses, pages),
+      attach: createAttach(courses, pages, { studied: (id) => !!knowledge.current(id) }),
     });
   },
 );
