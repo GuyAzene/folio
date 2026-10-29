@@ -71,3 +71,84 @@ describe("Pi bridge", () => {
     expect(reply.text).toContain('{"page": 2,}');
   });
 });
+
+describe("a dropped connection", () => {
+  const reply = (stopReason: string, errorMessage?: string) =>
+    ({
+      role: "assistant",
+      content:
+        stopReason === "toolUse"
+          ? [{ type: "toolCall", id: "1", name: "submit", arguments: { page: 3 } }]
+          : [],
+      stopReason,
+      errorMessage,
+      usage: { input: 7, output: 3 },
+    }) as unknown as AssistantMessage;
+  const request = (signal?: AbortSignal) => ({
+    model: "gpt-6-luna",
+    system: "s",
+    content: [],
+    maxTokens: 10,
+    answer: { name: "submit", description: "d", schema },
+    signal,
+  });
+  const bridge = (replies: (AssistantMessage | Error)[]) => {
+    const completeSimple = vi.fn(async () => {
+      const next = replies.shift()!;
+      if (next instanceof Error) throw next;
+      return next;
+    });
+    const complete = piComplete(
+      async () => ({ completeSimple }) as unknown as PiModels,
+      (id) => ({ id }) as never,
+      [0, 0],
+    );
+    return { complete, completeSimple };
+  };
+
+  it("is tried again, and what the dropped tries used still counts", async () => {
+    const { complete, completeSimple } = bridge([
+      reply("error", "Connection error."),
+      new Error("fetch failed"),
+      reply("toolUse"),
+    ]);
+    const answer = await complete(request());
+    expect(completeSimple).toHaveBeenCalledTimes(3);
+    expect(answer.answers).toEqual([{ page: 3 }]);
+    expect(answer.error).toBeUndefined();
+    expect(answer.usage).toEqual({ input: 14, output: 6 });
+  });
+
+  it("fails the step after a few tries, with the provider's words for the record", async () => {
+    const { complete, completeSimple } = bridge([
+      reply("error", "Connection error."),
+      reply("error", "Connection error."),
+      reply("error", "Connection error."),
+    ]);
+    const answer = await complete(request());
+    expect(completeSimple).toHaveBeenCalledTimes(3);
+    expect(answer).toMatchObject({ stopReason: "error", error: "Connection error." });
+  });
+
+  it("is not tried again when the plan's limit is reached, the answer is bad, or the student stopped", async () => {
+    for (const first of [
+      reply("error", "usage_limit_reached: try again later"),
+      reply("error", "Invalid schema for function"),
+      reply("length"),
+    ]) {
+      const { complete, completeSimple } = bridge([first, reply("toolUse")]);
+      await complete(request());
+      expect(completeSimple).toHaveBeenCalledTimes(1);
+    }
+    const stopped = new AbortController();
+    stopped.abort();
+    const { complete, completeSimple } = bridge([
+      reply("error", "Connection error."),
+      reply("toolUse"),
+    ]);
+    expect(await complete(request(stopped.signal))).toMatchObject({ error: "Connection error." });
+    expect(completeSimple).toHaveBeenCalledTimes(1);
+    const thrown = bridge([new Error("401 Unauthorized"), reply("toolUse")]);
+    await expect(thrown.complete(request())).rejects.toThrow("401");
+  });
+});

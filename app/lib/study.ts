@@ -5,6 +5,7 @@ import type {
   PageCoverageView,
   StepOutcome,
 } from "../../src/desktop/api.ts";
+import { DROPPED } from "../../src/dropped.ts";
 import { agentTree, type AgentCard } from "./agent-tree.ts";
 import { formatPages, modelLabel, plural } from "./labels.ts";
 
@@ -71,6 +72,9 @@ export function explain(note: string | null): string {
     return "The model's answer was cut off before it finished, so Folio didn't use it.";
   if (/usage[_ ]limit|rate[_ ]limit|quota|429/i.test(note))
     return "Your ChatGPT plan reached its usage limit. Resume once it resets.";
+  // Folio already tried again before saying so (src/ingest/pi-complete.ts).
+  if (DROPPED.test(note))
+    return "Folio kept losing its connection to ChatGPT. Check your internet connection, then resume.";
   if (/no longer matches/i.test(note)) return "The file changed after it was imported.";
   if (/Interrupted when Folio closed/i.test(note))
     return "Folio was closed while this was running.";

@@ -52,10 +52,14 @@ export function agentTree(nodes: AgentNodeView[]): AgentCard | null {
     const raw = (byParent.get(node.id) ?? []).flatMap(shown);
     const replaced = new Map<string, AgentNodeView[]>();
     const kept: AgentNodeView[] = [];
-    // The same step again: same kind, same pages, same attempt (a revision is not a retry).
-    const step = (node: AgentNodeView) => `${node.role}|${node.pages.join(",")}|${node.attempt}`;
+    // The same step again: same kind, same pages, at the same attempt or later. A retry after
+    // resuming gets the next attempt; a revision follows a finished attempt, so it never
+    // replaces one here.
+    const step = (node: AgentNodeView) => `${node.role}|${node.pages.join(",")}`;
     raw.forEach((child, index) => {
-      const retry = raw.slice(index + 1).find((other) => step(other) === step(child));
+      const retry = raw
+        .slice(index + 1)
+        .find((other) => step(other) === step(child) && other.attempt >= child.attempt);
       if (retry && (child.status === "failed" || child.status === "stopped")) {
         replaced.set(retry.id, [...(replaced.get(retry.id) ?? []), child]);
       } else kept.push(child);

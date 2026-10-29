@@ -14,6 +14,7 @@
     "app/**/*.svelte",
     "src/chat-title.ts",
     "src/desktop/api.ts",
+    "src/dropped.ts",
     "src/visual.ts",
     "tests/fixtures/synthetic-pdf.ts",
     "tests/fixtures/diagrams.ts"
