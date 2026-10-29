@@ -12,6 +12,7 @@ import {
   Annotation,
   Compartment,
   EditorState,
+  Prec,
   type Extension,
   Transaction,
   type TransactionSpec,
@@ -45,6 +46,8 @@ export interface NoteEditorOptions {
   onRead?(): void;
   /** Where `[[` links point, and how to open one; without it they stay plain text. */
   links?: LinkTargets;
+  /** Grow with the text inside a page that scrolls, instead of scrolling itself. */
+  inFlow?: boolean;
 }
 
 export interface NoteEditor {
@@ -52,6 +55,12 @@ export interface NoteEditor {
   /** Replaces the text with a version saved elsewhere, keeping the cursor where it can. */
   setDoc(doc: string): void;
   setLive(live: boolean): void;
+  /** Puts the cursor at the start of a line (0-based) and scrolls it to the top. */
+  goToLine(line: number): void;
+  /** Adds text at the end, as the student's own undoable edit, with the cursor at `cursor`. */
+  append(text: string, cursor?: number): void;
+  /** Selects the title's text, so typing names a new note. */
+  selectTitle(): void;
   focus(): void;
   destroy(): void;
 }
@@ -101,6 +110,15 @@ export function noteExtensions(options: Omit<NoteEditorOptions, "doc">, mode = n
     ]),
     placeholder(options.placeholder ?? ""),
     noteTheme,
+    options.inFlow
+      ? Prec.highest(
+          EditorView.theme({
+            "&": { height: "auto" },
+            ".cm-scroller": { overflow: "visible" },
+            ".cm-content": { paddingBottom: "32px" },
+          }),
+        )
+      : [],
     EditorView.contentAttributes.of({
       spellcheck: "true",
       autocorrect: "on",
@@ -170,6 +188,34 @@ export function createNoteEditor(parent: HTMLElement, options: NoteEditorOptions
     },
     setLive(live) {
       view.dispatch({ effects: mode.reconfigure(livePreview.of(live)) });
+    },
+    goToLine(line) {
+      const target = view.state.doc.line(Math.min(Math.max(1, line + 1), view.state.doc.lines));
+      view.dispatch({
+        selection: { anchor: target.from },
+        effects: EditorView.scrollIntoView(target.from, { y: "start", yMargin: 24 }),
+      });
+      view.focus();
+    },
+    append(text, cursor = text.length) {
+      const end = view.state.doc.length;
+      view.dispatch({
+        changes: { from: end, insert: text },
+        selection: { anchor: end + cursor },
+        scrollIntoView: true,
+      });
+      view.focus();
+    },
+    selectTitle() {
+      const { doc } = view.state;
+      for (let number = 1; number <= doc.lines; number++) {
+        const line = doc.line(number);
+        if (!line.text.trim()) continue;
+        const mark = /^#{1,6}\s+/.exec(line.text)?.[0].length ?? 0;
+        view.dispatch({ selection: { anchor: line.from + mark, head: line.to } });
+        break;
+      }
+      view.focus();
     },
     focus() {
       view.focus();

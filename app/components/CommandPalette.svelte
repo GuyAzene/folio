@@ -149,7 +149,7 @@
                           folio.navigate({
                             view: "course",
                             courseId: course.id,
-                            tab: "materials",
+                            tab: "overview",
                           }),
                         )}
                       class={item}

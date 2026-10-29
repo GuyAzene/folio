@@ -1,6 +1,7 @@
 import { grantsOf, questionText, type Attachment } from "../conversation.ts";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { CourseNote, ProposalRecord } from "../library/notes.ts";
+import { noteFacts } from "../library/note-meta.ts";
 import type { CourseRecord, DocumentRecord } from "../library/store.ts";
 import type { SessionRecord, SessionSummary } from "../session-store.ts";
 import type {
@@ -360,8 +361,8 @@ export function documentView(document: DocumentRecord): DocumentView {
 }
 
 export function noteView(note: CourseNote): NoteView {
-  const { id, courseId, title, revision, updatedAt } = note;
-  return { id, courseId, title, revision, updatedAt };
+  const { id, courseId, title, revision, updatedAt, content } = note;
+  return { id, courseId, title, revision, updatedAt, ...noteFacts(content) };
 }
 
 export function proposalView(

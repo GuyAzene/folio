@@ -23,7 +23,7 @@ import { prepareSource } from "../ingest/source.ts";
 import { JobStore } from "../jobs/store.ts";
 import { withoutDocuments } from "../kb/knowledge.ts";
 import { KnowledgeStore } from "../kb/store.ts";
-import { topicModel } from "../kb/topics.ts";
+import { TOPIC_POLICY, topicModel } from "../kb/topics.ts";
 import { createAttach } from "../library/attachments.ts";
 import { createRuntimes } from "../library/course-tools.ts";
 import { hostedSearch } from "../library/web-search.ts";
@@ -149,7 +149,7 @@ const jobs = Promise.all([JobStore.open(home), library]).then(([store, courses])
     async regroup(courseId) {
       const result = await (await knowledgeStore).regroup(courseId);
       emit({ type: "library" });
-      return result ? { merged: result.merged.length } : null;
+      return result ? { merged: result.merged } : null;
     },
   });
   // Jobs interrupted by a quit go back in the queue and continue where they stopped.
@@ -202,8 +202,9 @@ setTimeout(() => {
           .some(
             (job) => job.kind === "regroup" && job.courseId === course.id && job.status !== "done",
           );
-        if (published?.pages.length && !published.grouped && !pending)
-          await runner.regroup(course.id);
+        // And again once when the merging rules change.
+        const stale = !published?.grouped || (published.groupedPolicy ?? 1) < TOPIC_POLICY;
+        if (published?.pages.length && stale && !pending) await runner.regroup(course.id);
       }
       for (const [courseId, ids] of byCourse) await runner.queue(courseId, ids, "backlog");
     })
@@ -625,6 +626,32 @@ const handlers: Record<InvokeMethod, (...args: unknown[]) => Promise<unknown>> =
     emit({ type: "library" });
     return noteView(note);
   },
+  async searchNotes(query, courseId) {
+    if (typeof query !== "string") throw new Error("A search is required.");
+    if (courseId !== undefined && courseId !== null) checkId(courseId);
+    const found = await (
+      await notes
+    ).search(query.slice(0, 200), (courseId as string | null) ?? undefined);
+    return found.slice(0, 100).map(({ note, snippet }) => ({ noteId: note.id, snippet }));
+  },
+  async noteMentions(id) {
+    checkId(id);
+    return (await (await notes).mentions(id)).map(({ note, linked, unlinked }) => ({
+      noteId: note.id,
+      title: note.title,
+      revision: note.revision,
+      linked,
+      unlinked,
+    }));
+  },
+  async linkMention(source, target, revision) {
+    checkId(source);
+    checkId(target);
+    if (typeof revision !== "string") throw new Error("The note's revision is required.");
+    const note = await (await notes).linkMention(source, target, revision);
+    emit({ type: "library" });
+    return noteView(note);
+  },
   async listProposals() {
     return Promise.all((await (await notes).listProposals()).map(proposal));
   },
@@ -951,7 +978,8 @@ function createWindow(): void {
     title: "Folio",
     show: false,
     titleBarStyle: "hiddenInset",
-    trafficLightPosition: { x: 18, y: 18 },
+    // On the same line as the tab strip's buttons, as the sidebar button and Folio's name are.
+    trafficLightPosition: { x: 18, y: 24 },
     // Light is Folio's default theme; the renderer applies a saved dark preference.
     backgroundColor: "#f3f3f4",
     webPreferences: {

@@ -214,6 +214,22 @@ History menu, brings an earlier version back as a new one. Notes link to each ot
 `[[Title]]` and to study-notes topics with `[[topic:slug]]`. Chats from before this keep their
 suggested edits, which the student still keeps, inserts or discards.
 
+All notes live in one notebook, a place of its own in the sidebar: a list grouped by when each
+note last changed (pinned notes first) beside the open note. Courses are the folders and `#tags`
+cut across them; a course's Notes tab is the same list filtered to it. Search reads every note's
+text in the main process with the same Hebrew normalization as study-notes search, and ⌘O finds
+a note by title or creates one. Folio reads a note's preview, tags, links and cited pages from
+its Markdown each time it lists it (`src/library/note-meta.ts`); nothing about a note is stored
+apart from the note. The bottom of a note lists the course's other notes that link to it and
+those that only name it, and "Link" turns such a mention into a link as a revision-checked save.
+
+A note can sit beside a document in place of the chat. "Add this page to a note" and "Quote to
+notes" write into it as the student's own undoable edit, as a link back to the page
+(`[[page:<document>#<page>|Lecture 3 · p. 12]]`), and the notes that cite a document are offered
+first beside it. A tutor's reply is saved to a note only when the student chooses "Save to note",
+with a line linking the chat (`[[chat:<id>|title]]`) and the pages it cited; Undo takes it back
+out while the note is still as that save left it.
+
 ## Assignments
 
 An assignment is a record of its own, not only a PDF with a due date: any coursework (a problem

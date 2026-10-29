@@ -52,6 +52,16 @@ const focused = StateField.define<boolean>({
   },
 });
 
+/**
+ * Whether the source of [from, to] shows: always in source mode, and in live preview only where
+ * the cursor of a focused editor touches it. For other extensions that hide syntax the same way.
+ */
+export function sourceShown(state: EditorState, from: number, to: number): boolean {
+  if (!state.facet(livePreview)) return true;
+  if (!(state.field(focused, false) ?? false)) return false;
+  return state.selection.ranges.some((range) => range.from <= to && range.to >= from);
+}
+
 /** Width of one character of the monospace list gutter, in em (Geist Mono's advance). */
 export const MONO_EM = 0.6;
 /** Width a task's box takes in place of "[ ]", in em. */
@@ -74,12 +84,10 @@ class Preview {
   private readonly drawn: [number, number][] = [];
   private readonly state: EditorState;
   private readonly live: boolean;
-  private readonly focus: boolean;
 
   constructor(state: EditorState) {
     this.state = state;
     this.live = state.facet(livePreview);
-    this.focus = state.field(focused, false) ?? false;
   }
 
   build(): DecorationSet {
@@ -108,9 +116,7 @@ class Preview {
 
   /** Whether the source of [from, to] shows: in source mode always, live only at the cursor. */
   private shows(from: number, to: number): boolean {
-    if (!this.live) return true;
-    if (!this.focus) return false;
-    return this.state.selection.ranges.some((range) => range.from <= to && range.to >= from);
+    return sourceShown(this.state, from, to);
   }
 
   /** As `shows`, for every line that [from, to] touches. */

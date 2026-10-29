@@ -1,10 +1,13 @@
 <script lang="ts">
   import { DropdownMenu, ToggleGroup } from "bits-ui";
   import { onDestroy, tick, untrack } from "svelte";
-  import { History, Trash2 } from "@lucide/svelte";
+  import { History, Pin, PinOff, TableOfContents, Trash2 } from "@lucide/svelte";
   import type { NoteVersionView } from "../../src/desktop/api.ts";
   import CourseTile from "../components/CourseTile.svelte";
   import IconButton from "../components/IconButton.svelte";
+  import NoteBacklinks from "../components/NoteBacklinks.svelte";
+  import { noteHeadings, pageCitation } from "../../src/library/note-meta.ts";
+  import { NOTE_TEMPLATES, onlyTitle, type NoteTemplate } from "../lib/note-templates.ts";
   import {
     createNoteEditor,
     type NoteEditor,
@@ -15,8 +18,11 @@
   import { renderMarkdown } from "../lib/markdown.ts";
   import { folio } from "../lib/state.svelte.ts";
 
-  /** The student's own Markdown note. Saves as they type; never overwrites edits made elsewhere. */
-  let { noteId }: { noteId: string } = $props();
+  /**
+   * The student's own Markdown note. Saves as they type; never overwrites edits made elsewhere.
+   * Compact, beside a document, it leaves out the course, pin and outline.
+   */
+  let { noteId, compact = false }: { noteId: string; compact?: boolean } = $props();
 
   type Status =
     "loading" | "saved" | "editing" | "saving" | "conflict" | "missing";
@@ -40,10 +46,22 @@
     ];
   }
 
-  /** Opens a link's note or topic; a title no note has yet says so. */
+  /** Opens a link's note, topic, cited page or chat; a title no note has yet says so. */
   function openLink(target: string, newTab: boolean): void {
     const course = note?.courseId;
     if (!course) return;
+    const cited = pageCitation(target);
+    if (cited) {
+      if (folio.document(cited.documentId)) folio.openDocument(cited.documentId, cited.page, { newTab });
+      else folio.error = "That document is no longer in your library.";
+      return;
+    }
+    if (target.startsWith("chat:")) {
+      const chat = folio.chats.find((candidate) => candidate.id === target.slice(5));
+      if (chat) folio.navigate({ view: "chat", chatId: chat.id, courseId: chat.courseId }, { newTab });
+      else folio.error = "That chat is no longer in Folio.";
+      return;
+    }
     if (target.startsWith("topic:")) {
       folio.openStudyNotes(course, target, { newTab });
       return;
@@ -66,6 +84,78 @@
 
   const note = $derived(folio.note(noteId));
   const course = $derived(folio.course(note?.courseId));
+  const headings = $derived(noteHeadings(content));
+  /** The outline beside the note; remembered on this device. */
+  let outlineOpen = $state(savedOutline());
+  let article = $state<HTMLElement>();
+
+  function savedOutline(): boolean {
+    try {
+      return localStorage.getItem("folio.noteOutline") === "1";
+    } catch {
+      return false;
+    }
+  }
+
+  function toggleOutline(): void {
+    outlineOpen = !outlineOpen;
+    try {
+      localStorage.setItem("folio.noteOutline", outlineOpen ? "1" : "0");
+    } catch {
+      // A per-device convenience.
+    }
+  }
+
+  /** Goes to a heading: the cursor moves there while writing, the page scrolls while reading. */
+  function goTo(index: number): void {
+    const heading = headings[index];
+    if (!heading) return;
+    if (mode !== "read") {
+      editor?.goToLine(heading.line);
+      return;
+    }
+    // The read view also draws the title as a heading when it is one.
+    const titled = /^\s*#{1,6}\s/.test(content.split("\n").find((line) => line.trim()) ?? "");
+    const shown = article?.querySelectorAll("h1, h2, h3, h4, h5, h6");
+    shown?.[index + (titled ? 1 : 0)]?.scrollIntoView({ block: "start", behavior: "smooth" });
+  }
+
+  function useTemplate(template: NoteTemplate): void {
+    const today = new Date().toLocaleDateString(undefined, {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+    });
+    const gap = content.endsWith("\n\n") ? "" : content.endsWith("\n") ? "\n" : "\n\n";
+    const body = template.body(today);
+    const cursor = body.indexOf("{cursor}");
+    editor?.append(
+      gap + body.replace("{cursor}", ""),
+      cursor >= 0 ? gap.length + cursor : undefined,
+    );
+  }
+
+  let markReady: () => void;
+  const ready = new Promise<void>((resolve) => (markReady = resolve));
+
+  /** Resolves once the note is open and can take text. */
+  export function whenReady(): Promise<void> {
+    return ready;
+  }
+
+  /**
+   * Adds text at the end as the student's own edit: undoable with ⌘Z and saved like typing.
+   * The read view switches to writing so the addition shows where it went.
+   */
+  export async function insert(text: string): Promise<void> {
+    await ready;
+    if (mode === "read") {
+      mode = "edit";
+      await tick();
+    }
+    const gap = !content.trim() ? "" : content.endsWith("\n\n") ? "" : content.endsWith("\n") ? "\n" : "\n\n";
+    editor?.append(`${gap}${text.trim()}\n`);
+  }
 
   async function load(): Promise<void> {
     try {
@@ -74,6 +164,16 @@
       revision = loaded.note.revision;
       editor?.setDoc(content);
       status = "saved";
+      await tick();
+      markReady();
+      // A note just made opens with its title selected, so typing names it.
+      if (folio.freshNoteId === noteId) {
+        folio.freshNoteId = null;
+        await tick();
+        if (mode === "read") mode = "edit";
+        await tick();
+        editor?.selectTitle();
+      }
     } catch {
       status = "missing";
     }
@@ -107,6 +207,7 @@
         onSave: () => void save(),
         onRead: () => (mode = "read"),
         links: { targets: linkTargets, open: openLink },
+        inFlow: true,
       });
       return () => {
         editor?.destroy();
@@ -206,14 +307,16 @@
 {:else}
   <div class="flex h-full min-h-0 flex-col">
     <div
-      class="flex h-11 shrink-0 items-center gap-2 border-b border-line-subtle px-4"
+      class="@container flex h-11 shrink-0 items-center gap-2 border-b border-line-subtle px-4"
     >
-      {#if course}<CourseTile {course} size={16} />{/if}
-      <span class="min-w-0 truncate font-medium text-text"
-        >{note?.title ?? "Note"}</span
-      >
+      {#if !compact}
+        {#if course}<CourseTile {course} size={16} />{/if}
+        <span class="min-w-0 truncate font-medium text-text"
+          >{note?.title ?? "Note"}</span
+        >
+      {/if}
       <span
-        class="shrink-0 text-[12px] whitespace-nowrap {status === 'conflict'
+        class="shrink-0 text-[12px] whitespace-nowrap @max-[480px]:hidden {status === 'conflict'
           ? 'text-danger'
           : 'text-text-3'}"
       >
@@ -222,6 +325,28 @@
           : label[status]}
       </span>
       <span class="flex-1"></span>
+      {#if note && !compact}
+        {@const pinned = folio.pinnedNotes.includes(note.id)}
+        <IconButton
+          label={pinned ? "Unpin" : "Pin to the top and the sidebar"}
+          class="@max-[400px]:hidden {pinned ? 'text-text' : ''}"
+          onclick={() => folio.togglePin(noteId)}
+        >
+          {#if pinned}<PinOff size={14} strokeWidth={1.75} />{:else}<Pin
+              size={14}
+              strokeWidth={1.75}
+            />{/if}
+        </IconButton>
+      {/if}
+      {#if !compact}
+        <IconButton
+          label={outlineOpen ? "Hide outline" : "Show outline"}
+          class="@max-[440px]:hidden {outlineOpen ? 'bg-hover text-text' : ''}"
+          onclick={toggleOutline}
+        >
+          <TableOfContents size={14} strokeWidth={1.75} />
+        </IconButton>
+      {/if}
       <DropdownMenu.Root
         onOpenChange={async (open) => {
           if (open) versions = await folio.noteHistory(noteId).catch(() => []);
@@ -322,33 +447,76 @@
       </div>
     {/if}
 
-    {#if mode === "read"}
-      <div class="scroll-quiet min-h-0 flex-1 overflow-y-auto">
-        <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
-        <article
-          class="prose-folio prose-reading mx-auto max-w-[784px] px-8 py-10 font-serif text-[17px] leading-7 max-sm:px-4"
-          onclick={(event) => {
-            const anchor = (event.target as Element).closest?.("a");
-            const target = wikilinkTarget(anchor?.getAttribute("href") ?? null);
-            if (!target) return;
-            event.preventDefault();
-            openLink(target, event.metaKey || event.ctrlKey);
-          }}
-          {@attach (node) => {
-            // Demos run again whenever the note's text changes.
-            void content;
-            return mountDemos(node);
-          }}
-        >
-          <!-- Sanitized by DOMPurify in renderMarkdown. -->
-          <!-- eslint-disable-next-line svelte/no-at-html-tags -->
-          {@html renderMarkdown(linkedMarkdown(content || "Nothing here yet."), {
-            note: true,
-          })}
-        </article>
+    <div class="flex min-h-0 flex-1">
+      <div class="scroll-quiet min-h-0 min-w-0 flex-1 overflow-y-auto">
+        {#if mode === "read"}
+          <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
+          <article
+            bind:this={article}
+            class="prose-folio prose-reading mx-auto max-w-[784px] px-8 pt-10 pb-8 font-serif text-[17px] leading-7 max-sm:px-4"
+            onclick={(event) => {
+              const anchor = (event.target as Element).closest?.("a");
+              const target = wikilinkTarget(anchor?.getAttribute("href") ?? null);
+              if (!target) return;
+              event.preventDefault();
+              openLink(target, event.metaKey || event.ctrlKey);
+            }}
+            {@attach (node) => {
+              // Demos run again whenever the note's text changes.
+              void content;
+              return mountDemos(node);
+            }}
+          >
+            <!-- Sanitized by DOMPurify in renderMarkdown. -->
+            <!-- eslint-disable-next-line svelte/no-at-html-tags -->
+            {@html renderMarkdown(linkedMarkdown(content || "Nothing here yet."), {
+              note: true,
+            })}
+          </article>
+        {:else if status !== "loading"}
+          <div {@attach mountEditor}></div>
+          {#if onlyTitle(content)}
+            <div class="mx-auto w-full max-w-[784px] px-8 max-sm:px-4">
+              <div class="mb-2 text-[12px] text-text-3">Start from a template</div>
+              <div class="flex flex-wrap gap-2">
+                {#each NOTE_TEMPLATES as template (template.id)}
+                  <button
+                    class="h-8 rounded-lg border border-line-subtle bg-surface px-3 text-[13px] font-medium text-text-2 shadow-1 transition-colors hover:bg-hover hover:text-text dark:bg-raised"
+                    onclick={() => useTemplate(template)}>{template.label}</button
+                  >
+                {/each}
+              </div>
+            </div>
+          {/if}
+        {/if}
+        {#if note}
+          <NoteBacklinks {noteId} courseId={note.courseId} />
+        {/if}
       </div>
-    {:else if status !== "loading"}
-      <div class="min-h-0 flex-1" {@attach mountEditor}></div>
-    {/if}
+      {#if outlineOpen && !compact}
+        <nav
+          class="scroll-quiet w-[220px] shrink-0 overflow-y-auto border-l border-line-subtle px-3 py-4 max-md:hidden"
+          aria-label="Outline"
+        >
+          <div
+            class="px-2 pb-2 text-[11px] font-medium tracking-[0.06em] text-text-3 uppercase"
+          >
+            Outline
+          </div>
+          {#each headings as heading, index (heading.line)}
+            <button
+              class="flex w-full rounded-md py-1 pr-2 text-left text-[13px] leading-5 text-text-2 transition-colors hover:bg-hover hover:text-text"
+              style:padding-inline-start="{8 + Math.max(0, heading.level - 2) * 12}px"
+              dir="auto"
+              onclick={() => goTo(index)}><span class="min-w-0 break-words">{heading.text}</span></button
+            >
+          {:else}
+            <p class="px-2 text-[12.5px] leading-5 text-text-3">
+              Headings appear here. Start a line with ## to add one.
+            </p>
+          {/each}
+        </nav>
+      {/if}
+    </div>
   </div>
 {/if}

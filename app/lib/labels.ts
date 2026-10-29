@@ -54,8 +54,8 @@ export function tabTitle(location: Location): string {
       return folio.course(location.courseId)?.name ?? "Course";
     case "document":
       return folio.document(location.documentId)?.title ?? "Document";
-    case "note":
-      return folio.note(location.noteId)?.title ?? "Note";
+    case "notes":
+      return folio.note(location.noteId)?.title ?? "Notes";
     case "study": {
       const notes = folio.studyNotes[location.courseId];
       const [kind, slug] = location.item?.split(":") ?? [];
@@ -80,6 +80,50 @@ export function formatDate(iso: string | null): string {
   if (days === 1) return "Yesterday";
   if (days < 7 && days > 0) return date.toLocaleDateString(undefined, { weekday: "short" });
   return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+/**
+ * When a note last changed, as a notes list shows it: the time today, the weekday this week,
+ * then the date, with the year once it is another year's.
+ */
+export function noteTime(iso: string | null, now = new Date()): string {
+  if (!iso) return "";
+  const date = new Date(iso);
+  const day = (value: Date) => new Date(value.getFullYear(), value.getMonth(), value.getDate());
+  const days = Math.round((day(now).getTime() - day(date).getTime()) / 86_400_000);
+  if (days === 0) return date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  if (days === 1) return "Yesterday";
+  if (days > 1 && days < 7) return date.toLocaleDateString(undefined, { weekday: "long" });
+  return date.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    ...(date.getFullYear() !== now.getFullYear() ? { year: "numeric" } : {}),
+  });
+}
+
+/** How long ago something happened, for "Pick up": minutes, hours, then days. */
+export function since(iso: string, now = new Date()): string {
+  const minutes = Math.max(0, Math.round((now.getTime() - Date.parse(iso)) / 60_000));
+  if (minutes < 1) return "Just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return hours === 1 ? "An hour ago" : `${hours} hours ago`;
+  return formatDate(iso);
+}
+
+/** The heading a note falls under in a list sorted by its last change, newest first. */
+export function noteGroup(iso: string | null, now = new Date()): string {
+  if (!iso) return "Earlier";
+  const date = new Date(iso);
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const at = date.getTime();
+  if (at >= start) return "Today";
+  if (at >= start - 86_400_000) return "Yesterday";
+  if (at >= start - 7 * 86_400_000) return "Previous 7 days";
+  if (at >= start - 30 * 86_400_000) return "Previous 30 days";
+  if (date.getFullYear() === now.getFullYear())
+    return date.toLocaleDateString(undefined, { month: "long" });
+  return String(date.getFullYear());
 }
 
 export function formatDue(iso: string | null): string {
@@ -190,4 +234,29 @@ export function formatAssignmentDue(dueAt: string | null, hasTime: boolean): str
     minute: "2-digit",
   });
   return `${base}, ${time}`;
+}
+
+/**
+ * A due date as a student reads it: "Today", "Tomorrow", a weekday this week, "in 9 days", or the
+ * date; past dates say how late. The time shows only when one was set.
+ */
+export function relativeDue(dueAt: string, hasTime: boolean, now = new Date()): string {
+  const due = new Date(dueAt);
+  const day = (date: Date) =>
+    new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const days = Math.round((day(due) - day(now)) / 86_400_000);
+  const time = hasTime
+    ? ` ${due.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}`
+    : "";
+  if (days < -1) return `${-days} days late`;
+  if (days === -1) return "Yesterday";
+  if (days === 0) return `Today${time}`;
+  if (days === 1) return `Tomorrow${time}`;
+  if (days < 7) return `${due.toLocaleDateString(undefined, { weekday: "short" })}${time}`;
+  if (days < 15) return `in ${days} days`;
+  return due.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    ...(due.getFullYear() !== now.getFullYear() ? { year: "numeric" } : {}),
+  });
 }

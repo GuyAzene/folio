@@ -72,8 +72,9 @@ export interface Knowledge {
   sessions: KnowledgeSession[];
   pages: KnowledgePage[];
   redirects?: Record<string, string>;
-  /** When the course's existing notes were last regrouped into shared topics. */
+  /** When the course's existing notes were last regrouped into shared topics, and under which rules. */
   grouped?: string;
+  groupedPolicy?: number;
 }
 
 export function emptyKnowledge(courseId: string, prefix: string): Knowledge {

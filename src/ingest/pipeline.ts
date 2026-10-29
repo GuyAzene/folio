@@ -95,7 +95,7 @@ export interface IngestOptions {
   /** The course's published knowledge, so the author writes into the topics it already has. */
   knowledge?: (courseId: string) => Promise<Knowledge | null>;
   /** Regroups a course's published notes into shared topics; says how many topics merged. */
-  regroup?: (courseId: string) => Promise<{ merged: number } | null>;
+  regroup?: (courseId: string) => Promise<{ merged: { from: string; into: string }[] } | null>;
 }
 
 /** The order queued jobs start in: what the student asked for, new files, the rest, redos. */
@@ -513,11 +513,12 @@ export class IngestRunner {
       this.#emit(jobId);
       const result = await this.#options.regroup?.(job.courseId);
       signal.throwIfAborted();
+      const merged = result?.merged ?? [];
       store.setNode(node.id, {
         status: "done",
-        task: result?.merged
-          ? `${result.merged} topic${result.merged === 1 ? "" : "s"} merged into shared topics`
-          : "Every topic was already its own",
+        task: merged.length
+          ? `Merged “${merged[0]!.from}” into “${merged[0]!.into}”${merged.length > 1 ? `, and ${merged.length - 1} more` : ""}`
+          : "No topic was a duplicate",
       });
       const studied = (await this.#options.knowledge?.(job.courseId))?.sessions ?? [];
       await this.queue(

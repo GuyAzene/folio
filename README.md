@@ -31,9 +31,11 @@ lectures into notes you can browse, and it never changes your files.
   Demos run sealed off from Folio and the network.
 - **Study notes.** Folio can study a lecture page by page and publish notes by topic, each
   section citing the slides it came from.
-- **Your own notes.** Markdown notes with live preview, math, tables, diagrams, and Hebrew and
-  English lines side by side. Ask the tutor to write, change or rename a note; every change can
-  be undone from the chat or the note's history.
+- **Your own notes.** One notebook for every course, with `#tags`, search, ⌘O, links between
+  notes and the notes that mention each one. Markdown with live preview, math, tables, diagrams,
+  and Hebrew and English lines side by side. Write beside a lecture with links back to its pages,
+  save a tutor's answer to a note, or ask the tutor to write, change or rename one; every change
+  can be undone.
 - **Assignments.** A board of what you have to hand in, read or prepare, from To do to Done, with
   what you handed in, the grade and the feedback kept with each one.
 - **Nothing lost.** Removed files, notes, chats, assignments and courses wait 30 days in Folio's

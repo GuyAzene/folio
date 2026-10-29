@@ -13,9 +13,9 @@ describe("course tabs", () => {
       expect(courseTab(old)).toBe("materials");
   });
 
-  it("opens anything unknown at Materials", () => {
+  it("opens anything unknown at the Overview", () => {
     for (const value of [undefined, null, "", "practice", 3, { tab: "notes" }])
-      expect(courseTab(value)).toBe("materials");
+      expect(courseTab(value)).toBe("overview");
   });
 
   it("files every document role in exactly one Materials section", () => {

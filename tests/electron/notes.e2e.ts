@@ -99,7 +99,8 @@ void describe("notes the tutor writes", () => {
     await link.waitFor();
     assert.equal(await link.textContent(), "Graph search");
     await link.click();
-    await page.getByText("Before the tutor.").waitFor();
+    // The notes list previews it too; the editor is where the opened note shows it.
+    await page.locator(".cm-line", { hasText: "Before the tutor." }).waitFor();
   });
 
   void it("undo the tutor's change from the chat, bringing back the version before it", async () => {

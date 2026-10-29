@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { X } from "@lucide/svelte";
+  import { PanelLeft, X } from "@lucide/svelte";
   import { Tooltip } from "bits-ui";
   import CommandPalette from "./components/CommandPalette.svelte";
+  import IconButton from "./components/IconButton.svelte";
   import NewCourseDialog from "./components/NewCourseDialog.svelte";
   import SettingsDialog from "./components/SettingsDialog.svelte";
   import Sidebar from "./components/Sidebar.svelte";
@@ -14,7 +15,8 @@
   import JobsView from "./views/JobsView.svelte";
   import AssignmentsBoard from "./views/AssignmentsBoard.svelte";
   import ListViews from "./views/ListViews.svelte";
-  import NoteView from "./views/NoteView.svelte";
+  import NotesHub from "./views/NotesHub.svelte";
+  import NoteSwitcher from "./components/NoteSwitcher.svelte";
   import StudyView from "./views/StudyView.svelte";
   import TrashView from "./views/TrashView.svelte";
   import ConfirmDialog from "./components/ConfirmDialog.svelte";
@@ -51,6 +53,11 @@
     return () => clearTimeout(timer);
   });
 
+  function toggleSidebar(): void {
+    folio.sidebarOpen = !folio.sidebarOpen;
+    folio.persistLayout();
+  }
+
   function onkeydown(event: KeyboardEvent): void {
     const mod = event.metaKey || event.ctrlKey;
     const key = event.key.toLowerCase();
@@ -58,6 +65,9 @@
     if (mod && key === "k") {
       event.preventDefault();
       folio.paletteOpen = true;
+    } else if (mod && key === "o" && !event.shiftKey) {
+      event.preventDefault();
+      folio.switcherOpen = true;
     } else if (mod && key === "n") {
       event.preventDefault();
       folio.newChat(location.view === "course" ? location.courseId : null);
@@ -82,8 +92,7 @@
       folio.forward();
     } else if (mod && event.key === "\\") {
       event.preventDefault();
-      folio.sidebarOpen = !folio.sidebarOpen;
-      folio.persistLayout();
+      toggleSidebar();
     } else if (mod && key === "j" && location.view === "document") {
       event.preventDefault();
       folio.update({
@@ -116,10 +125,23 @@
       style="width:{docked ? 260 : 0}px"
     >
       {#if !compact}
-        <Sidebar
-          onhide={() => ((folio.sidebarOpen = false), folio.persistLayout())}
-        />
+        <Sidebar />
       {/if}
+    </div>
+
+    <!-- One sidebar button, pinned beside the window controls: open or closed, it stays put. -->
+    <div
+      class="absolute top-[16.5px] z-40 {folio.platform === 'darwin'
+        ? 'left-[80px]'
+        : 'left-3'}"
+    >
+      <IconButton
+        label={folio.sidebarOpen ? "Hide sidebar" : "Show sidebar"}
+        shortcut="⌘\"
+        onclick={toggleSidebar}
+      >
+        <PanelLeft size={16} strokeWidth={1.75} />
+      </IconButton>
     </div>
 
     {#if compact && folio.sidebarOpen}
@@ -131,7 +153,7 @@
       <div
         class="absolute inset-y-0 left-0 z-30 animate-[folio-in_200ms_var(--ease-out-quint)] border-r border-line-subtle bg-bg shadow-3"
       >
-        <Sidebar onhide={() => (folio.sidebarOpen = false)} />
+        <Sidebar />
       </div>
     {/if}
 
@@ -158,10 +180,8 @@
                     {#key location.documentId}
                       <DocumentView tabId={tab.id} {location} />
                     {/key}
-                  {:else if location.view === "note"}
-                    {#key location.noteId}
-                      <NoteView noteId={location.noteId} />
-                    {/key}
+                  {:else if location.view === "notes"}
+                    <NotesHub noteId={location.noteId} courseId={location.courseId} />
                   {:else if location.view === "study"}
                     <StudyView
                       courseId={location.courseId}
@@ -223,4 +243,5 @@
   <NewCourseDialog />
   <ConfirmDialog />
   <CommandPalette />
+  <NoteSwitcher />
 </Tooltip.Provider>

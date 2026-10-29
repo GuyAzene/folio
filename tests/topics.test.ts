@@ -13,7 +13,13 @@ import {
 } from "../src/kb/knowledge.ts";
 import { KnowledgeStore } from "../src/kb/store.ts";
 import { knowledgeTools } from "../src/kb/tools.ts";
-import { topicInventory, topicProblems, type Relation, type TopicModel } from "../src/kb/topics.ts";
+import {
+  finishKnowledge,
+  topicInventory,
+  topicProblems,
+  type Relation,
+  type TopicModel,
+} from "../src/kb/topics.ts";
 import { LibraryStore } from "../src/library/store.ts";
 import { bundle } from "./fixtures/draft-bundle.ts";
 
@@ -169,6 +175,33 @@ describe("shared topics", () => {
     expect(narrowed).not.toContain("Breadth-first");
   });
 
+  it("keep a few links per topic, its parts and wholes first", () => {
+    const knowledge = mergeDraft(
+      emptyKnowledge("course", "alg"),
+      bundle("course", LECTURE, "alg-L01"),
+    );
+    const many: Knowledge = structuredClone(knowledge);
+    const extra = Array.from({ length: 6 }, (_, index) => ({
+      ...structuredClone(many.pages[0]!),
+      slug: `alg-extra-${index}`,
+      blocks: [],
+    }));
+    many.pages.push(
+      ...extra.map((page, index) => ({
+        ...page,
+        blocks: [{ ...structuredClone(knowledge.pages[0]!.blocks[0]!), handle: `extra-${index}` }],
+      })),
+    );
+    const bfs = many.pages.find((page) => page.slug === "alg-bfs")!;
+    bfs.related = [
+      ...extra.slice(0, 5).map((page) => ({ slug: page.slug, relation: "related" as const })),
+      { slug: "alg-extra-5", relation: "part_of" as const },
+    ];
+    const links = finishKnowledge(many).pages.find((page) => page.slug === "alg-bfs")!.related!;
+    expect(links).toHaveLength(4);
+    expect(links[0]).toEqual({ slug: "alg-extra-5", relation: "part_of" });
+  });
+
   it("refuse a version whose blocks belong to no session or whose links point nowhere", () => {
     const knowledge = mergeDraft(
       emptyKnowledge("course", "alg"),
@@ -237,10 +270,7 @@ describe("regrouping existing notes", () => {
       emit: () => undefined,
       publish: async () => 1,
       knowledge: (courseId) => store.knowledge(courseId),
-      regroup: async (courseId) => {
-        const result = await store.regroup(courseId);
-        return result ? { merged: result.merged.length } : null;
-      },
+      regroup: (courseId) => store.regroup(courseId),
     });
     const job = await runner.regroup(course.id);
     await vi.waitFor(() => expect(jobs.job(job.id).status).toBe("done"), { timeout: 5000 });
@@ -248,7 +278,7 @@ describe("regrouping existing notes", () => {
     expect(knowledge.grouped).toBeTruthy();
     expect(knowledge.pages.map((page) => page.slug).sort()).toEqual(["alg-bfs", "alg-graphs"]);
     expect(jobs.nodes(job.id).find((node) => node.title === "Group by topic")?.task).toBe(
-      "1 topic merged into shared topics",
+      "Merged “סריקה לרוחב” into “Breadth-first search”",
     );
     const restudies = jobs.jobs().filter((other) => other.origin === "restudy");
     expect(restudies.map((other) => other.documentIds[0]).sort()).toEqual(

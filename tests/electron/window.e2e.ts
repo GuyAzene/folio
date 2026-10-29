@@ -31,6 +31,30 @@ async function open(
 }
 
 void describe("Folio's window", () => {
+  void it("keeps the sidebar button in one place, open or closed", async () => {
+    const { page } = await open();
+    const hide = page.getByRole("button", { name: "Hide sidebar" });
+    const before = await hide.boundingBox();
+    await page.screenshot({
+      path: process.env.FOLIO_E2E_SHOTS
+        ? `${process.env.FOLIO_E2E_SHOTS}/sidebar-open.png`
+        : undefined,
+      clip: { x: 0, y: 0, width: 420, height: 60 },
+    });
+    await hide.click();
+    const show = page.getByRole("button", { name: "Show sidebar" });
+    await show.waitFor();
+    await page.waitForTimeout(400);
+    const after = await show.boundingBox();
+    await page.screenshot({
+      path: process.env.FOLIO_E2E_SHOTS
+        ? `${process.env.FOLIO_E2E_SHOTS}/sidebar-closed.png`
+        : undefined,
+      clip: { x: 0, y: 0, width: 420, height: 60 },
+    });
+    assert.deepEqual(after, before);
+  });
+
   void it("renders formulas that the sanitizer would otherwise strip", async () => {
     const { page } = await open();
     await page.locator(".prose-folio .math .katex").first().waitFor();

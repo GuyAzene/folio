@@ -18,6 +18,7 @@ const PLACES: [string, (ids: Ids) => unknown][] = [
   ["library", () => ({ view: "library" })],
   ["assignments", () => ({ view: "assignments" })],
   ["chats", () => ({ view: "chats" })],
+  ["course overview", (ids) => ({ view: "course", courseId: ids.courseId, tab: "overview" })],
   ["course materials", (ids) => ({ view: "course", courseId: ids.courseId, tab: "materials" })],
   ["course study notes", (ids) => ({ view: "course", courseId: ids.courseId, tab: "study" })],
   ["course notes", (ids) => ({ view: "course", courseId: ids.courseId, tab: "notes" })],
@@ -35,7 +36,19 @@ const PLACES: [string, (ids: Ids) => unknown][] = [
       chatId: ids.chatId,
     }),
   ],
-  ["note", (ids) => ({ view: "note", noteId: ids.noteId })],
+  ["notes", (ids) => ({ view: "notes", noteId: ids.noteId, courseId: null })],
+  [
+    "note beside a document",
+    (ids) => ({
+      view: "document",
+      documentId: ids.recitationId,
+      page: 1,
+      panel: "docked",
+      chatId: null,
+      side: "note",
+      noteId: ids.noteId,
+    }),
+  ],
 ];
 
 const running: Running[] = [];

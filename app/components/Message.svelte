@@ -5,8 +5,11 @@
     Copy,
     FileText,
     Globe,
+    NotebookPen,
+    Plus,
     ScanText,
   } from "@lucide/svelte";
+  import { DropdownMenu } from "bits-ui";
   import type { ChatMessageView, VisualView } from "../../src/desktop/api.ts";
   import {
     estimateDirection,
@@ -144,6 +147,33 @@
     event.clipboardData.setData("text/plain", text);
     event.preventDefault();
   }
+
+  const chat = $derived(folio.chats.find((candidate) => candidate.id === chatId));
+  /** Where "Save to note" puts a new note: the chat's course, or the course its pages are from. */
+  const saveCourse = $derived(
+    chat?.courseId ??
+      folio.document(message.sources?.[0]?.documentId)?.courseId ??
+      (folio.courses.length === 1 ? folio.courses[0]!.id : null),
+  );
+  const saveTargets = $derived(
+    folio.notes
+      .filter((note) => !saveCourse || note.courseId === saveCourse)
+      .sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""))
+      .slice(0, 5),
+  );
+
+  function saveTo(courseId: string, noteId: string | null): void {
+    void folio.saveToNote(
+      { text: message.text, sources: message.sources },
+      { id: chatId, title: chat?.title ?? "" },
+      { courseId, noteId },
+    );
+  }
+
+  const menuItem =
+    "flex h-8 cursor-default items-center gap-2.5 rounded-md px-2.5 text-[13px] text-text outline-none select-none data-[highlighted]:bg-hover";
+  const menuHeading =
+    "px-2.5 pt-1.5 pb-1 text-[11px] font-medium tracking-[0.06em] text-text-3 uppercase";
 
   async function copy(): Promise<void> {
     await navigator.clipboard.writeText(message.text);
@@ -397,6 +427,64 @@
               strokeWidth={1.75}
             /> Copy{/if}
         </button>
+        {#if folio.courses.length}
+          <DropdownMenu.Root>
+            <DropdownMenu.Trigger
+              class="inline-flex h-7 items-center gap-1.5 rounded-md px-1.5 text-[12px] text-text-3 hover:bg-hover hover:text-text data-[state=open]:bg-hover data-[state=open]:text-text"
+            >
+              <NotebookPen size={13} strokeWidth={1.75} /> Save to note
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Portal>
+              <DropdownMenu.Content
+                align="start"
+                sideOffset={6}
+                class="z-50 max-w-[300px] min-w-[220px] animate-[folio-scale_140ms_var(--ease-out-quint)] rounded-xl border border-line-subtle bg-raised p-1.5 shadow-3 outline-none"
+              >
+                {#if saveCourse}
+                  <DropdownMenu.Item
+                    class={menuItem}
+                    onSelect={() => saveTo(saveCourse!, null)}
+                  >
+                    <Plus size={14} strokeWidth={1.75} class="text-text-3" /> New
+                    note
+                  </DropdownMenu.Item>
+                {:else}
+                  <div class={menuHeading}>New note in</div>
+                  {#each folio.courses as course (course.id)}
+                    <DropdownMenu.Item
+                      class={menuItem}
+                      onSelect={() => saveTo(course.id, null)}
+                    >
+                      <CourseTile {course} size={16} />
+                      <span class="min-w-0 flex-1 truncate" dir="auto"
+                        >{course.name}</span
+                      >
+                    </DropdownMenu.Item>
+                  {/each}
+                {/if}
+                {#if saveTargets.length}
+                  <DropdownMenu.Separator class="my-1.5 h-px bg-line-subtle" />
+                  <div class={menuHeading}>Add to</div>
+                  {#each saveTargets as note (note.id)}
+                    <DropdownMenu.Item
+                      class={menuItem}
+                      onSelect={() => saveTo(note.courseId, note.id)}
+                    >
+                      <NotebookPen
+                        size={14}
+                        strokeWidth={1.75}
+                        class="shrink-0 text-text-3"
+                      />
+                      <span class="min-w-0 flex-1 truncate" dir="auto"
+                        >{note.title}</span
+                      >
+                    </DropdownMenu.Item>
+                  {/each}
+                {/if}
+              </DropdownMenu.Content>
+            </DropdownMenu.Portal>
+          </DropdownMenu.Root>
+        {/if}
       </div>
     {/if}
   </div>

@@ -15,7 +15,7 @@ import {
   type Acknowledgement,
   type Knowledge,
 } from "./knowledge.ts";
-import { settleTopics, topicProblems, type TopicModel } from "./topics.ts";
+import { settleTopics, TOPIC_POLICY, topicProblems, type TopicModel } from "./topics.ts";
 
 export interface GenerationInfo {
   courseId: string;
@@ -156,7 +156,10 @@ export class KnowledgeStore {
       started,
     );
     // A course whose first notes are written this way is grouped by topic from the start.
-    if (!previous.pages.length && !knowledge.grouped) knowledge.grouped = new Date().toISOString();
+    if (!previous.pages.length && !knowledge.grouped) {
+      knowledge.grouped = new Date().toISOString();
+      knowledge.groupedPolicy = TOPIC_POLICY;
+    }
     const summary = `${bundle.documents.map((document) => document.session.slug).join(", ")}: ${knowledge.pages.length} topics, ${knowledge.pages.reduce((sum, page) => sum + page.blocks.length, 0)} sections${absorbed.length ? `, ${absorbed.length} merged into shared topics` : ""}`;
     return this.#write(courseId, knowledge, bundle.jobId, summary);
   }
@@ -166,7 +169,9 @@ export class KnowledgeStore {
    * topics of the course's other sessions, duplicates merge, and shared topics get overviews.
    * Queued like a publish; null when the course has nothing published.
    */
-  regroup(courseId: string): Promise<{ info: GenerationInfo; merged: string[] } | null> {
+  regroup(
+    courseId: string,
+  ): Promise<{ info: GenerationInfo; merged: { from: string; into: string }[] } | null> {
     checkId(courseId);
     const previous = this.#publishing.get(courseId) ?? Promise.resolve();
     const next = previous
@@ -182,7 +187,7 @@ export class KnowledgeStore {
         );
         const info = await this.#write(
           courseId,
-          { ...knowledge, grouped: new Date().toISOString() },
+          { ...knowledge, grouped: new Date().toISOString(), groupedPolicy: TOPIC_POLICY },
           null,
           merged.length
             ? `Regrouped by topic: ${merged.length} merged into shared topics`

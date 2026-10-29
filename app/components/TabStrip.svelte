@@ -11,7 +11,6 @@
     MessageSquare,
     MessagesSquare,
     NotebookPen,
-    PanelLeft,
     Plus,
     Highlighter,
     X,
@@ -31,7 +30,7 @@
     assignments: ListChecks,
     jobs: Highlighter,
     document: FileText,
-    note: NotebookPen,
+    notes: NotebookPen,
     study: BookMarked,
     trash: Trash2,
     chat: MessageSquare,
@@ -46,19 +45,10 @@
 <div
   class="drag flex h-11 shrink-0 items-center gap-1 border-b border-line-subtle pr-2 {leftInset
     ? folio.platform === 'darwin'
-      ? 'pl-[84px]'
-      : 'pl-2'
+      ? 'pl-[110px]'
+      : 'pl-11'
     : 'pl-2'}"
 >
-  {#if leftInset}
-    <IconButton
-      label="Show sidebar"
-      shortcut="⌘\"
-      onclick={() => (folio.sidebarOpen = true)}
-    >
-      <PanelLeft size={16} strokeWidth={1.75} />
-    </IconButton>
-  {/if}
   <IconButton
     label="Back"
     shortcut="⌘["

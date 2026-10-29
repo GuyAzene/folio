@@ -22,6 +22,7 @@ import type {
 } from "../../src/desktop/api.ts";
 import { chatTitle } from "../../src/chat-title.ts";
 import { patchAssignment } from "../../src/library/assignments.ts";
+import { linkFirstMention, matchNote, mentionsOf, noteFacts } from "../../src/library/note-meta.ts";
 import { SYNTHETIC_LECTURE, syntheticPdf } from "../../tests/fixtures/synthetic-pdf.ts";
 
 /** A synthetic drawing for the preview's fake visual reply. */
@@ -283,6 +284,7 @@ function putNote(noteId: string, courseId: string, content: string): NoteView {
         ?.replace(/^#+\s*/, "") || "Untitled note",
     revision: String(Number(previous) + 1),
     updatedAt: new Date().toISOString(),
+    ...noteFacts(content),
   };
   notes.set(noteId, { note, content });
   return note;
@@ -290,7 +292,17 @@ function putNote(noteId: string, courseId: string, content: string): NoteView {
 putNote(
   id(51),
   id(1),
-  "# Graph traversal\n\nBFS visits vertices in layers.\nEach vertex is marked when it is dequeued.\n",
+  "# Graph traversal\n\nBFS visits vertices in layers.\nEach vertex is marked when it is dequeued.\n\n#graphs #exam\n",
+);
+putNote(
+  id(53),
+  id(1),
+  "# Shortest paths\n\nDijkstra extends [[Graph traversal]] with a priority queue keyed by distance. Negative edges break it; use Bellman-Ford.\n\n#graphs\n",
+);
+putNote(
+  id(54),
+  id(1),
+  "# Exam review\n\n## Week 1\n\nRedo the graph traversal questions from the recitation and time each one.\n\n## Week 2\n\n- [ ] Dijkstra by hand\n- [ ] Proofs of correctness\n\n#exam\n",
 );
 // Exercises the note editor: Hebrew and English, math, tasks, a table, HTML and code.
 putNote(
@@ -1691,6 +1703,31 @@ export const previewApi: FolioApi = {
     const note = putNote(noteId, entry.note.courseId, `${entry.content.trimEnd()}\n\n${text}\n`);
     emit({ type: "library" });
     return note;
+  },
+  async searchNotes(query, courseId) {
+    return [...notes.values()]
+      .filter(({ note }) => !courseId || note.courseId === courseId)
+      .flatMap(({ note, content }) => {
+        const match = matchNote(content, note.title, query);
+        return match ? [{ noteId: note.id, ...match }] : [];
+      })
+      .sort((a, b) => b.score - a.score)
+      .map(({ noteId, snippet }) => ({ noteId, snippet }));
+  },
+  async noteMentions(noteId) {
+    const target = notes.get(noteId)!.note;
+    return [...notes.values()].flatMap(({ note, content }) => {
+      if (note.id === noteId || note.courseId !== target.courseId) return [];
+      const found = mentionsOf(content, target.title);
+      return found.linked.length || found.unlinked.length
+        ? [{ noteId: note.id, title: note.title, revision: note.revision, ...found }]
+        : [];
+    });
+  },
+  async linkMention(source, target, revision) {
+    const next = linkFirstMention(notes.get(source)!.content, notes.get(target)!.note.title);
+    if (next === null) throw new Error("That note no longer mentions this one.");
+    return previewApi.saveNote(source, next, revision);
   },
   async listProposals() {
     return proposals.map(proposalView);

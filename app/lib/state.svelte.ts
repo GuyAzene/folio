@@ -20,6 +20,7 @@ import type {
   NoteEditView,
   NoteVersionView,
   NoteView,
+  SourceView,
   ProposalAction,
   ProposalView,
   StudyNotesView,
@@ -29,7 +30,9 @@ import type {
 } from "../../src/desktop/api.ts";
 import { DEFAULT_THINKING, THINKING_LEVELS } from "../../src/desktop/api.ts";
 import { chatTitle } from "../../src/chat-title.ts";
+import { citationLink } from "../../src/library/note-meta.ts";
 import { courseTab, type CourseTab } from "./course-tabs.ts";
+import { shortTitle } from "./titles.ts";
 
 export type { CourseTab };
 export type ThemePreference = "system" | "light" | "dark";
@@ -44,8 +47,19 @@ export type Location =
   | { view: "jobs" }
   | { view: "trash" }
   | { view: "course"; courseId: string; tab: CourseTab }
-  | { view: "document"; documentId: string; page: number; panel: PanelMode; chatId: string | null }
-  | { view: "note"; noteId: string }
+  | {
+      view: "document";
+      documentId: string;
+      page: number;
+      panel: PanelMode;
+      chatId: string | null;
+      /** What the panel beside the document shows: Folio's chat (the default) or a note. */
+      side?: "chat" | "note";
+      /** The note open beside the document; none picked yet when null. */
+      noteId?: string | null;
+    }
+  /** The notebook: every note, or one course's, with one open beside the list. */
+  | { view: "notes"; noteId: string | null; courseId: string | null }
   /** A course's study notes, open at "topic:<slug>", "session:<slug>", or the first session. */
   | { view: "study"; courseId: string; item: string | null }
   | { view: "chat"; chatId: string | null; courseId: string | null };
@@ -130,6 +144,10 @@ class FolioState {
   trash = $state<TrashEntryView[]>([]);
   settingsOpen = $state(false);
   paletteOpen = $state(false);
+  /** The ⌘O note switcher. */
+  switcherOpen = $state(false);
+  /** A note just created, which opens with its title selected. */
+  freshNoteId: string | null = null;
   newCourseOpen = $state(false);
   sidebarOpen = $state(true);
   theme = $state<ThemePreference>("light");
@@ -139,6 +157,8 @@ class FolioState {
   courses = $state<CourseView[]>([]);
   documents = $state<DocumentView[]>([]);
   notes = $state<NoteView[]>([]);
+  /** Notes pinned to the top of the notebook and to the sidebar, on this device. */
+  pinnedNotes = $state<string[]>(this.#savedPins());
   assignments = $state<AssignmentView[]>([]);
   /** Background jobs, newest first; each carries its agent tree. */
   jobs = $state<JobView[]>([]);
@@ -205,6 +225,24 @@ class FolioState {
   }
 
   // ── Lookups ─────────────────────────────────────────────────────────────
+
+  /** The course the open place belongs to, if any: where a new note or chat would go. */
+  get currentCourseId(): string | null {
+    const location = this.location;
+    switch (location.view) {
+      case "course":
+      case "study":
+        return location.courseId;
+      case "chat":
+        return location.courseId;
+      case "notes":
+        return location.courseId ?? this.note(location.noteId)?.courseId ?? null;
+      case "document":
+        return this.document(location.documentId)?.courseId ?? null;
+      default:
+        return null;
+    }
+  }
 
   course(id: string | null | undefined): CourseView | undefined {
     return id ? this.courses.find((course) => course.id === id) : undefined;
@@ -321,14 +359,49 @@ class FolioState {
     this.jump = { documentId, page, nonce: ++this.#nonce };
   }
 
-  /** Opens a note, reusing a tab that already shows it. */
-  openNote(noteId: string, options: { newTab?: boolean } = {}): void {
-    const existing = this.tabs.find((tab) => {
-      const location = tab.history[tab.index];
-      return location?.view === "note" && location.noteId === noteId;
-    });
-    if (existing && !options.newTab) this.selectTab(existing.id);
-    else this.navigate({ view: "note", noteId }, options);
+  /**
+   * Opens a note in the notebook, reusing a tab that already shows the notebook. Its course
+   * filter stays when the note belongs to that course.
+   */
+  openNote(noteId: string, options: { newTab?: boolean; courseId?: string | null } = {}): void {
+    const courseOf = this.note(noteId)?.courseId ?? null;
+    const existing = options.newTab
+      ? undefined
+      : (this.tabs.find(
+          (tab) => tab.id === this.activeTabId && tab.history[tab.index]?.view === "notes",
+        ) ?? this.tabs.find((tab) => tab.history[tab.index]?.view === "notes"));
+    const shown = existing?.history[existing.index];
+    const filter =
+      options.courseId !== undefined
+        ? options.courseId
+        : shown?.view === "notes" && shown.courseId === courseOf
+          ? courseOf
+          : null;
+    if (existing) {
+      this.selectTab(existing.id);
+      if (shown?.view === "notes" && shown.noteId === noteId && shown.courseId === filter) return;
+    }
+    this.navigate({ view: "notes", noteId, courseId: filter }, { newTab: options.newTab });
+  }
+
+  togglePin(noteId: string): void {
+    this.pinnedNotes = this.pinnedNotes.includes(noteId)
+      ? this.pinnedNotes.filter((id) => id !== noteId)
+      : [noteId, ...this.pinnedNotes];
+    try {
+      localStorage.setItem("folio.pinnedNotes", JSON.stringify(this.pinnedNotes));
+    } catch {
+      // A per-device convenience; pins last until Folio closes.
+    }
+  }
+
+  #savedPins(): string[] {
+    try {
+      const saved: unknown = JSON.parse(localStorage.getItem("folio.pinnedNotes") ?? "[]");
+      return Array.isArray(saved) ? saved.filter((id) => typeof id === "string") : [];
+    } catch {
+      return [];
+    }
   }
 
   /** Opens a course's study notes at a topic or session, reusing a tab that shows them. */
@@ -580,9 +653,17 @@ class FolioState {
     const title = this.note(id)?.title ?? "the note";
     await this.#trash(
       async () => [await this.#api!.trashNote(id)],
-      (location) => location.view === "note" && location.noteId === id,
+      () => false,
       `“${title}”`,
     );
+    // The notebook stays open, with nothing selected where the note was.
+    for (const tab of this.tabs)
+      tab.history = tab.history.map((location) =>
+        location.view === "notes" && location.noteId === id
+          ? { ...location, noteId: null }
+          : location,
+      );
+    this.#changed();
   }
 
   async trashChat(id: string): Promise<void> {
@@ -618,7 +699,8 @@ class FolioState {
             if ("courseId" in location && location.courseId === id) return true;
             if (location.view === "document")
               return this.document(location.documentId)?.courseId === id;
-            if (location.view === "note") return this.note(location.noteId)?.courseId === id;
+            if (location.view === "notes" && location.noteId)
+              return this.note(location.noteId)?.courseId === id;
             return false;
           },
           course.name,
@@ -711,13 +793,22 @@ class FolioState {
     courseId: string,
     title: string,
     kind?: AssignmentView["kind"],
+    /** Quick-add from a column or a day: the card starts there. */
+    start: { status?: AssignmentView["status"]; dueAt?: string } = {},
   ): Promise<AssignmentView | null> {
     try {
-      const created = await this.#api!.createAssignment({
+      let created = await this.#api!.createAssignment({
         courseId,
         title,
         ...(kind ? { kind } : {}),
+        ...(start.dueAt ? { dueAt: start.dueAt } : {}),
       });
+      if (start.status && start.status !== created.status)
+        created = await this.#api!.updateAssignment(
+          created.id,
+          { status: start.status },
+          created.revision,
+        );
       await this.refreshLibrary();
       return created;
     } catch (error) {
@@ -862,25 +953,92 @@ class FolioState {
     try {
       const note = await this.#api!.createNote(courseId, title);
       await this.refreshLibrary();
+      // An untitled note opens with its title selected; a named one is already named.
+      if (title === "Untitled note") this.freshNoteId = note.id;
       this.openNote(note.id);
     } catch (error) {
       this.error = message(error);
     }
   }
 
-  /**
-   * Adds a cited passage below the course's most recently edited note, or a new note named
-   * after the document. The student chose to quote it; Folio does not.
-   */
-  async quoteToNotes(courseId: string, passage: { text: string; source: string }, about: string) {
+  /** The note citing a document that changed last: the one to keep writing beside it. */
+  noteCiting(documentId: string): NoteView | undefined {
+    return this.notes
+      .filter((note) => note.cites.includes(documentId))
+      .sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""))[0];
+  }
+
+  /** A page citation as a note writes it, read as "Lecture 3 · p. 12". */
+  citation(documentId: string, page: number): string {
+    const document = this.document(documentId);
+    const title = document
+      ? shortTitle(document.title, this.course(document.courseId)?.name)
+      : "Document";
+    return citationLink(documentId, page, `${title} · p. ${page}`);
+  }
+
+  /** Starts a note for writing beside a document, named after it, without leaving the page. */
+  async createNoteBeside(documentId: string): Promise<string | null> {
+    const document = this.document(documentId);
+    if (!document) return null;
     try {
-      let note = this.notes
-        .filter((candidate) => candidate.courseId === courseId)
-        .sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""))[0];
-      note ??= await this.#api!.createNote(courseId, `Notes on ${about}`);
-      await this.#api!.appendToNote(note.id, `> ${passage.text}\n> (${passage.source})`);
+      const title = shortTitle(document.title, this.course(document.courseId)?.name);
+      const note = await this.#api!.createNote(document.courseId, `Notes on ${title}`);
       await this.refreshLibrary();
-      this.notice = `Quoted to “${note.title}”`;
+      return note.id;
+    } catch (error) {
+      this.error = message(error);
+      return null;
+    }
+  }
+
+  /**
+   * Saves a tutor's reply into a note, with a line saying which chat it came from and the
+   * pages it cited: into a new note named after it, or at the end of `noteId`. The student
+   * chose to save it; Undo takes it back out while the note is still as it left it.
+   */
+  async saveToNote(
+    answer: { text: string; sources?: SourceView[] },
+    chat: { id: string | null; title: string },
+    target: { courseId: string; noteId: string | null },
+  ): Promise<void> {
+    const cited = (answer.sources ?? [])
+      .filter((source) => this.document(source.documentId))
+      .slice(0, 6)
+      .map((source) => this.citation(source.documentId, source.page));
+    const from = chat.id
+      ? `From [[chat:${chat.id}|${chat.title.replace(/[[\]|\n]+/g, " ").trim() || "a chat"}]]`
+      : "From a chat";
+    const text = `${answer.text.trim()}\n\n${[from, ...cited].join(" · ")}`;
+    try {
+      if (!target.noteId) {
+        const heading = /^#{1,3}\s+(.+)$/m.exec(answer.text)?.[1]?.trim();
+        const note = await this.#api!.createNote(
+          target.courseId,
+          heading || chat.title || "Saved answer",
+        );
+        await this.#api!.appendToNote(note.id, text);
+        await this.refreshLibrary();
+        this.notice = `Saved to a new note, “${note.title}”`;
+        this.noticeAction = { label: "Open", run: () => this.openNote(note.id) };
+        return;
+      }
+      const before = await this.#api!.readNote(target.noteId);
+      const after = await this.#api!.appendToNote(target.noteId, text);
+      await this.refreshLibrary();
+      this.notice = `Saved to “${after.title}”`;
+      this.noticeAction = {
+        label: "Undo",
+        run: async () => {
+          try {
+            await this.#api!.saveNote(after.id, before.content, after.revision);
+            this.notice = `Took it back out of “${after.title}”`;
+          } catch {
+            this.error = "The note changed since. Open its History to go back further.";
+          }
+          await this.refreshLibrary();
+        },
+      };
     } catch (error) {
       this.error = message(error);
     }
@@ -1116,6 +1274,13 @@ class FolioState {
     if (!location || typeof location !== "object") return null;
     // Practice was a placeholder place until 2026-10-29; a tab saved on it reopens at Home.
     if ((location as { view: unknown }).view === "practice") return HOME;
+    // A note opened alone until 2026-10-29; it reopens in the notebook.
+    if ((location as { view: unknown }).view === "note")
+      return {
+        view: "notes",
+        noteId: this.note((location as { noteId?: string }).noteId)?.id ?? null,
+        courseId: null,
+      };
     switch (location.view) {
       case "home":
       case "library":
@@ -1140,10 +1305,16 @@ class FolioState {
           page: Math.min(Math.max(1, Number(location.page) || 1), document.pages ?? 1),
           panel: ["docked", "full", "closed"].includes(location.panel) ? location.panel : "docked",
           chatId,
+          side: location.side === "note" ? "note" : "chat",
+          noteId: this.note(location.noteId)?.id ?? null,
         };
       }
-      case "note":
-        return this.note(location.noteId) ? { view: "note", noteId: location.noteId } : null;
+      case "notes":
+        return {
+          view: "notes",
+          noteId: this.note(location.noteId)?.id ?? null,
+          courseId: this.course(location.courseId)?.id ?? null,
+        };
       case "study":
         return this.course(location.courseId)
           ? {
@@ -1168,6 +1339,7 @@ class FolioState {
   #changed(): void {
     clearTimeout(this.#saveTimer);
     this.#saveTimer = setTimeout(() => {
+      this.#noteReading();
       const state = {
         version: 1,
         tabs: this.tabs.map((tab) => ({ id: tab.id, location: tab.history[tab.index] })),
@@ -1176,6 +1348,41 @@ class FolioState {
       };
       void this.#api?.saveWorkspace($state.snapshot(state)).catch(() => undefined);
     }, 400);
+  }
+
+  /** Where the student last read each document, on this device: what "Pick up" resumes. */
+  reading = $state<Record<string, { page: number; at: string }>>(this.#savedReading());
+
+  /** Records the open document's page once the student settles on it. */
+  #noteReading(): void {
+    const location = this.location;
+    if (location.view !== "document") return;
+    const last = this.reading[location.documentId];
+    if (last?.page === location.page && Date.now() - Date.parse(last.at) < 60_000) return;
+    this.reading[location.documentId] = { page: location.page, at: new Date().toISOString() };
+    // Only the most recent documents are kept.
+    const kept = Object.entries(this.reading)
+      .sort(([, a], [, b]) => b.at.localeCompare(a.at))
+      .slice(0, 200);
+    try {
+      localStorage.setItem("folio.reading", JSON.stringify(Object.fromEntries(kept)));
+    } catch {
+      // A per-device convenience.
+    }
+  }
+
+  #savedReading(): Record<string, { page: number; at: string }> {
+    try {
+      const saved: unknown = JSON.parse(localStorage.getItem("folio.reading") ?? "{}");
+      if (!saved || typeof saved !== "object") return {};
+      return Object.fromEntries(
+        Object.entries(saved).filter(
+          ([, value]) => typeof value?.page === "number" && typeof value?.at === "string",
+        ),
+      ) as Record<string, { page: number; at: string }>;
+    } catch {
+      return {};
+    }
   }
 
   persistLayout(): void {

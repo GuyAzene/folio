@@ -9,9 +9,11 @@
   } from "@lucide/svelte";
   import { DropdownMenu } from "bits-ui";
   import ChatList from "../components/ChatList.svelte";
+  import CourseOverview from "../components/CourseOverview.svelte";
   import Composer from "../components/Composer.svelte";
   import CourseTile from "../components/CourseTile.svelte";
   import DocumentTable from "../components/DocumentTable.svelte";
+  import NoteRow from "../components/NoteRow.svelte";
   import StudyNotesList from "../components/StudyNotesList.svelte";
   import { COURSE_TABS, MATERIAL_SECTIONS } from "../lib/course-tabs.ts";
   import { formatDate } from "../lib/labels.ts";
@@ -23,7 +25,7 @@
     tab,
   }: { tabId: string; courseId: string; tab: CourseTab } = $props();
   let dragging = $state(0);
-  let ask = $state<Composer>();
+  let composer = $state<Composer>();
 
   const course = $derived(folio.course(courseId));
   const documents = $derived(
@@ -54,6 +56,7 @@
     course ? [course.code, course.term].filter(Boolean).join(" · ") : "",
   );
   const counts = $derived<Record<CourseTab, number>>({
+    overview: 0,
     materials: documents.length,
     study: knowledge?.pages ?? 0,
     notes: notes.length,
@@ -65,7 +68,7 @@
     const files = [...(event.dataTransfer?.files ?? [])];
     // Images join the question in the ask box; PDFs and Markdown are added to the course.
     const images = files.filter((file) => file.type.startsWith("image/"));
-    if (images.length) void ask?.addImages(images);
+    if (images.length) void composer?.addImages(images);
     const paths = files
       .filter((file) => !file.type.startsWith("image/"))
       .map((file) => folio.api.pathForFile(file))
@@ -185,21 +188,8 @@
         </div>
       </div>
 
-      <div class="mt-7">
-        <Composer
-          bind:this={ask}
-          {tabId}
-          chatId={null}
-          {courseId}
-          slim
-          placeholder="Ask about {course.name}…"
-          onbeforesend={() =>
-            folio.navigate({ view: "chat", chatId: null, courseId })}
-        />
-      </div>
-
       <div
-        class="mt-8 flex items-end gap-6 overflow-x-auto border-b border-line-subtle [scrollbar-width:none]"
+        class="mt-7 flex items-end gap-6 overflow-x-auto border-b border-line-subtle [scrollbar-width:none]"
         role="tablist"
       >
         {#each COURSE_TABS as candidate (candidate.tab)}
@@ -213,54 +203,49 @@
             onclick={() => folio.update({ tab: candidate.tab })}
           >
             {candidate.label}
-            <span class="text-[12px] font-normal text-text-3"
-              >{counts[candidate.tab]}</span
-            >
+            {#if candidate.tab !== "overview"}
+              <span class="text-[12px] font-normal text-text-3"
+                >{counts[candidate.tab]}</span
+              >
+            {/if}
           </button>
         {/each}
       </div>
 
       <div class="mt-6">
-        {#if tab === "study"}
+        {#if tab === "overview"}
+          <CourseOverview
+            {courseId}
+            ontab={(next) => folio.update({ tab: next })}
+          >
+            {#snippet ask()}
+              <Composer
+                bind:this={composer}
+                {tabId}
+                chatId={null}
+                {courseId}
+                slim
+                placeholder="Ask about {course.name}…"
+                onbeforesend={() =>
+                  folio.navigate({ view: "chat", chatId: null, courseId })}
+              />
+            {/snippet}
+          </CourseOverview>
+        {:else if tab === "study"}
           <StudyNotesList {courseId} />
         {:else if tab === "notes"}
           {#if notes.length}
-            <div class="flex flex-col">
+            <div class="-mx-3 flex flex-col">
               {#each notes as note (note.id)}
-                <div
-                  class="group -mx-2 flex h-10 items-center rounded-md hover:bg-hover"
-                >
-                  <button
-                    class="flex h-10 min-w-0 flex-1 items-center gap-3 px-2 text-left"
-                    onclick={(event) =>
-                      folio.openNote(note.id, {
-                        newTab: event.metaKey || event.ctrlKey,
-                      })}
-                  >
-                    <NotebookPen
-                      size={15}
-                      strokeWidth={1.75}
-                      class="shrink-0 text-text-3"
-                    />
-                    <span
-                      class="min-w-0 flex-1 truncate font-medium text-text"
-                      dir="auto">{note.title}</span
-                    >
-                    <span class="text-[12px] text-text-3"
-                      >{formatDate(note.updatedAt)}</span
-                    >
-                  </button>
-                  <button
-                    type="button"
-                    class="mr-1 flex size-7 shrink-0 items-center justify-center rounded-md text-text-4 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-press hover:text-danger focus-visible:opacity-100"
-                    title="Move to Trash"
-                    aria-label="Move {note.title} to Trash"
-                    onclick={() => folio.trashNote(note.id)}
-                  >
-                    <Trash2 size={14} strokeWidth={1.75} />
-                  </button>
-                </div>
+                <NoteRow
+                  {note}
+                  showCourse={false}
+                  onopen={(newTab) => folio.openNote(note.id, { newTab, courseId })}
+                  ontag={() => folio.openNote(note.id, { courseId })}
+                />
               {/each}
+            </div>
+            <div class="flex flex-col">
               {@render addRow("New note", () => folio.createNote(courseId))}
             </div>
           {:else}

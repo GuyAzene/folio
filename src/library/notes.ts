@@ -14,6 +14,7 @@ import {
   type NoteHistoryEntry,
 } from "../notes.ts";
 import { checkId, LibraryError, type LibraryStore } from "./store.ts";
+import { linkFirstMention, matchNote, type Mention, mentionsOf } from "./note-meta.ts";
 
 export interface CourseNote extends NoteFile {
   id: string;
@@ -238,6 +239,47 @@ export class CourseNotes {
           relinked.push(await this.save(other.id, next, other.revision, author));
       }
     return { note, relinked };
+  }
+
+  /** Notes matching a search, best first, then most recently changed. */
+  async search(query: string, courseId?: string): Promise<{ note: CourseNote; snippet: string }[]> {
+    const found = (await this.list(courseId)).flatMap((note) => {
+      const match = matchNote(note.content, note.title, query);
+      return match ? [{ note, ...match }] : [];
+    });
+    return found
+      .sort(
+        (a, b) =>
+          b.score - a.score || (b.note.updatedAt ?? "").localeCompare(a.note.updatedAt ?? ""),
+      )
+      .map(({ note, snippet }) => ({ note, snippet }));
+  }
+
+  /** The course's other notes that link to this one or name it in plain text. */
+  async mentions(
+    noteId: string,
+  ): Promise<{ note: CourseNote; linked: Mention[]; unlinked: Mention[] }[]> {
+    const target = await this.read(noteId);
+    return (await this.list(target.courseId)).flatMap((note) => {
+      if (note.id === noteId) return [];
+      const found = mentionsOf(note.content, target.title);
+      return found.linked.length || found.unlinked.length ? [{ note, ...found }] : [];
+    });
+  }
+
+  /** Links the first plain mention of `targetId`'s title in `sourceId`, from `expectedRevision`. */
+  async linkMention(
+    sourceId: string,
+    targetId: string,
+    expectedRevision: string,
+  ): Promise<CourseNote> {
+    const [source, target] = await Promise.all([this.read(sourceId), this.read(targetId)]);
+    if (source.courseId !== target.courseId)
+      throw new LibraryError("Notes link only within their course.");
+    const next = linkFirstMention(source.content, target.title);
+    if (next === null)
+      throw new LibraryError(`“${source.title}” no longer mentions “${target.title}”.`);
+    return this.save(sourceId, next, expectedRevision);
   }
 
   /** Adds text at the end of the note as it is now; nothing already there is replaced. */

@@ -170,11 +170,20 @@ export interface TopicModel {
 }
 
 export const JUDGE_SYSTEM = [
-  "You compare topics from the study notes of one university course, written from different lectures and recitations, and say how each pair relates.",
-  'Answer "same" only when both describe one and the same concept or technique, even under different names, notation or languages (a Hebrew and an English name for one thing are the same).',
-  'Answer "part_of" when the first is a part, special case or step of the second; "related" when they are different things that are taught together; "different" otherwise.',
+  "You compare topics from the study notes of one university course, written from different lectures and recitations, and decide which belong on one study page.",
+  'Answer "same" when a student would look for both on one page: the same concept or technique under different names, notation or languages (a Hebrew and an English name for one thing are the same), or two pages that mostly teach the same material, such as a problem and its membership proof, or a definition and the class it defines. Duplicate pages are worse than a slightly broader one.',
+  'Answer "part_of" only when the first is a distinct part or special case of the second that deserves a page of its own; "related" only for a strong teaching link, where knowing one is needed to follow the other; "different" otherwise. Most pairs that are not the same are different.',
   "Judge only from what is given.",
 ].join("\n");
+
+/**
+ * Raised when the merging rules change, so courses grouped under older rules are grouped again
+ * once. 2 (2026-10-29): clear overlaps merge; links are kept to a few per topic.
+ */
+export const TOPIC_POLICY = 2;
+
+/** At most this many links per topic, its parts and wholes first. */
+const MAX_LINKS = 4;
 
 export const judgeSchema = Type.Object({
   pairs: Type.Array(
@@ -360,13 +369,16 @@ export function finishKnowledge(knowledge: Knowledge): Knowledge {
       if (slug !== page.slug && slugs.has(slug) && !related.has(slug))
         related.set(slug, { ...link, slug });
     }
+    const links = [...related.values()].sort(
+      (a, b) => Number(a.relation === "related") - Number(b.relation === "related"),
+    );
     return {
       ...page,
       introducedIn: sessions[0] ?? page.introducedIn,
       prerequisites: [
         ...new Set(page.prerequisites.map(resolve).filter((slug) => slug !== page.slug)),
       ],
-      related: [...related.values()],
+      related: links.slice(0, MAX_LINKS),
       blocks: page.blocks.map((block) => ({ ...block, kind: block.kind ?? "explanation" })),
       ...(page.overview && page.overview.basis === handles.join(",")
         ? { overview: page.overview }
@@ -456,10 +468,10 @@ export async function settleTopics(
   index: KnowledgeIndex | null,
   model: TopicModel | undefined,
   slugs: string[],
-): Promise<{ knowledge: Knowledge; merged: string[] }> {
+): Promise<{ knowledge: Knowledge; merged: { from: string; into: string }[] }> {
   let next = finishKnowledge(knowledge);
   if (!model) return { knowledge: next, merged: [] };
-  const before = new Set(next.pages.map((page) => page.slug));
+  const titles = new Map(next.pages.map((page) => [page.slug, page.title]));
   try {
     const pairs = duplicateCandidates(next, index, slugs);
     if (pairs.length) next = applyRelations(next, await model.judge(next, pairs));
@@ -473,10 +485,16 @@ export async function settleTopics(
     console.error("Folio could not write topic overviews:", error);
   }
   next = finishKnowledge(next);
-  return {
-    knowledge: next,
-    merged: [...before].filter((slug) => !next.pages.some((page) => page.slug === slug)),
-  };
+  const live = new Map(next.pages.map((page) => [page.slug, page.title]));
+  // What merged, by title: each topic that is gone, and the topic it became part of.
+  const merged = [...titles]
+    .filter(([slug]) => !live.has(slug))
+    .map(([slug, from]) => {
+      let into = slug;
+      for (let hops = 0; next.redirects?.[into] && hops < 20; hops++) into = next.redirects[into]!;
+      return { from, into: live.get(into) ?? from };
+    });
+  return { knowledge: next, merged };
 }
 
 /** Lints a knowledge before it is published: every block in one session, every link live. */

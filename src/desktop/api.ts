@@ -159,6 +159,28 @@ export interface NoteView {
   /** Pass back when saving; a different revision on disk means it changed elsewhere. */
   revision: string;
   updatedAt: string | null;
+  /** The text after the title, on one line, for a list. */
+  preview: string;
+  tags: string[];
+  /** Titles of the notes it links to. */
+  links: string[];
+  /** Documents it cites a page of. */
+  cites: string[];
+}
+
+/** A note that matches a search, with the line that matched. */
+export interface NoteHitView {
+  noteId: string;
+  snippet: string;
+}
+
+/** Another note that mentions this one: lines that link to it, and lines that only name it. */
+export interface NoteMentionsView {
+  noteId: string;
+  title: string;
+  revision: string;
+  linked: { line: number; text: string }[];
+  unlinked: { line: number; text: string }[];
 }
 
 export interface NoteContent {
@@ -536,6 +558,12 @@ export interface FolioApi {
   saveNote(id: string, content: string, revision: string): Promise<NoteView>;
   /** Adds text at the end of the note as it is now. */
   appendToNote(id: string, text: string): Promise<NoteView>;
+  /** Notes whose title or text has every word of the query, best first. */
+  searchNotes(query: string, courseId?: string | null): Promise<NoteHitView[]>;
+  /** The course's other notes that link to this note or name it. */
+  noteMentions(id: string): Promise<NoteMentionsView[]>;
+  /** Links the first plain mention of `target` in `source`; refused when `source` changed. */
+  linkMention(source: string, target: string, revision: string): Promise<NoteView>;
   /** The note's kept earlier versions, newest first. */
   noteHistory(id: string): Promise<NoteVersionView[]>;
   listAssignments(): Promise<AssignmentView[]>;

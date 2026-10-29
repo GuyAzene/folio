@@ -22,9 +22,12 @@ void describe("the assignments board", () => {
     const app = await launch(seeded.home);
     running.push(app);
     const { page } = app;
-    await page.getByRole("button", { name: LONG.assignment, exact: true }).waitFor();
-    await page.getByRole("button", { name: `Move ${LONG.assignment}` }).click();
-    await page.getByRole("menuitem", { name: "Doing" }).click();
+    await page.getByRole("button", { name: `${LONG.assignment}, To do` }).waitFor();
+    // The card's status icon is the control: open it and pick Doing.
+    await page
+      .getByRole("button", { name: `Status: To do. Change the status of ${LONG.assignment}` })
+      .click();
+    await page.getByRole("menuitem", { name: /Doing/ }).click();
     const library = await LibraryStore.open({ home: seeded.home });
     for (let waited = 0; waited < 5_000; waited += 100) {
       if ((await library.listAssignments())[0]?.status === "doing") break;
@@ -33,7 +36,16 @@ void describe("the assignments board", () => {
     const [record] = await library.listAssignments();
     assert.equal(record?.status, "doing");
     assert.equal(record?.documents.statement, seeded.assignmentId);
-    await page.getByRole("button", { name: LONG.assignment, exact: true }).click();
+    // The keyboard moves it on: 3 is Submitted.
+    const card = page.locator(`[data-card="${record!.id}"]`);
+    await card.focus();
+    await page.keyboard.press("3");
+    for (let waited = 0; waited < 5_000; waited += 100) {
+      if ((await library.listAssignments())[0]?.status === "submitted") break;
+      await page.waitForTimeout(100);
+    }
+    assert.equal((await library.listAssignments())[0]?.status, "submitted");
+    await card.press("Enter");
     await page.getByRole("button", { name: "Add what you handed in" }).waitFor();
   });
 });

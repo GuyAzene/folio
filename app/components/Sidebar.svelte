@@ -6,7 +6,6 @@
     ListChecks,
     MessagesSquare,
     NotebookPen,
-    PanelLeft,
     Plus,
     Search,
     Settings,
@@ -14,12 +13,12 @@
     SquarePen,
   } from "@lucide/svelte";
   import type { Component } from "svelte";
+  import { PENCIL } from "../lib/labels.ts";
   import { folio, type Location } from "../lib/state.svelte.ts";
   import AppMark from "./AppMark.svelte";
   import CourseTile from "./CourseTile.svelte";
   import IconButton from "./IconButton.svelte";
 
-  let { onhide }: { onhide: () => void } = $props();
 
   const here = $derived(folio.location);
 
@@ -40,6 +39,7 @@
       [
         { view: "home", label: "Home", icon: House },
         { view: "chats", label: "Chats", icon: MessagesSquare },
+        { view: "notes", label: "Notes", icon: NotebookPen },
         { view: "library", label: "Library", icon: BookOpen },
         { view: "assignments", label: "Assignments", icon: ListChecks },
         { view: "jobs", label: "Studying", icon: Highlighter },
@@ -51,11 +51,9 @@
       ? here.courseId
       : here.view === "document"
         ? (folio.document(here.documentId)?.courseId ?? null)
-        : here.view === "note"
-          ? (folio.note(here.noteId)?.courseId ?? null)
-          : here.view === "chat"
-            ? here.courseId
-            : null,
+        : here.view === "chat"
+          ? here.courseId
+          : null,
   );
   /** Work still to hand in within a week, from the board's records. */
   const dueSoon = $derived(
@@ -84,24 +82,30 @@
     ),
   );
 
+  /** Pinned notes that are still in the library, in the order they were pinned. */
+  const pinned = $derived(
+    folio.pinnedNotes.flatMap((id) => {
+      const note = folio.note(id);
+      return note ? [note] : [];
+    }),
+  );
+  const shownNoteId = $derived(here.view === "notes" ? here.noteId : null);
+
   function go(location: Location, event: MouseEvent): void {
     folio.navigate(location, { newTab: event.metaKey || event.ctrlKey });
   }
 </script>
 
 <aside class="flex h-full w-[260px] flex-col select-none">
+  <!-- The sidebar button itself is pinned by the window controls (App), so it never moves. -->
   <div
-    class="drag flex h-12 shrink-0 items-center gap-2 pr-2.5 {folio.platform ===
+    class="drag flex h-[61px] shrink-0 items-center gap-2 pr-2.5 {folio.platform ===
     'darwin'
-      ? 'pl-[84px]'
-      : 'pl-4'}"
+      ? 'pl-[118px]'
+      : 'pl-12'}"
   >
     <AppMark size={18} />
     <span class="text-[13px] font-semibold tracking-[-0.01em]">Folio</span>
-    <span class="flex-1"></span>
-    <IconButton label="Hide sidebar" shortcut="⌘\" onclick={onhide}>
-      <PanelLeft size={16} strokeWidth={1.75} />
-    </IconButton>
   </div>
 
   <div class="flex gap-1.5 px-2.5 pt-1">
@@ -130,7 +134,13 @@
         class="flex h-8 w-full items-center gap-2.5 rounded-md border px-2 transition-colors duration-150 {active
           ? 'border-line-subtle bg-selected text-text shadow-1'
           : 'border-transparent text-text-2 hover:bg-hover hover:text-text'}"
-        onclick={(event) => go({ view: place.view } as Location, event)}
+        onclick={(event) =>
+          go(
+            place.view === "notes"
+              ? { view: "notes", noteId: null, courseId: null }
+              : ({ view: place.view } as Location),
+            event,
+          )}
       >
         <place.icon size={15} strokeWidth={1.75} class="shrink-0" />
         <span class="min-w-0 flex-1 truncate text-left font-medium"
@@ -195,6 +205,36 @@
       {/each}
     {/if}
 
+    {#if pinned.length}
+      <div class="mt-5 flex h-6 items-center px-2">
+        <span
+          class="flex-1 text-[11px] font-medium tracking-[0.06em] text-text-3 uppercase"
+          >Pinned</span
+        >
+      </div>
+      {#each pinned as note (note.id)}
+        {@const course = folio.course(note.courseId)}
+        <button
+          class="flex h-8 w-full items-center gap-2.5 rounded-md border px-2 transition-colors duration-150 {note.id ===
+          shownNoteId
+            ? 'border-line-subtle bg-selected text-text shadow-1'
+            : 'border-transparent text-text-2 hover:bg-hover hover:text-text'}"
+          onclick={(event) =>
+            folio.openNote(note.id, { newTab: event.metaKey || event.ctrlKey })}
+        >
+          <span class="flex size-[18px] shrink-0 items-center justify-center">
+            <span
+              class="size-2 rounded-full"
+              style:background={course ? PENCIL[course.color] : "var(--text-4)"}
+            ></span>
+          </span>
+          <span class="min-w-0 flex-1 truncate text-left" dir="auto"
+            >{note.title}</span
+          >
+        </button>
+      {/each}
+    {/if}
+
     <div class="mt-5 flex h-6 items-center px-2">
       <span
         class="flex-1 text-[11px] font-medium tracking-[0.06em] text-text-3 uppercase"
@@ -216,7 +256,7 @@
           ? 'border-line-subtle bg-selected text-text shadow-1'
           : 'border-transparent text-text-2 hover:bg-hover hover:text-text'}"
         onclick={(event) =>
-          go({ view: "course", courseId: course.id, tab: "materials" }, event)}
+          go({ view: "course", courseId: course.id, tab: "overview" }, event)}
       >
         <CourseTile {course} />
         <span class="min-w-0 flex-1 truncate text-left font-medium" dir="auto"
