@@ -24,6 +24,7 @@
   import FolioMark from "./FolioMark.svelte";
   import ProposalCard from "./ProposalCard.svelte";
   import NoteEditCard from "./NoteEditCard.svelte";
+  import SourceList from "./SourceList.svelte";
   import VisualCard from "./VisualCard.svelte";
 
   /**
@@ -358,23 +359,7 @@
       </div>
     {/if}
     {#if message.sources?.length}
-      <div class="flex flex-wrap gap-1.5">
-        {#each message.sources as source (`${source.documentId}:${source.page}`)}
-          {@const cited = folio.document(source.documentId)}
-          <button
-            class="inline-flex h-6 max-w-full items-center gap-1.5 rounded-md border border-line-subtle bg-sunken px-2 text-[12px] whitespace-nowrap text-text-2 transition-colors hover:border-line hover:text-text dark:bg-raised"
-            title="{source.title} · Page {source.page}"
-            onclick={() =>
-              folio.openDocument(source.documentId, source.page, { chatId })}
-          >
-            <FileText size={12} strokeWidth={1.75} class="shrink-0" />
-            <span class="max-w-[240px] min-w-0 truncate" dir="auto"
-              >{shortTitle(source.title, folio.course(cited?.courseId)?.name)}</span
-            >
-            <span class="shrink-0">· Page {source.page}</span>
-          </button>
-        {/each}
-      </div>
+      <SourceList sources={message.sources} {chatId} />
     {/if}
     {#if message.webSources?.length}
       <div class="flex flex-col gap-1.5">

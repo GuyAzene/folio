@@ -189,18 +189,34 @@ export function formatElapsed(ms: number): string {
   return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, "0")}m`;
 }
 
+/** Pages that follow one another, from `first` to `last`. */
+export interface PageRun {
+  first: number;
+  last: number;
+}
+
+/** Pages in order and run together: 5, 1, 2, 3, 2 is 1–3 then 5. */
+export function pageRuns(pages: number[]): PageRun[] {
+  const runs: PageRun[] = [];
+  for (const page of [...new Set(pages)].sort((a, b) => a - b)) {
+    const run = runs.at(-1);
+    if (run && page === run.last + 1) run.last = page;
+    else runs.push({ first: page, last: page });
+  }
+  return runs;
+}
+
+/** "8" or "9–12". */
+export function runLabel(run: PageRun): string {
+  return run.first === run.last ? String(run.first) : `${run.first}–${run.last}`;
+}
+
 /** "Page 8", "Pages 1–3", "Pages 1–2, 5". */
 export function formatPages(pages: number[]): string {
-  if (!pages.length) return "";
-  const sorted = [...new Set(pages)].sort((a, b) => a - b);
-  const ranges: string[] = [];
-  for (let start = 0; start < sorted.length;) {
-    let end = start;
-    while (end + 1 < sorted.length && sorted[end + 1] === sorted[end]! + 1) end++;
-    ranges.push(end > start ? `${sorted[start]}–${sorted[end]}` : String(sorted[start]));
-    start = end + 1;
-  }
-  return `${sorted.length === 1 ? "Page" : "Pages"} ${ranges.join(", ")}`;
+  const runs = pageRuns(pages);
+  if (!runs.length) return "";
+  const one = runs.length === 1 && runs[0]!.first === runs[0]!.last;
+  return `${one ? "Page" : "Pages"} ${runs.map(runLabel).join(", ")}`;
 }
 
 // ── Assignments ───────────────────────────────────────────────────────────

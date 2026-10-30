@@ -205,6 +205,60 @@ const chats = new Map<string, ChatView>([
       ],
     },
   ],
+  [
+    id(33),
+    {
+      id: id(33),
+      kind: "course",
+      title: "A topic map for week 1",
+      status: "idle",
+      model: "chatgpt/gpt-6.1-sol",
+      updatedAt: ago(0.5),
+      courseId: id(1),
+      focus: null,
+      reads: { courses: [], documents: [] },
+      messages: [
+        {
+          role: "user",
+          text: "I missed week 1. Can you plan a topic map for it, and we'll tackle each topic?",
+          state: "complete",
+        },
+        {
+          role: "assistant",
+          text: [
+            "Week 1 has four topics, each building on the one before:",
+            "",
+            "1. **Graphs and how to store them**: adjacency lists and matrices.",
+            "2. **Breadth-first search**: layers, the queue, and why each vertex enters it once.",
+            "3. **Depth-first search**: discovery and finish times.",
+            "4. **Using the traversals**: connected components and shortest paths by edge count.",
+            "",
+            "Shall we start with the first?",
+          ].join("\n"),
+          state: "complete",
+          steps: [
+            { label: "Searched the course", state: "done" },
+            { label: "Read Lecture 1 Graph traversal, 12 pages", state: "done" },
+            { label: "Read Recitation 1 BFS examples, 9 pages", state: "done" },
+            { label: "Read Lecture 1 Graph traversal, 8 pages", state: "done" },
+          ],
+          // In the order the tutor read them, as a long reply's sources arrive. The page
+          // numbers are the course's own; the preview PDFs stay 3 pages.
+          sources: (
+            [
+              [id(11), "Lecture 1 Graph traversal", [4, 6, 9, 10, 12, 11, 19, 20, 21, 22, 36, 35]],
+              [id(12), "Recitation 1 BFS examples", [28, 10, 12, 8, 9, 11]],
+              [id(11), "Lecture 1 Graph traversal", [45, 46, 50, 51, 52, 53, 49]],
+              [id(12), "Recitation 1 BFS examples", [17, 18, 19]],
+              [id(11), "Lecture 1 Graph traversal", [57]],
+            ] as const
+          ).flatMap(([documentId, title, pages]) =>
+            pages.map((page) => ({ documentId, title, page })),
+          ),
+        },
+      ],
+    },
+  ],
 ]);
 
 const notes = new Map<string, { note: NoteView; content: string }>();
