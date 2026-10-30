@@ -3,6 +3,7 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { CourseNote, ProposalRecord } from "../library/notes.ts";
 import { noteFacts } from "../library/note-meta.ts";
 import type { CourseRecord, DocumentRecord } from "../library/store.ts";
+import { refOf } from "../model-refs.ts";
 import type { SessionRecord, SessionSummary } from "../session-store.ts";
 import type {
   AttachmentView,
@@ -284,7 +285,7 @@ export function chatView(record: SessionRecord, streaming?: string): ChatView {
     kind: chatKind(record.scope),
     title: record.title,
     status: record.status,
-    modelId: record.modelId,
+    model: refOf(record.provider, record.modelId),
     updatedAt: record.updatedAt,
     courseId: "library" in record.scope ? record.scope.courseId : null,
     focus:

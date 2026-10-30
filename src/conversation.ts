@@ -16,6 +16,7 @@ import type {
 } from "@earendil-works/pi-ai";
 import { normalizeContext } from "@earendil-works/pi-ai/utils/transcript";
 import { chatTitle } from "./chat-title.ts";
+import { connectionOf, type ProviderId } from "./model-refs.ts";
 import { DEMO_PAGE_COUNT, readDemoPage, type DemoPage } from "./demo-source.ts";
 import { createChatAgent, createCourseAgent, createDemoAgent, DEFAULT_MODEL } from "./agents.ts";
 import type { SessionFocus, SessionLease, SessionRecord, SessionStore } from "./session-store.ts";
@@ -95,9 +96,12 @@ export interface OpenConversationOptions {
   ) => Promise<CourseRuntime>;
   /** Builds a library chat's tools and prompt; required to open library chats. */
   libraryRuntime?: (chatId: string) => Promise<CourseRuntime>;
+  /** Pi's provider for a new chat's model: the ChatGPT plan (`openai`) unless given. */
+  provider?: ProviderId;
   modelId?: string;
   streamFn: StreamFn;
-  resolveModel: (id: string) => Model<Api>;
+  /** A model by ID at Pi's provider, `openai` (the ChatGPT plan) unless given. */
+  resolveModel: (id: string, provider?: string) => Model<Api>;
 }
 
 /**
@@ -144,6 +148,8 @@ type SubmittedMessage = UserMessage & {
   folioFast?: true;
 };
 
+/** The providers with OpenAI's priority tier: the ChatGPT plan and the OpenAI API. */
+const OPENAI_PROVIDERS: readonly string[] = ["openai", "openai-api"];
 /** Asks OpenAI for its priority tier, which Pi's simple stream options cannot request. */
 const priorityTier = (payload: unknown) => ({ ...(payload as object), service_tier: "priority" });
 
@@ -242,21 +248,24 @@ export class Conversation {
         : await options.store.latest();
     const resumed = record !== undefined;
     if (!record) {
-      const model = options.resolveModel(options.modelId ?? DEFAULT_MODEL);
+      const provider = options.provider ?? "openai";
+      const model = options.resolveModel(options.modelId ?? DEFAULT_MODEL, provider);
       if (options.kind === "course" && !options.courseId)
         throw new Error("A course chat needs a course.");
       record = await options.store.create(
         options.kind === "chat"
-          ? { modelId: model.id, scope: { courseId: null }, focus: null }
+          ? { provider, modelId: model.id, scope: { courseId: null }, focus: null }
           : options.kind === "library"
-            ? { modelId: model.id, scope: { courseId: null, library: 1 }, focus: null }
+            ? { provider, modelId: model.id, scope: { courseId: null, library: 1 }, focus: null }
             : options.kind === "course"
               ? {
+                  provider,
                   modelId: model.id,
                   scope: { courseId: options.courseId!, library: 1 },
                   focus: options.focus ?? null,
                 }
               : {
+                  provider,
                   modelId: model.id,
                   scope: { courseId: "demo", sourceVersion: DEMO_SOURCE_VERSION },
                   focus: { page: 1 },
@@ -286,7 +295,7 @@ export class Conversation {
           "This chat's source scope or version is unavailable. Start a new chat; the saved file was preserved.",
         );
       }
-      if (record.provider !== "openai") throw new Error("This saved provider is unsupported.");
+      if (!connectionOf(record.provider)) throw new Error("This saved provider is unsupported.");
       if (options.modelId && record.modelId !== options.modelId) {
         throw new Error(
           "This chat uses a different model. Resume without --model, or use --new to choose another.",
@@ -362,7 +371,7 @@ export class Conversation {
   }
 
   #makeAgent(): Agent {
-    const model = this.#options.resolveModel(this.#record.modelId);
+    const model = this.#options.resolveModel(this.#record.modelId, this.#record.provider);
     const runtime = this.#runtime;
     const agent = runtime
       ? createCourseAgent(model, this.#options.streamFn, {
@@ -488,7 +497,8 @@ export class Conversation {
     };
     if (extras.thinking) this.#agent.state.thinkingLevel = extras.thinking;
     // Set on every question, so a fast question never leaves the next one fast.
-    this.#agent.onPayload = extras.fast ? priorityTier : undefined;
+    this.#agent.onPayload =
+      extras.fast && OPENAI_PROVIDERS.includes(this.#record.provider) ? priorityTier : undefined;
     this.#runtime?.beforeSend?.({ webSearch: extras.webSearch !== false });
     const summarize = this.#trim(input);
     if (focus !== undefined)
@@ -567,7 +577,10 @@ export class Conversation {
    * Returns whether the chat is still too long, so it should be summarized.
    */
   #trim(input: SubmittedMessage): boolean {
-    const window = this.#options.resolveModel(this.#record.modelId).contextWindow;
+    const window = this.#options.resolveModel(
+      this.#record.modelId,
+      this.#record.provider,
+    ).contextWindow;
     if (!this.#runtime || !window) return false;
     const messages = this.#agent.state.messages;
     const size = () =>
@@ -595,7 +608,7 @@ export class Conversation {
    * Folio, not by the model. Null when the request fails or the student stops the reply.
    */
   async #summary(messages: AgentMessage[]): Promise<AgentMessage | null> {
-    const model = this.#options.resolveModel(this.#record.modelId);
+    const model = this.#options.resolveModel(this.#record.modelId, this.#record.provider);
     const controller = new AbortController();
     this.#summaryAbort = controller;
     try {

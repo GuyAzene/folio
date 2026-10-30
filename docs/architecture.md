@@ -9,7 +9,7 @@ app/                          the renderer: Svelte 5, sandboxed
   │   IPC, typed in src/desktop/api.ts
   ▼
 src/desktop/main.ts           the main process
-  ├─ ChatService ─▶ Conversation ─▶ Pi agent ─▶ ChatGPT
+  ├─ ChatService ─▶ Conversation ─▶ Pi agent ─▶ ChatGPT, or a provider on a key
   ├─ LibraryStore             courses, documents, notes, Trash
   ├─ IngestRunner ─▶ KnowledgeStore    studying lectures into study notes
   └─ ~/.folio                 everything Folio keeps, on disk
@@ -22,6 +22,7 @@ src/desktop/main.ts           the main process
 | `app/` | The renderer: `views/` (Home, course, reader, notes, study notes, chats, Studying, Trash), `components/`, and `lib/` (app state, Markdown and math rendering, text direction, the note editor in `lib/editor/`). |
 | `src/desktop/` | The Electron main process, the preload bridge, the IPC contract (`api.ts`) and the chat service. |
 | `src/conversation.ts`, `src/session-store.ts`, `src/transcript.ts`, `src/agents.ts` | Conversations on Pi: saving and resuming, cancellation, leases, and what history the model sees. |
+| `src/auth.ts`, `src/connections.ts`, `src/model-refs.ts`, `src/model-choices.ts`, `src/config.ts` | Connections and models: the ChatGPT sign-in and API keys, the models each connection offers, and which model does what (`config.json`). |
 | `src/library/` | Courses and documents, PDF pages and page images, notes with their history, the Trash, the tutor's tools and teaching rules, and attachments. |
 | `src/ingest/` | Studying a lecture: page inventory, reading, drafting, reconciling and publishing study notes. |
 | `src/kb/` | Each course's knowledge base: immutable published versions, a search index and the tutor's study-note tools. |
@@ -128,9 +129,10 @@ of what it covers. Nothing saved is deleted, the summary never judges what the s
 understands, and which courses the student added is restated by Folio, not by the model. A
 summary that fails is skipped; one the student stops leaves the chat as it was.
 
-Each question carries how long the tutor thinks (Low to Max) and whether it goes on OpenAI's
-faster priority tier, which uses more of the plan; both are recorded on the question and apply
-to it alone, so a fast question never leaves the next one fast. Models the plan serves before
+Each question carries how long the tutor thinks (Low to Max; Pi brings a level a model lacks to
+its nearest one) and whether it goes on OpenAI's faster priority tier, which costs more and exists
+only for OpenAI's models; both are recorded on the question and apply to it alone, so a fast
+question never leaves the next one fast. Models the plan serves before
 Pi's catalog lists them (GPT-6.1 Terra) are declared in `src/model-catalog.ts` as copies of a
 listed sibling, and Pi's own entry replaces the declaration once it ships.
 
@@ -139,8 +141,10 @@ listed sibling, and Pi's own entry replaces the declaration once it ships.
 Course and library chats can search the web with `search_web`, when the student asks or wants
 more than the course material gives. The course comes first: the web never changes its notation
 or definitions, and what comes from the web is labelled and linked. Each search is its own
-request through the same connection (GPT-6.1 Terra with OpenAI's hosted web search), carrying a
-fixed instruction and the query and nothing else: no chat, course material, notes or Folio tools,
+request on the research model (GPT-6.1 Terra unless the student sets another) with its
+provider's hosted search: OpenAI's web search, Anthropic's web search tool, Grounding with Google
+Search, or OpenRouter's web plugin. It carries a fixed instruction and the query and nothing
+else: no chat, course material, notes or Folio tools,
 so a web page cannot reach what the student wrote or act through Folio. The query is checked in
 code before it leaves (short, with no email, phone or ID numbers), a reply searches at most three
 times, and the student can turn search off in Settings; the tool then refuses, so the prompt
@@ -148,13 +152,47 @@ stays the same. Pi drops the search's sources and citations; Folio reads them fr
 stream, keeps only https links, saves them with the tool's result, and lists them under the
 reply apart from course sources. Links open in the system browser.
 
+## Connections and models
+
+Folio reaches models through five connections: the ChatGPT plan, signed in through the browser,
+and API keys for OpenAI, Anthropic, Google Gemini and OpenRouter (`src/model-refs.ts`). Pi keeps
+one credential per provider, so the OpenAI API is a provider of its own (`openai-api`, with the
+catalog's OpenAI models under it), and Pi never takes one of its requests for a ChatGPT sign-in.
+Each key provider resolves only the key saved in Folio: never one from the environment, another
+app's files or a provider's own sign-in. A key is checked with its provider before Folio keeps
+it, by a request that lists models or describes the key, and the provider's answer is never
+shown; it then goes in `keys.json`, apart from the ChatGPT sign-in, and never back to the window.
+
+A model is named by a reference, `connection/model` (`chatgpt/gpt-6.1-sol`,
+`openrouter/deepseek/deepseek-v4-pro`), and a chat saves its provider and model and keeps them.
+The composer offers, per connection, the plan's checked models, a short list of current models
+for each key, and the OpenRouter models the student picked, grouped by lab; a model that reads
+text only is marked, and the tutor on one gets a note where a page image would be. The main
+process refuses any other model, and asks for the connection a chat's model needs before it
+sends.
+
+Which model does what lives in `config.json`, edited in Settings or by hand (`src/config.ts`):
+the tutor for new chats, web search, each step of studying (planner, reader, close-up, writer,
+checker, topics) and reading a syllabus. Folio checks every entry in code: the model must exist
+on its connection, and the steps that read slides must see images. An entry it can't use is
+listed in Settings and its default applies; the file is never rewritten behind the student's
+back, a change from Settings is refused when the file changed outside Folio, and hand edits are
+picked up as they are saved. Defaults are the ChatGPT models studying always used, and nothing
+falls back from one connection to another, so a key is billed only for what the student assigned
+to it. Study steps name a ChatGPT model by its bare ID, as before, so saved steps are still
+reused. Every answer tool is forced as its API names it ("required", or "any" for Anthropic and
+Gemini), and Anthropic answers those steps without thinking, which it refuses alongside a forced
+tool.
+
 ## Studying a lecture
 
 Adding a lecture or recitation to a course is what starts its study; reading or explaining a
 document never does. A PDF lecture or recitation is queued a moment after it is added (time to
 fix a wrong role for free), and once after start Folio queues every lecture and recitation it
 never studied. Studies run two at a time: what the student asked for first, then new files, then
-the backlog, then redos. Without a ChatGPT connection they wait and start when it returns. A
+the backlog, then redos. Each step runs on the model set for it (see
+[Connections and models](#connections-and-models)); without a connection one of them needs,
+studies wait and start when it is there. A
 study the student cancels is not started again unless they ask. A file that moves to the Trash,
 leaves its course or stops being a lecture has its study stopped first, and Folio waits until
 nothing reads it any more before it moves; its study notes leave the course with it.
@@ -257,6 +295,8 @@ Everything lives in `~/.folio/` (or `FOLIO_HOME`), with directories `0700` and f
 | Path | Contents |
 | --- | --- |
 | `connection.json` | The ChatGPT connection and installation ID |
+| `keys.json` | API keys, each checked with its provider before it was kept |
+| `config.json` | Which model does what, and the OpenRouter models the composer offers; never a key |
 | `sessions/<id>.json` | Each conversation |
 | `library/` | Courses, read-only originals with their hashes, notes with their history, and suggested edits |
 | `library/assignments/<id>/` | Each assignment's record and the files handed in or back |

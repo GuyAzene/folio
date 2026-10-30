@@ -7,6 +7,7 @@ import lockfile from "proper-lockfile";
 import { privateDirectory as sharedPrivateDirectory, writeAtomic } from "./files.ts";
 import { validateTranscript } from "./transcript.ts";
 import { folioHome } from "./home.ts";
+import { connectionOf, type ProviderId } from "./model-refs.ts";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const SESSION_RUNTIME = { name: "pi", version: "1.4.0", transcriptVersion: 1 } as const;
@@ -36,7 +37,8 @@ export interface SessionRecord {
   createdAt: string;
   updatedAt: string;
   title: string;
-  provider: "openai";
+  /** Pi's provider: `openai` is the ChatGPT plan, the others a key. Older builds read only `openai`. */
+  provider: ProviderId;
   modelId: string;
   runtime: typeof SESSION_RUNTIME;
   scope: SessionScope;
@@ -50,12 +52,23 @@ export interface SessionRecord {
 }
 
 export type CreateSessionInput = Pick<SessionRecord, "modelId" | "scope" | "focus"> & {
+  /** The ChatGPT plan unless given. */
+  provider?: ProviderId;
   title?: string;
   messages?: AgentMessage[];
 };
 export type SessionSummary = Pick<
   SessionRecord,
-  "id" | "title" | "createdAt" | "updatedAt" | "modelId" | "status" | "revision" | "scope" | "focus"
+  | "id"
+  | "title"
+  | "createdAt"
+  | "updatedAt"
+  | "provider"
+  | "modelId"
+  | "status"
+  | "revision"
+  | "scope"
+  | "focus"
 > & { messageCount: number };
 export type SessionLease = (() => Promise<void>) & { readonly sessionId: string };
 
@@ -137,7 +150,7 @@ function validate(value: unknown, expectedId?: string): asserts value is Session
     !validDate(value.updatedAt) ||
     typeof value.title !== "string" ||
     !value.title.trim() ||
-    value.provider !== "openai" ||
+    !connectionOf(value.provider) ||
     typeof value.modelId !== "string" ||
     !value.modelId ||
     !validScope(value.scope, value.focus) ||
@@ -340,7 +353,7 @@ export class SessionStore {
       createdAt: now,
       updatedAt: now,
       title: input.title ?? "New conversation",
-      provider: "openai",
+      provider: input.provider ?? "openai",
       modelId: input.modelId,
       runtime: SESSION_RUNTIME,
       scope: input.scope,
@@ -401,6 +414,7 @@ export class SessionStore {
           );
         if (
           snapshot.createdAt !== current.createdAt ||
+          snapshot.provider !== current.provider ||
           snapshot.modelId !== current.modelId ||
           scopeKey(snapshot.scope) !== scopeKey(current.scope)
         )
@@ -432,12 +446,14 @@ export class SessionStore {
       const id = name.slice(0, -5);
       try {
         const session = await this.#read(id, false);
-        const { title, createdAt, updatedAt, modelId, status, revision, scope, focus } = session;
+        const { title, createdAt, updatedAt, provider, modelId, status, revision, scope, focus } =
+          session;
         sessions.push({
           id,
           title,
           createdAt,
           updatedAt,
+          provider,
           modelId,
           status,
           revision,

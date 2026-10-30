@@ -229,9 +229,16 @@ function describe(page: KnowledgePage, budget = 1_200): string {
   return lines.join("\n");
 }
 
-/** The topic calls on Terra at low effort, through the same requests ingestion uses. */
-export function topicModel(complete: CompleteFn, model = "gpt-6.1-terra"): TopicModel {
+/**
+ * The topic calls at low effort, through the same requests ingestion uses: on Terra unless
+ * `model` names another, read again for each call so a change in Settings applies at once.
+ */
+export function topicModel(
+  complete: CompleteFn,
+  model: string | (() => string) = "gpt-6.1-terra",
+): TopicModel {
   const usage = () => undefined;
+  const current = () => (typeof model === "function" ? model() : model);
   return {
     async judge(knowledge, pairs) {
       if (!pairs.length) return [];
@@ -248,7 +255,7 @@ export function topicModel(complete: CompleteFn, model = "gpt-6.1-terra"): Topic
         const answer = await jsonCall<{ pairs: { pair: number; relation: Relation }[] }>(
           complete,
           {
-            model,
+            model: current(),
             system: JUDGE_SYSTEM,
             content: [text(body)],
             maxTokens: 2_000,
@@ -272,7 +279,7 @@ export function topicModel(complete: CompleteFn, model = "gpt-6.1-terra"): Topic
       }>(
         complete,
         {
-          model,
+          model: current(),
           system: OVERVIEW_SYSTEM,
           content: [
             text(pages.map((page) => `Topic ${page.slug}\n${describe(page, 3_000)}`).join("\n\n")),

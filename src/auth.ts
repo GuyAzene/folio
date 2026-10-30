@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import lockfile from "proper-lockfile";
 import {
   createModels,
+  type ApiKeyCredential,
   type AuthOperationOptions,
   type Credential,
   type CredentialInfo,
@@ -14,7 +15,9 @@ import {
   type OAuthCredential,
 } from "@earendil-works/pi-ai";
 import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
+import { keyProviders } from "./connections.ts";
 import { folioHome } from "./home.ts";
+import { CONNECTIONS, connectionOf, type ConnectionId } from "./model-refs.ts";
 
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -25,6 +28,23 @@ interface SavedConnection {
   deviceId: string;
   credential?: OAuthCredential;
 }
+
+interface SavedKey {
+  type: "api_key";
+  key: string;
+  addedAt: string;
+}
+
+/** API keys by Pi provider ID. Entries for providers this build doesn't know are kept as they are. */
+interface SavedKeys {
+  version: 1;
+  keys: Record<string, SavedKey>;
+}
+
+const KEY_PROVIDERS: readonly string[] = CONNECTIONS.filter(
+  (connection) => connection.kind === "key",
+).map((connection) => connection.provider);
+const KEY = /^[\x21-\x7e]{8,512}$/;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -50,6 +70,16 @@ function validateCredential(value: unknown): asserts value is OAuthCredential {
   }
 }
 
+function validateKey(value: unknown): asserts value is ApiKeyCredential & { key: string } {
+  if (
+    !isRecord(value) ||
+    value.type !== "api_key" ||
+    typeof value.key !== "string" ||
+    !KEY.test(value.key)
+  )
+    throw new Error("Invalid API key.");
+}
+
 function isMissing(error: unknown): boolean {
   return isRecord(error) && error.code === "ENOENT";
 }
@@ -61,16 +91,21 @@ function assertOutsideProject(home: string): void {
   }
 }
 
-/** Folio's own protected token file. It never reads Pi or Codex account files. */
+/**
+ * Folio's own protected credential files: the ChatGPT sign-in in `connection.json` and API keys
+ * in `keys.json`, behind one lock. It never reads Pi or Codex account files.
+ */
 export class FolioCredentialStore implements CredentialStore {
   readonly home: string;
   readonly #file: string;
+  readonly #keysFile: string;
   readonly #lock: string;
   #deviceId = "";
 
   private constructor(home: string) {
     this.home = home;
     this.#file = resolve(home, "connection.json");
+    this.#keysFile = resolve(home, "keys.json");
     this.#lock = resolve(home, "connection.lock");
   }
 
@@ -128,8 +163,32 @@ export class FolioCredentialStore implements CredentialStore {
     return saved as unknown as SavedConnection;
   }
 
-  async #save(saved: SavedConnection): Promise<void> {
-    const temporary = `${this.#file}.${randomUUID()}.tmp`;
+  async #loadKeys(): Promise<SavedKeys> {
+    let raw: string;
+    try {
+      const info = await lstat(this.#keysFile);
+      if (!info.isFile() || info.isSymbolicLink()) throw new Error("Invalid Folio key file.");
+      await chmod(this.#keysFile, 0o600);
+      raw = await readFile(this.#keysFile, "utf8");
+    } catch (error) {
+      if (isMissing(error)) return { version: 1, keys: {} };
+      throw error;
+    }
+    let saved: unknown;
+    try {
+      saved = JSON.parse(raw);
+    } catch {
+      throw new Error("Folio's key file is not valid JSON; repair or remove keys.json.");
+    }
+    if (!isRecord(saved) || saved.version !== 1 || !isRecord(saved.keys))
+      throw new Error("Unsupported or invalid Folio key file.");
+    for (const provider of KEY_PROVIDERS)
+      if (saved.keys[provider] !== undefined) validateKey(saved.keys[provider]);
+    return saved as unknown as SavedKeys;
+  }
+
+  async #save(saved: SavedConnection | SavedKeys, file = this.#file): Promise<void> {
+    const temporary = `${file}.${randomUUID()}.tmp`;
     try {
       const handle = await open(temporary, "wx", 0o600);
       try {
@@ -138,7 +197,7 @@ export class FolioCredentialStore implements CredentialStore {
       } finally {
         await handle.close();
       }
-      await rename(temporary, this.#file);
+      await rename(temporary, file);
     } finally {
       await rm(temporary, { force: true });
     }
@@ -176,16 +235,25 @@ export class FolioCredentialStore implements CredentialStore {
     }
   }
 
-  async read(
-    providerId: string,
-    options?: AuthOperationOptions,
-  ): Promise<OAuthCredential | undefined> {
+  async read(providerId: string, options?: AuthOperationOptions): Promise<Credential | undefined> {
     options?.signal?.throwIfAborted();
-    return providerId === "openai" ? (await this.#load())?.credential : undefined;
+    if (providerId === "openai") return (await this.#load())?.credential;
+    if (!KEY_PROVIDERS.includes(providerId)) return undefined;
+    const saved = (await this.#loadKeys()).keys[providerId];
+    return saved && { type: "api_key", key: saved.key };
   }
 
   async list(options?: AuthOperationOptions): Promise<readonly CredentialInfo[]> {
-    return (await this.read("openai", options)) ? [{ providerId: "openai", type: "oauth" }] : [];
+    options?.signal?.throwIfAborted();
+    const keys = (await this.#loadKeys()).keys;
+    return [
+      ...((await this.#load())?.credential
+        ? [{ providerId: "openai", type: "oauth" } as const]
+        : []),
+      ...KEY_PROVIDERS.filter((provider) => keys[provider]).map(
+        (providerId) => ({ providerId, type: "api_key" }) as const,
+      ),
+    ];
   }
 
   modify(
@@ -193,10 +261,9 @@ export class FolioCredentialStore implements CredentialStore {
     fn: (current: Credential | undefined) => Promise<Credential | undefined>,
     options?: AuthOperationOptions,
   ): Promise<Credential | undefined> {
+    if (KEY_PROVIDERS.includes(providerId)) return this.#modifyKey(providerId, fn, options);
     if (providerId !== "openai")
-      return Promise.reject(
-        new Error("Only Folio's ChatGPT subscription connection is supported."),
-      );
+      return Promise.reject(new Error(`Folio does not connect to ${providerId}.`));
     return this.#locked(async () => {
       const saved = await this.#load();
       if (!saved) throw new Error("Folio's installation record disappeared; restart Folio.");
@@ -210,7 +277,41 @@ export class FolioCredentialStore implements CredentialStore {
     }, options);
   }
 
+  #modifyKey(
+    providerId: string,
+    fn: (current: Credential | undefined) => Promise<Credential | undefined>,
+    options?: AuthOperationOptions,
+  ): Promise<Credential | undefined> {
+    return this.#locked(async () => {
+      const saved = await this.#loadKeys();
+      const current = saved.keys[providerId];
+      const next = await fn(current && { type: "api_key", key: current.key });
+      if (next === undefined) return current && { type: "api_key", key: current.key };
+      validateKey(next);
+      await this.#save(
+        {
+          ...saved,
+          keys: {
+            ...saved.keys,
+            [providerId]: { type: "api_key", key: next.key, addedAt: new Date().toISOString() },
+          },
+        },
+        this.#keysFile,
+      );
+      return { type: "api_key", key: next.key };
+    }, options);
+  }
+
   async delete(providerId: string, options?: AuthOperationOptions): Promise<void> {
+    if (KEY_PROVIDERS.includes(providerId)) {
+      await this.#locked(async () => {
+        const saved = await this.#loadKeys();
+        if (!saved.keys[providerId]) return;
+        const { [providerId]: _removed, ...keys } = saved.keys;
+        await this.#save({ ...saved, keys }, this.#keysFile);
+      }, options);
+      return;
+    }
     if (providerId !== "openai") return;
     await this.#locked(async () => {
       const saved = await this.#load();
@@ -225,9 +326,10 @@ export async function createFolioModels(
   const store = await FolioCredentialStore.create(options.home ?? folioHome());
   const models = createModels({
     credentials: store,
-    // Folio must never fall back to a billable API key from the shell.
+    // Keys come only from Folio's own key file, never from the shell or another app.
     authContext: { env: async () => undefined, fileExists: async () => false },
   });
+  for (const provider of keyProviders()) models.setProvider(provider);
   const provider = openaiProvider();
   const oauth = provider.auth.oauth!;
   models.setProvider({
@@ -261,6 +363,17 @@ export async function createFolioModels(
     },
   });
   return { models, store };
+}
+
+/** The connections that have a saved sign-in or key; nothing is checked over the network. */
+export async function readConnections(store: FolioCredentialStore): Promise<Set<ConnectionId>> {
+  const saved = await store.list();
+  return new Set(
+    saved.flatMap((info) => {
+      const connection = connectionOf(info.providerId);
+      return connection ? [connection.id] : [];
+    }),
+  );
 }
 
 export async function readConnectionStatus(

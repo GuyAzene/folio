@@ -139,6 +139,7 @@ describe("private versioned session snapshots", () => {
         title: firstSaved.title,
         createdAt: firstSaved.createdAt,
         updatedAt: firstSaved.updatedAt,
+        provider: "openai",
         modelId: firstSaved.modelId,
         status: "idle",
         revision: 2,
@@ -152,6 +153,26 @@ describe("private versioned session snapshots", () => {
       { id: second.id, error: expect.stringContaining("Unreadable") },
     ]);
     expect(await readFile(file, "utf8")).toBe("{synthetic-corrupt-json");
+  });
+
+  it("keeps the provider a chat started on, and preserves a file from a provider it doesn't know", async () => {
+    const store = await createSessionStore({ home: await temporaryHome() });
+    const plan = await store.create(input);
+    expect(plan.provider).toBe("openai");
+    const keyed = await store.create({
+      ...input,
+      provider: "openrouter",
+      modelId: "deepseek/deepseek-v4-pro",
+    });
+    expect((await store.load(keyed.id)).provider).toBe("openrouter");
+    await expect(store.save({ ...keyed, provider: "anthropic" }, keyed.revision)).rejects.toThrow(
+      "immutable",
+    );
+    const file = resolve(store.directory, `${keyed.id}.json`);
+    const later = JSON.stringify({ ...JSON.parse(await readFile(file, "utf8")), provider: "xai" });
+    await writeFile(file, later, "utf8");
+    await expect(store.load(keyed.id)).rejects.toThrow("Invalid Folio session data");
+    expect(await readFile(file, "utf8")).toBe(later);
   });
 
   it("rejects competing revision writes and leaves the winning snapshot intact", async () => {

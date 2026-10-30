@@ -5,10 +5,11 @@ import { Type } from "typebox";
 import { LibraryError } from "./store.ts";
 
 /**
- * Web search for the tutor. Each search is its own request: OpenAI's hosted web search runs with
- * a fixed instruction and the query, and nothing else from the chat, no course material and no
- * Folio tools, so a web page can never reach what the student wrote or act through Folio. The
- * query is checked in code before it leaves, and a reply searches at most three times.
+ * Web search for the tutor. Each search is its own request: the provider's hosted web search
+ * runs with a fixed instruction and the query, and nothing else from the chat, no course
+ * material and no Folio tools, so a web page can never reach what the student wrote or act
+ * through Folio. The query is checked in code before it leaves, and a reply searches at most
+ * three times.
  */
 
 export interface WebSource {
@@ -33,14 +34,119 @@ const SEARCH_SYSTEM = [
   "Use only what the pages you found say, cite each claim, and say plainly when sources disagree or say nothing on it.",
 ].join("\n");
 
-/** One hosted search through the same connection the tutor uses (Pi drops what it returns). */
+type Body = Record<string, unknown>;
+type AddSource = (kind: "cited" | "opened", url: unknown, title: unknown) => void;
+
+/** How one provider searches: what turns its hosted search on, and where its stream names pages. */
+interface SearchAdapter {
+  payload(body: Body): Body;
+  sources(event: unknown, add: AddSource): void;
+}
+
+const list = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
+const record = (value: unknown): Body =>
+  typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Body) : {};
+
+/** OpenAI's Responses API, on the ChatGPT plan or a key. Pi drops what the search returns. */
+const OPENAI: SearchAdapter = {
+  payload: (body) => ({
+    ...body,
+    tools: [...list(body.tools), { type: "web_search" }],
+    include: [...list(body.include), "web_search_call.action.sources"],
+  }),
+  sources(event, add) {
+    const raw = event as {
+      type?: string;
+      annotation?: { type?: string; url?: unknown; title?: unknown };
+      item?: { type?: string; action?: { sources?: { url?: unknown }[] } };
+    };
+    if (
+      raw.type === "response.output_text.annotation.added" &&
+      raw.annotation?.type === "url_citation"
+    )
+      add("cited", raw.annotation.url, raw.annotation.title);
+    if (raw.type === "response.output_item.done" && raw.item?.type === "web_search_call")
+      for (const source of raw.item.action?.sources ?? []) add("opened", source.url, undefined);
+  },
+};
+
+/** Anthropic's citations, from its Messages API stream (directly, or through OpenRouter). */
+function anthropicSources(event: unknown, add: AddSource): void {
+  const raw = event as {
+    type?: string;
+    content_block?: { type?: string; content?: unknown };
+    delta?: { type?: string; citation?: { type?: string; url?: unknown; title?: unknown } };
+  };
+  if (raw.type === "content_block_start" && raw.content_block?.type === "web_search_tool_result")
+    for (const result of list(raw.content_block.content))
+      add("opened", record(result).url, record(result).title);
+  if (
+    raw.type === "content_block_delta" &&
+    raw.delta?.type === "citations_delta" &&
+    raw.delta.citation?.type === "web_search_result_location"
+  )
+    add("cited", raw.delta.citation.url, raw.delta.citation.title);
+}
+
+/** Anthropic's server-side web search tool; Pi leaves its result blocks out of the reply. */
+const ANTHROPIC: SearchAdapter = {
+  payload: (body) => ({
+    ...body,
+    tools: [
+      ...list(body.tools),
+      { type: "web_search_20250305", name: "web_search", max_uses: SEARCHES_PER_REPLY },
+    ],
+  }),
+  sources: anthropicSources,
+};
+
+/** Grounding with Google Search; the pages it used come as grounding chunks. */
+const GOOGLE: SearchAdapter = {
+  payload(body) {
+    const config = record(body.config);
+    return { ...body, config: { ...config, tools: [...list(config.tools), { googleSearch: {} }] } };
+  },
+  sources(event, add) {
+    const candidate = record(list(record(event).candidates)[0]);
+    for (const chunk of list(record(candidate.groundingMetadata).groundingChunks)) {
+      const web = record(record(chunk).web);
+      add("cited", web.uri, web.title);
+    }
+  },
+};
+
+/** OpenRouter's web plugin, on either of its APIs; it cites as each API does. */
+const OPENROUTER: SearchAdapter = {
+  payload: (body) => ({ ...body, plugins: [...list(body.plugins), { id: "web", max_results: 5 }] }),
+  sources(event, add) {
+    for (const choice of list(record(event).choices))
+      for (const annotation of list(record(record(choice).delta).annotations)) {
+        const citation = record(record(annotation).url_citation);
+        if (record(annotation).type === "url_citation") add("cited", citation.url, citation.title);
+      }
+    anthropicSources(event, add);
+  },
+};
+
+function adapterFor(model: Model<Api>): SearchAdapter | undefined {
+  if (model.provider === "openrouter") return OPENROUTER;
+  if (model.api === "openai-responses") return OPENAI;
+  if (model.api === "anthropic-messages") return ANTHROPIC;
+  if (model.api === "google-generative-ai") return GOOGLE;
+  return undefined;
+}
+
+/** One hosted search on `model`, through the connection the tutor uses. */
 export function hostedSearch(streamFn: StreamFn, model: Model<Api>): SearchFn {
   return async (query, signal) => {
+    const adapter = adapterFor(model);
+    if (!adapter) throw new LibraryError(`${model.name} can't search the web from Folio.`);
     // Pages the answer cites, with their titles, come before the other pages the search opened.
     const cited = new Map<string, WebSource>();
     const opened = new Map<string, WebSource>();
-    const add = (into: Map<string, WebSource>, url: unknown, title: unknown) => {
+    const add: AddSource = (kind, url, title) => {
       if (typeof url !== "string" || !url.startsWith("https://")) return;
+      const into = kind === "cited" ? cited : opened;
       const clean = url.replace(/[?&]utm_source=openai$/, "");
       if (!into.has(clean))
         into.set(clean, {
@@ -57,31 +163,8 @@ export function hostedSearch(streamFn: StreamFn, model: Model<Api>): SearchFn {
       {
         reasoning: "low",
         signal,
-        onPayload: (payload) => {
-          const body = payload as Record<string, unknown>;
-          return {
-            ...body,
-            tools: [...(Array.isArray(body.tools) ? body.tools : []), { type: "web_search" }],
-            include: [
-              ...(Array.isArray(body.include) ? body.include : []),
-              "web_search_call.action.sources",
-            ],
-          };
-        },
-        onProviderStreamEvent: (event) => {
-          const raw = event as {
-            type?: string;
-            annotation?: { type?: string; url?: unknown; title?: unknown };
-            item?: { type?: string; action?: { sources?: { url?: unknown }[] } };
-          };
-          if (
-            raw.type === "response.output_text.annotation.added" &&
-            raw.annotation?.type === "url_citation"
-          )
-            add(cited, raw.annotation.url, raw.annotation.title);
-          if (raw.type === "response.output_item.done" && raw.item?.type === "web_search_call")
-            for (const source of raw.item.action?.sources ?? []) add(opened, source.url, undefined);
-        },
+        onPayload: (payload) => adapter.payload(record(payload)),
+        onProviderStreamEvent: (event) => adapter.sources(event, add),
       },
     );
     let answer = "";

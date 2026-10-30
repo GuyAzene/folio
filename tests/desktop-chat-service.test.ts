@@ -6,11 +6,12 @@ import type { StreamFn } from "@earendil-works/pi-agent-core";
 import type { Api, AssistantMessage, Model } from "@earendil-works/pi-ai";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai/utils/event-stream";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import { DEMO_SOURCE_VERSION } from "../src/conversation.ts";
+import { DEMO_SOURCE_VERSION, type CourseRuntime } from "../src/conversation.ts";
 import type { DesktopEvent } from "../src/desktop/api.ts";
 import { ChatService } from "../src/desktop/chat-service.ts";
 import { chatView } from "../src/desktop/view.ts";
 import type { AttachReach } from "../src/library/attachments.ts";
+import type { ConnectionId } from "../src/model-refs.ts";
 import { createSessionStore, type SessionStore } from "../src/session-store.ts";
 
 const model: Model<Api> = {
@@ -78,8 +79,10 @@ const streaming: StreamFn = () => {
 
 async function setup(
   options: {
-    connected?: boolean;
+    /** Every connection, none, or just these. */
+    connected?: boolean | ConnectionId[];
     streamFn?: StreamFn;
+    /** References a new chat may use. */
     models?: string[];
     libraryRuntime?: ConstructorParameters<typeof ChatService>[0]["libraryRuntime"];
     courseRuntime?: ConstructorParameters<typeof ChatService>[0]["courseRuntime"];
@@ -93,13 +96,16 @@ async function setup(
   const service = new ChatService({
     store,
     streamFn: options.streamFn ?? streaming,
-    resolveModel: (id) => ({ ...model, id }),
-    modelId: model.id,
-    models: options.models,
+    resolveModel: (id, provider) => ({ ...model, id, provider: provider ?? model.provider }),
+    model: () => `chatgpt/${model.id}`,
+    offered: options.models && ((ref) => options.models!.includes(ref)),
     libraryRuntime: options.libraryRuntime,
     courseRuntime: options.courseRuntime,
     attach: options.attach,
-    connected: async () => options.connected ?? true,
+    connected: async (connection) =>
+      Array.isArray(options.connected)
+        ? options.connected.includes(connection.id)
+        : (options.connected ?? true),
     emit: (event) => events.push(structuredClone(event)),
   });
   services.push(service);
@@ -212,7 +218,7 @@ describe("desktop chat service", () => {
 
   it("starts library chats with the chosen model and refuses models it does not offer", async () => {
     const { service, store, events } = await setup({
-      models: [model.id, "second-model"],
+      models: [`chatgpt/${model.id}`, "anthropic/second-model"],
       libraryRuntime: async () => ({
         tools: [],
         prompt: async () => "Synthetic library prompt",
@@ -225,11 +231,13 @@ describe("desktop chat service", () => {
       chatId: null,
       text: "Which course covers heaps?",
       submissionId: randomUUID(),
-      modelId: "second-model",
+      model: "anthropic/second-model",
     });
     await settled(events);
     const record = await store.load(chatId);
+    expect(record.provider).toBe("anthropic");
     expect(record.modelId).toBe("second-model");
+    expect((await service.openChat(chatId)).model).toBe("anthropic/second-model");
     expect(record.scope).toEqual({ courseId: null, library: 1 });
     expect((await service.openChat(chatId)).kind).toBe("library");
     await expect(
@@ -237,9 +245,61 @@ describe("desktop chat service", () => {
         chatId: null,
         text: "Hello",
         submissionId: randomUUID(),
-        modelId: "gpt-5.5",
+        model: "chatgpt/gpt-5.5",
       }),
     ).rejects.toThrow("not available");
+    await expect(
+      service.send({ chatId: null, text: "Hello", submissionId: randomUUID(), model: "gpt-6" }),
+    ).rejects.toThrow("not available");
+  });
+
+  it("asks for the connection a model needs, and keeps a chat whose key was removed readable", async () => {
+    const library = async (): Promise<CourseRuntime> => ({
+      tools: [],
+      prompt: async () => "Synthetic library prompt",
+      checkFocus: async () => {
+        throw new Error("Library chats do not follow a page.");
+      },
+    });
+    const models = [`chatgpt/${model.id}`, "anthropic/second-model"];
+    const request = vi.fn(streaming);
+    const both = await setup({ models, libraryRuntime: library, streamFn: request });
+    const { chatId } = await both.service.send({
+      chatId: null,
+      text: "Explain heaps",
+      submissionId: randomUUID(),
+      model: "anthropic/second-model",
+    });
+    await settled(both.events);
+    await both.service.close();
+    const calls = request.mock.calls.length;
+
+    const reopened = new ChatService({
+      store: both.store,
+      streamFn: request,
+      resolveModel: (id, provider) => ({ ...model, id, provider: provider ?? model.provider }),
+      model: () => `chatgpt/${model.id}`,
+      offered: (ref) => models.includes(ref),
+      libraryRuntime: library,
+      connected: async (connection) => connection.id === "chatgpt",
+      emit: () => undefined,
+    });
+    services.push(reopened);
+    const view = await reopened.openChat(chatId);
+    expect(view.model).toBe("anthropic/second-model");
+    expect(view.messages).toHaveLength(2);
+    await expect(
+      reopened.send({ chatId, text: "And heapsort?", submissionId: randomUUID() }),
+    ).rejects.toThrow("Add your Anthropic API key in Settings to go on with this chat");
+    await expect(
+      reopened.send({
+        chatId: null,
+        text: "New one",
+        submissionId: randomUUID(),
+        model: "anthropic/second-model",
+      }),
+    ).rejects.toThrow("Add your Anthropic API key in Settings to start chatting");
+    expect(request.mock.calls.length).toBe(calls);
   });
 
   it("sends what the student added with the question, and records it on their message", async () => {
@@ -562,7 +622,7 @@ describe("visuals in the desktop chat service", () => {
         throw new Error("Reopening must not ask the model.");
       },
       resolveModel: (id) => ({ ...model, id }),
-      modelId: model.id,
+      model: () => `chatgpt/${model.id}`,
       courseRuntime: runtime,
       connected: async () => true,
       emit: () => undefined,
@@ -634,6 +694,24 @@ describe("fast replies", () => {
     await service.send({ chatId, text: "Take your time", submissionId: randomUUID() });
     await settled(events);
     expect(tiers).toEqual(["priority", "standard"]);
+    // Only OpenAI has the priority tier; another provider's fast question goes as usual.
+    const claude = await setup({
+      models: ["anthropic/second-model"],
+      streamFn: async (model, context, options) => {
+        const payload = await options?.onPayload?.({ model: model.id }, model);
+        tiers.push((payload as { service_tier?: string } | undefined)?.service_tier ?? "standard");
+        return streaming(model, context, options);
+      },
+    });
+    await claude.service.send({
+      chatId: null,
+      text: "Quick one",
+      submissionId: randomUUID(),
+      model: "anthropic/second-model",
+      fast: true,
+    });
+    await settled(claude.events);
+    expect(tiers).toEqual(["priority", "standard", "standard"]);
     const questions = (await store.load(chatId)).messages.filter(
       (message) => message.role === "user",
     );

@@ -10,7 +10,7 @@ lectures into notes you can browse, and it never changes your files.
 
 > [!NOTE]
 > Folio is early and in active development. It is built and tested on macOS, and the tutor runs
-> on your ChatGPT plan.
+> on your ChatGPT plan or on your own API keys.
 
 ## What it does
 
@@ -49,8 +49,8 @@ lectures into notes you can browse, and it never changes your files.
 
 Download **[Folio-arm64.dmg](https://github.com/GuyAzene/folio/releases/download/nightly/Folio-arm64.dmg)**
 from the [nightly build](https://github.com/GuyAzene/folio/releases/tag/nightly), open it and
-drag Folio to Applications. It needs a Mac with Apple silicon and a ChatGPT plan, and is rebuilt
-after every change, so the link always gives the newest Folio.
+drag Folio to Applications. It needs a Mac with Apple silicon and a ChatGPT plan or an API key,
+and is rebuilt after every change, so the link always gives the newest Folio.
 
 Folio is not signed with an Apple Developer ID, so the first time you open it macOS says it could
 not verify it. Open **System Settings → Privacy & Security**, scroll down to the line about Folio
@@ -58,8 +58,8 @@ and choose **Open Anyway**. A newer download may ask again.
 
 ## Getting started
 
-You need macOS, the [Vite+](https://viteplus.dev/guide) CLI (`vp`) and a ChatGPT plan. Folio
-pins Node 24.22.1 in `.node-version`; `vp` installs and uses it.
+You need macOS, the [Vite+](https://viteplus.dev/guide) CLI (`vp`) and a ChatGPT plan or an API
+key. Folio pins Node 24.22.1 in `.node-version`; `vp` installs and uses it.
 
 ```sh
 vp install --frozen-lockfile
@@ -90,7 +90,26 @@ until builds are signed with a Developer ID and notarized; `scripts/package.ts` 
 environment variables that turn both on.
 
 To connect, choose **Connect ChatGPT** in the composer or in Settings (⌘,). Your browser opens
-ChatGPT's sign-in. Folio never uses an `OPENAI_API_KEY` or another app's saved accounts.
+ChatGPT's sign-in. To use your own API key for OpenAI, Anthropic, Google Gemini or OpenRouter,
+add it in **Settings → Connections**: Folio checks it with the provider before keeping it, and
+each provider bills its key for what Folio asks. ChatGPT is the only plan Folio can sign in to.
+Folio never reads a key from the environment or another app's saved accounts.
+
+Which model does what is yours to choose, in **Settings → Models** or in `~/.folio/config.json`:
+the tutor for new chats, web search, each step of studying (planner, reader, close-up, writer,
+checker, topics) and reading a syllabus. Reading slides needs a model that sees images; writing
+the notes can use one that reads text only. OpenRouter's models are picked in the same place and
+appear in the composer by lab. Leave the file alone and everything runs on ChatGPT, as before.
+
+```json
+{
+  "version": 1,
+  "studying": {
+    "reader": "chatgpt/gpt-6.1-sol",
+    "writer": "openrouter/deepseek/deepseek-v4-pro"
+  }
+}
+```
 
 ### Keyboard
 
@@ -109,9 +128,10 @@ ChatGPT's sign-in. Folio never uses an `OPENAI_API_KEY` or another app's saved a
 
 Everything Folio keeps stays in `~/.folio/` (or the folder `FOLIO_HOME` points to), readable
 only by you: your courses and their read-only originals, your notes, your chats, study notes and
-open tabs. Only what a question needs goes to ChatGPT: your message, the pages and images the
-tutor reads, and what you added. Signing out removes the saved sign-in and keeps everything
-else. See [docs/architecture.md](docs/architecture.md#on-disk) for the layout.
+open tabs. Only what a question needs goes to the service its model runs on: your message, the
+pages and images the tutor reads, and what you added. Signing out, or removing a key, removes it
+and keeps everything else. API keys stay in `keys.json`, apart from `config.json`, which never
+holds one. See [docs/architecture.md](docs/architecture.md#on-disk) for the layout.
 
 ## Development
 

@@ -10,8 +10,11 @@
 
   /**
    * The reasoning pill beside the model pill: how long the tutor thinks, and whether it answers
-   * on the faster tier. Both are one choice for every chat and apply from the next question.
+   * on the faster tier. Both are one choice for every chat and apply from the next question; the
+   * faster tier is OpenAI's, so it shows only for OpenAI models.
    */
+  let { fastAvailable = true }: { fastAvailable?: boolean } = $props();
+  const fast = $derived(fastAvailable && folio.fast);
   const NAMES: Record<Thinking, string> = {
     low: "Low",
     medium: "Medium",
@@ -52,11 +55,11 @@
 <DropdownMenu.Root>
   <DropdownMenu.Trigger
     class="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full px-2.5 text-[12px] font-medium whitespace-nowrap text-text-2 transition-colors hover:bg-hover hover:text-text data-[state=open]:bg-hover data-[state=open]:text-text"
-    aria-label="Reasoning: {NAMES[folio.thinking]}{folio.fast ? ', fast' : ''}"
+    aria-label="Reasoning: {NAMES[folio.thinking]}{fast ? ', fast' : ''}"
   >
     <Gauge size={14} strokeWidth={1.75} class="shrink-0" />
     {NAMES[folio.thinking]}
-    {#if folio.fast}
+    {#if fast}
       <Zap size={12} strokeWidth={2} class="shrink-0 text-highlight" />
     {/if}
     <ChevronDown size={13} strokeWidth={2} class="shrink-0 text-text-3" />
@@ -81,6 +84,7 @@
           )}
         {/each}
       </DropdownMenu.Group>
+      {#if fastAvailable}
       <DropdownMenu.Separator class="my-1.5 h-px bg-line-subtle" />
       <DropdownMenu.Group>
         <DropdownMenu.GroupHeading class={heading}
@@ -94,9 +98,10 @@
           folio.fast,
           false,
           () => folio.setFast(true),
-          "Faster replies, uses more of your plan",
+          "Faster replies, costs more",
         )}
       </DropdownMenu.Group>
+      {/if}
     </DropdownMenu.Content>
   </DropdownMenu.Portal>
 </DropdownMenu.Root>

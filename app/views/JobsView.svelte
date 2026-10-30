@@ -99,7 +99,7 @@
         <span class="size-1.5 shrink-0 rounded-full bg-highlight"></span>
         <span class="min-w-0 flex-1 text-text-2">
           {#if offline && !stuck.length}
-            Connect ChatGPT and studying starts on its own.
+            Connect {folio.studyMissing ?? "ChatGPT"} and studying starts on its own.
           {:else if limited}
             Your ChatGPT plan reached its usage limit. Continue once it resets.
           {:else}
@@ -112,7 +112,7 @@
         {#if offline && !stuck.length}
           <button
             class="h-7 shrink-0 rounded-md bg-ink px-2.5 font-medium text-on-ink shadow-1 hover:opacity-90"
-            onclick={() => (folio.settingsOpen = true)}>Connect</button
+            onclick={() => folio.openSettings("connections")}>Connect</button
           >
         {:else}
           <button

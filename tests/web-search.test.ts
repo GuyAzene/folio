@@ -108,6 +108,110 @@ describe("web search", () => {
     expect(result.answer).not.toContain("utm_source");
   });
 
+  it("searches on Anthropic, Gemini and OpenRouter with each one's own tool", async () => {
+    const cases: {
+      model: Partial<Model<Api>>;
+      body: Record<string, unknown>;
+      payload: Record<string, unknown>;
+      events: unknown[];
+    }[] = [
+      {
+        model: { id: "claude-sonnet-5-5", api: "anthropic-messages", provider: "anthropic" },
+        body: { model: "claude-sonnet-5-5", tools: [] },
+        payload: { tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 3 }] },
+        events: [
+          {
+            type: "content_block_start",
+            content_block: {
+              type: "web_search_tool_result",
+              content: [
+                { type: "web_search_result", url: "https://example.org/bfs", title: "BFS" },
+                { type: "web_search_result", url: "http://insecure.example.com/x", title: "x" },
+              ],
+            },
+          },
+          {
+            type: "content_block_delta",
+            delta: {
+              type: "citations_delta",
+              citation: {
+                type: "web_search_result_location",
+                url: "https://example.com/paper",
+                title: "A paper",
+              },
+            },
+          },
+        ],
+      },
+      {
+        model: { id: "gemini-3.8-flash", api: "google-generative-ai", provider: "google" },
+        body: { model: "gemini-3.8-flash", config: { temperature: 1 } },
+        payload: { config: { temperature: 1, tools: [{ googleSearch: {} }] } },
+        events: [
+          {
+            candidates: [
+              {
+                groundingMetadata: {
+                  groundingChunks: [
+                    { web: { uri: "https://example.com/paper", title: "A paper" } },
+                    { web: { uri: "https://example.org/bfs" } },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      },
+      {
+        model: { id: "moonshotai/kimi-k3", api: "openai-completions", provider: "openrouter" },
+        body: { model: "moonshotai/kimi-k3" },
+        payload: { plugins: [{ id: "web", max_results: 5 }] },
+        events: [
+          {
+            choices: [
+              {
+                delta: {
+                  annotations: [
+                    {
+                      type: "url_citation",
+                      url_citation: { url: "https://example.com/paper", title: "A paper" },
+                    },
+                    { type: "url_citation", url_citation: { url: "https://example.org/bfs" } },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      },
+    ];
+    for (const { model: shape, body, payload, events } of cases) {
+      const searchModel = { ...model, ...shape } as Model<Api>;
+      const seen: { context?: TranscriptContext; payload?: unknown } = {};
+      const streamFn: StreamFn = async (_model, context, options) => {
+        seen.context = context;
+        seen.payload = await options?.onPayload?.(body, _model);
+        for (const event of events) await options?.onProviderStreamEvent?.(event as never, _model);
+        const stream = createAssistantMessageEventStream();
+        const message = answer("BFS dates from 1959.");
+        queueMicrotask(() => {
+          stream.push({ type: "start", partial: message });
+          stream.push({ type: "done", reason: "stop", message });
+        });
+        return stream;
+      };
+      const result = await hostedSearch(streamFn, searchModel)("history of breadth-first search");
+      expect(seen.context!.messages.map((message) => message.role)).toEqual(["system", "user"]);
+      expect(seen.payload).toMatchObject(payload);
+      expect(result.answer).toBe("BFS dates from 1959.");
+      expect(result.sources.map((source) => source.url)).toEqual([
+        "https://example.com/paper",
+        "https://example.org/bfs",
+      ]);
+      expect(result.sources[0]!.title).toBe("A paper");
+    }
+  });
+
   it("refuses queries with private details or a pasted passage", () => {
     expect(queryProblem("Dijkstra 1959 paper")).toBeNull();
     expect(queryProblem("x".repeat(201))).toContain("under 200");

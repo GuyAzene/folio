@@ -12,6 +12,8 @@ import type {
   FolioApi,
   JobView,
   KnowledgeView,
+  ModelsView,
+  ModelView,
   NoteView,
   PageCoverageView,
   ProposalView,
@@ -132,7 +134,7 @@ const chats = new Map<string, ChatView>([
       kind: "course",
       title: "Why BFS marks vertices on enqueue",
       status: "idle",
-      modelId: "gpt-6.1-sol",
+      model: "chatgpt/gpt-6.1-sol",
       updatedAt: ago(2),
       courseId: id(1),
       focus: { documentId: id(11), page: 2 },
@@ -161,7 +163,7 @@ const chats = new Map<string, ChatView>([
       kind: "course",
       title: "Dijkstra and negative edges",
       status: "idle",
-      modelId: "gpt-6.1-sol",
+      model: "chatgpt/gpt-6.1-sol",
       updatedAt: ago(1),
       courseId: id(1),
       focus: null,
@@ -1462,28 +1464,124 @@ function take<T>(list: T[], match: (item: T) => boolean): T[] {
   return taken;
 }
 
+// ── Connections and models: ChatGPT and an OpenRouter key, synthetic ─────
+
+const previewConnected = new Set(["chatgpt", "openrouter"]);
+const previewRoles: ModelsView["roles"] = {
+  teaching: "chatgpt/gpt-6.1-sol",
+  research: "chatgpt/gpt-6.1-terra",
+  planner: "chatgpt/gpt-6-sol",
+  reader: "chatgpt/gpt-6.1-sol",
+  closeup: "chatgpt/gpt-6.1-sol",
+  writer: "openrouter/deepseek/deepseek-v4-pro",
+  checker: "chatgpt/gpt-6-sol",
+  topics: "chatgpt/gpt-6.1-terra",
+  syllabus: "chatgpt/gpt-6.1-sol",
+};
+const OPENROUTER_CATALOG: ModelView[] = [
+  ["anthropic/claude-opus-5.5", "Claude Opus 5.5", "Anthropic", true],
+  ["anthropic/claude-sonnet-5.5", "Claude Sonnet 5.5", "Anthropic", true],
+  ["anthropic/claude-haiku-5.5", "Claude Haiku 5.5", "Anthropic", true],
+  ["deepseek/deepseek-v4-pro", "DeepSeek V4 Pro 0423", "DeepSeek", false],
+  ["deepseek/deepseek-v4.1-flash", "DeepSeek V4.1 Flash", "DeepSeek", true],
+  ["google/gemini-4-argon", "Gemini 4 Argon", "Google", true],
+  ["google/gemini-3.8-flash", "Gemini 3.8 Flash", "Google", true],
+  ["moonshotai/kimi-k3", "Kimi K3", "MoonshotAI", true],
+  ["openai/gpt-6.1-sol", "GPT-6.1 Sol", "OpenAI", true],
+  ["qwen/qwen3.5-max", "Qwen3.5 Max", "Qwen", true],
+].map(([id, name, lab, images]) => ({
+  ref: `openrouter/${id}`,
+  name: name as string,
+  lab: lab as string,
+  images: images as boolean,
+}));
+let previewOpenRouter = [
+  "anthropic/claude-sonnet-5.5",
+  "deepseek/deepseek-v4-pro",
+  "moonshotai/kimi-k3",
+];
+const PREVIEW_GROUPS: {
+  connection: string;
+  name: string;
+  kind: "plan" | "key";
+  models: ModelView[];
+}[] = [
+  {
+    connection: "chatgpt",
+    name: "ChatGPT",
+    kind: "plan",
+    models: [
+      { ref: "chatgpt/gpt-6.1-sol", name: "GPT-6.1 Sol", images: true },
+      { ref: "chatgpt/gpt-6.1-terra", name: "GPT-6.1 Terra", images: true },
+      { ref: "chatgpt/gpt-6-astra", name: "GPT-6 Astra", images: true },
+      { ref: "chatgpt/gpt-6-luna", name: "GPT-6 Luna", images: true },
+      { ref: "chatgpt/gpt-6-sol", name: "GPT-6 Sol", images: true, older: true },
+      { ref: "chatgpt/gpt-5.6-sol", name: "GPT-5.6 Sol", images: true, older: true },
+    ],
+  },
+  {
+    connection: "openai",
+    name: "OpenAI",
+    kind: "key",
+    models: [
+      { ref: "openai/gpt-6.1-sol", name: "GPT-6.1 Sol", images: true },
+      { ref: "openai/gpt-6-astra", name: "GPT-6 Astra", images: true },
+      { ref: "openai/gpt-6-luna", name: "GPT-6 Luna", images: true },
+    ],
+  },
+  {
+    connection: "anthropic",
+    name: "Anthropic",
+    kind: "key",
+    models: [
+      { ref: "anthropic/claude-fable-5-1", name: "Claude Fable 5.1", images: true },
+      { ref: "anthropic/claude-opus-5-5", name: "Claude Opus 5.5", images: true },
+      { ref: "anthropic/claude-sonnet-5-5", name: "Claude Sonnet 5.5", images: true },
+      { ref: "anthropic/claude-haiku-5-5", name: "Claude Haiku 5.5", images: true },
+    ],
+  },
+  {
+    connection: "google",
+    name: "Google Gemini",
+    kind: "key",
+    models: [
+      { ref: "google/gemini-4-argon", name: "Gemini 4 Argon", images: true },
+      { ref: "google/gemini-3.8-flash", name: "Gemini 3.8 Flash", images: true },
+    ],
+  },
+  { connection: "openrouter", name: "OpenRouter", kind: "key", models: [] },
+];
+
+function previewModels(): ModelsView {
+  return {
+    connections: PREVIEW_GROUPS.map((group) => ({
+      id: group.connection,
+      name: group.name,
+      kind: group.kind,
+      connected: previewConnected.has(group.connection),
+      signingIn: false,
+    })),
+    groups: PREVIEW_GROUPS.map((group) => ({
+      connection: group.connection,
+      name: group.name,
+      connected: previewConnected.has(group.connection),
+      models:
+        group.connection === "openrouter"
+          ? previewOpenRouter.flatMap(
+              (id) => OPENROUTER_CATALOG.find((model) => model.ref === `openrouter/${id}`) ?? [],
+            )
+          : group.models,
+    })),
+    roles: { ...previewRoles },
+    problems: [],
+    openrouter: [...previewOpenRouter],
+  };
+}
+
 export const previewApi: FolioApi = {
   async bootstrap() {
     return {
-      connection: { connected: true, signingIn: false },
-      model: { id: "gpt-6.1-sol", name: "GPT-6.1 Sol" },
-      subscriptions: [
-        {
-          provider: "openai",
-          name: "ChatGPT",
-          available: true,
-          connected: true,
-          models: [
-            { id: "gpt-6.1-sol", name: "GPT-6.1 Sol" },
-            { id: "gpt-6.1-terra", name: "GPT-6.1 Terra" },
-            { id: "gpt-6-astra", name: "GPT-6 Astra" },
-            { id: "gpt-6-luna", name: "GPT-6 Luna" },
-            { id: "gpt-6-sol", name: "GPT-6 Sol", older: true },
-            { id: "gpt-5.6-sol", name: "GPT-5.6 Sol", older: true },
-          ],
-        },
-        { provider: "anthropic", name: "Claude", available: false, connected: false, models: [] },
-      ],
+      models: previewModels(),
       chats: summaries(),
       unavailableChats: 0,
       platform: "darwin",
@@ -1494,14 +1592,14 @@ export const previewApi: FolioApi = {
     if (!chat) throw new Error("Unknown chat.");
     return structuredClone(chat);
   },
-  async send({ chatId, text, courseId, focus, modelId, attachments = [] }: SendInput) {
+  async send({ chatId, text, courseId, focus, model, attachments = [] }: SendInput) {
     const key = chatId ?? crypto.randomUUID();
     const chat: ChatView = chats.get(key) ?? {
       id: key,
       kind: courseId ? "course" : "library",
       title: chatTitle(text),
       status: "idle",
-      modelId: modelId ?? "gpt-6.1-sol",
+      model: model ?? previewRoles.teaching,
       updatedAt: new Date().toISOString(),
       courseId: courseId ?? null,
       focus: focus ?? null,
@@ -1617,6 +1715,30 @@ export const previewApi: FolioApi = {
   async signIn() {},
   async cancelSignIn() {},
   async signOut() {},
+  async saveKey(connection, key) {
+    await new Promise((done) => setTimeout(done, 600));
+    const name = PREVIEW_GROUPS.find((group) => group.connection === connection)?.name ?? "It";
+    if (key.trim().length < 8 || /bad/i.test(key))
+      throw new Error(`${name} refused this key. Check that you copied all of it.`);
+    previewConnected.add(connection);
+    emit({ type: "models", models: previewModels() });
+  },
+  async removeKey(connection) {
+    previewConnected.delete(connection);
+    emit({ type: "models", models: previewModels() });
+  },
+  async setRoleModel(role, ref) {
+    previewRoles[role] = ref;
+    emit({ type: "models", models: previewModels() });
+  },
+  async setOpenRouterModels(ids) {
+    previewOpenRouter = [...new Set(ids)];
+    emit({ type: "models", models: previewModels() });
+  },
+  async openrouterCatalog() {
+    return structuredClone(OPENROUTER_CATALOG);
+  },
+  async revealConfig() {},
   async listCourses() {
     return structuredClone(courses);
   },

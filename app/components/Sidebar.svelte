@@ -285,13 +285,15 @@
   </nav>
 
   <div class="flex flex-col gap-1 px-2.5 pt-1 pb-2.5">
-    {#if folio.ready && !folio.connection.connected}
+    {#if folio.ready && !folio.canUse(folio.modelChoice)}
       <button
         class="flex h-8 items-center gap-2.5 rounded-md px-2 text-left font-medium text-text transition-colors hover:bg-hover"
-        onclick={() => (folio.settingsOpen = true)}
+        onclick={() => folio.openSettings("connections")}
       >
         <span class="mx-[4.5px] size-1.5 rounded-full bg-text-4"></span>
-        <span class="flex-1">Connect ChatGPT</span>
+        <span class="flex-1"
+          >Connect {folio.connectionFor(folio.modelChoice)?.name ?? "a model"}</span
+        >
       </button>
     {/if}
     <button

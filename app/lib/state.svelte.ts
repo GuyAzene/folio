@@ -15,6 +15,9 @@ import type {
   JobView,
   KnowledgeView,
   ImportResult,
+  ModelRole,
+  ModelsView,
+  ModelView,
   AssignmentPatch,
   AssignmentView,
   NoteEditView,
@@ -24,11 +27,10 @@ import type {
   ProposalAction,
   ProposalView,
   StudyNotesView,
-  SubscriptionView,
   Thinking,
   TrashEntryView,
 } from "../../src/desktop/api.ts";
-import { DEFAULT_THINKING, THINKING_LEVELS } from "../../src/desktop/api.ts";
+import { DEFAULT_THINKING, STUDY_ROLES, THINKING_LEVELS } from "../../src/desktop/api.ts";
 import { chatTitle } from "../../src/chat-title.ts";
 import { citationLink } from "../../src/library/note-meta.ts";
 import { courseTab, type CourseTab } from "./course-tabs.ts";
@@ -36,6 +38,7 @@ import { shortTitle } from "./titles.ts";
 
 export type { CourseTab };
 export type ThemePreference = "system" | "light" | "dark";
+export type SettingsSection = "general" | "connections" | "models";
 /** Folio beside a document, Folio full screen over it, or reading alone. */
 export type PanelMode = "docked" | "full" | "closed";
 
@@ -124,17 +127,20 @@ function newId(): string {
 class FolioState {
   ready = $state(false);
   platform = $state("darwin");
-  subscriptions = $state<SubscriptionView[]>([]);
-  defaultModel = $state("");
-  /** The model new chats start with; each chat keeps the model it started with. */
-  modelChoice = $state("");
+  /** Connections, the composer's models and what each role uses, as the main process says. */
+  models = $state<ModelsView>({
+    connections: [],
+    groups: [],
+    roles: {} as ModelsView["roles"],
+    problems: [],
+    openrouter: [],
+  });
   /** How long the tutor thinks, for every chat, from the next question on. */
   thinking = $state<Thinking>(DEFAULT_THINKING);
-  /** Questions go on OpenAI's faster tier, which uses more of the plan. */
+  /** Questions go on OpenAI's faster tier, which costs more. OpenAI models only. */
   fast = $state(false);
   /** The tutor may search the web; off only when the student turns it off in Settings. */
   webSearch = $state(true);
-  connection = $state<ConnectionView>({ connected: false, signingIn: false });
   error = $state<string | null>(null);
   notice = $state<string | null>(null);
   /** A button on the notice, such as Undo after moving something to the Trash. */
@@ -143,6 +149,7 @@ class FolioState {
   /** Folio's Trash, most recently removed first. */
   trash = $state<TrashEntryView[]>([]);
   settingsOpen = $state(false);
+  settingsSection = $state<SettingsSection>("general");
   paletteOpen = $state(false);
   /** The ⌘O note switcher. */
   switcherOpen = $state(false);
@@ -205,15 +212,13 @@ class FolioState {
     try {
       const boot = await api.bootstrap();
       this.platform = boot.platform;
-      this.subscriptions = boot.subscriptions;
-      this.defaultModel = boot.model.id;
-      this.modelChoice = this.#savedModel() ?? boot.model.id;
+      this.models = boot.models;
+      this.#adoptSavedModel();
       this.thinking = this.#savedThinking() ?? DEFAULT_THINKING;
       this.fast = this.#savedFast();
       this.webSearch = this.#savedFlag("folio.webSearch") ?? true;
       this.chats = boot.chats;
       this.unavailableChats = boot.unavailableChats;
-      this.connection = boot.connection;
       await this.refreshLibrary();
       this.jobs = await api.listJobs();
       this.trash = await api.listTrash();
@@ -256,10 +261,44 @@ class FolioState {
   proposal(id: string): ProposalView | undefined {
     return this.proposals.find((proposal) => proposal.id === id);
   }
-  modelName(id: string): string {
-    for (const subscription of this.subscriptions)
-      for (const model of subscription.models) if (model.id === id) return model.name;
-    return id;
+  /** The model new chats start with, config.json's teaching model; each chat keeps its own. */
+  get modelChoice(): string {
+    return this.models.roles.teaching ?? "";
+  }
+  connection(id: string): ConnectionView | undefined {
+    return this.models.connections.find((connection) => connection.id === id);
+  }
+  /** The connection a `connection/model` reference names. */
+  connectionFor(ref: string): ConnectionView | undefined {
+    return this.connection(ref.slice(0, ref.indexOf("/")));
+  }
+  model(ref: string): ModelView | undefined {
+    for (const group of this.models.groups)
+      for (const model of group.models) if (model.ref === ref) return model;
+    return undefined;
+  }
+  modelName(ref: string): string {
+    return this.model(ref)?.name ?? ref.slice(ref.indexOf("/") + 1);
+  }
+  /** Whether Folio has the sign-in or key a model needs. */
+  canUse(ref: string): boolean {
+    return !!this.connectionFor(ref)?.connected;
+  }
+  /** OpenAI's faster tier exists only for its models, on the plan or a key. */
+  fastFor(ref: string): boolean {
+    return ref.startsWith("chatgpt/") || ref.startsWith("openai/");
+  }
+  /** The first connection studying uses that Folio lacks, or null when it has them all. */
+  get studyMissing(): string | null {
+    for (const role of STUDY_ROLES) {
+      const connection = this.connectionFor(this.models.roles[role] ?? "");
+      if (connection && !connection.connected) return connection.name;
+    }
+    return null;
+  }
+  openSettings(section: SettingsSection = "general"): void {
+    this.settingsSection = section;
+    this.settingsOpen = true;
   }
   chatFor(chatId: string | null, tabId: string): ChatView | null {
     return chatId ? (this.chatViews[chatId] ?? null) : (this.pending[tabId] ?? null);
@@ -518,7 +557,7 @@ class FolioState {
         kind: context.courseId ? "course" : "library",
         title: chatTitle(text),
         status: "running",
-        modelId: this.modelChoice,
+        model: this.modelChoice,
         updatedAt: new Date().toISOString(),
         courseId: context.courseId,
         focus: context.focus,
@@ -536,9 +575,12 @@ class FolioState {
         submissionId: crypto.randomUUID(),
         courseId: context.courseId,
         focus: context.focus,
-        modelId: context.chatId ? null : this.modelChoice,
+        model: context.chatId ? null : this.modelChoice,
         thinking: this.thinking,
-        ...(this.fast ? { fast: true } : {}),
+        ...(this.fast &&
+        this.fastFor((context.chatId && this.chatViews[context.chatId]?.model) || this.modelChoice)
+          ? { fast: true }
+          : {}),
         ...(this.webSearch ? {} : { webSearch: false }),
         ...(added.length ? { attachments: added.map((item) => item.input) } : {}),
       });
@@ -1137,13 +1179,44 @@ class FolioState {
 
   // ── Models ──────────────────────────────────────────────────────────────
 
-  setModelChoice(id: string): void {
-    if (!this.subscriptions.some((s) => s.models.some((model) => model.id === id))) return;
-    this.modelChoice = id;
+  /** Checks the key with its provider and keeps it; throws with why when it is refused. */
+  async saveKey(connection: string, key: string): Promise<void> {
+    await this.api.saveKey(connection, key);
+  }
+
+  async removeKey(connection: string): Promise<void> {
     try {
-      localStorage.setItem("folio.model", id);
-    } catch {
-      // A per-device convenience; new chats fall back to the default model.
+      await this.api.removeKey(connection);
+    } catch (error) {
+      this.error = message(error);
+    }
+  }
+
+  async setOpenRouterModels(ids: string[]): Promise<void> {
+    const before = this.models.openrouter;
+    this.models.openrouter = ids;
+    try {
+      await this.api.setOpenRouterModels(ids);
+    } catch (error) {
+      this.models.openrouter = before;
+      this.error = message(error);
+    }
+  }
+
+  /** New chats use this model from now on: it becomes config.json's teaching model. */
+  setModelChoice(ref: string): void {
+    void this.setRoleModel("teaching", ref);
+  }
+
+  async setRoleModel(role: ModelRole, ref: string): Promise<void> {
+    const before = this.models.roles[role];
+    if (before === ref) return;
+    this.models.roles[role] = ref;
+    try {
+      await this.api.setRoleModel(role, ref);
+    } catch (error) {
+      if (this.models.roles[role] === ref) this.models.roles[role] = before;
+      this.error = message(error);
     }
   }
 
@@ -1201,14 +1274,18 @@ class FolioState {
     }
   }
 
-  #savedModel(): string | undefined {
+  /**
+   * Builds before config.json kept the model new chats use on this device, as a ChatGPT model's
+   * ID. It moves into the config once, then leaves.
+   */
+  #adoptSavedModel(): void {
     try {
       const saved = localStorage.getItem("folio.model");
-      return this.subscriptions.some((s) => s.models.some((model) => model.id === saved))
-        ? saved!
-        : undefined;
+      if (saved === null) return;
+      localStorage.removeItem("folio.model");
+      if (this.model(`chatgpt/${saved}`)) this.setModelChoice(`chatgpt/${saved}`);
     } catch {
-      return undefined;
+      // A per-device convenience; new chats use the config's model.
     }
   }
 
@@ -1415,8 +1492,8 @@ class FolioState {
     } else if (event.type === "library") {
       clearTimeout(this.#libraryTimer);
       this.#libraryTimer = setTimeout(() => void this.refreshLibrary(), 120);
-    } else if (event.type === "connection") {
-      this.connection = event.connection;
+    } else if (event.type === "models") {
+      this.models = event.models;
     } else if (event.type === "job") {
       this.#putJob(event.job);
     } else if (event.type === "jobRemoved") {

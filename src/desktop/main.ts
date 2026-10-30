@@ -2,8 +2,7 @@ import { lstat, readFile, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { StreamFn } from "@earendil-works/pi-agent-core";
-import { createModels, type AuthInteraction } from "@earendil-works/pi-ai";
-import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
+import type { AuthInteraction } from "@earendil-works/pi-ai";
 import {
   app,
   BrowserWindow,
@@ -15,7 +14,9 @@ import {
   shell,
   type IpcMainInvokeEvent,
 } from "electron";
-import { createFolioModels, readConnectionStatus } from "../auth.ts";
+import { createFolioModels, readConnections } from "../auth.ts";
+import { FolioConfig, studyRoles } from "../config.ts";
+import { checkKey, cleanKey, modelCatalog } from "../connections.ts";
 import { writeAtomic } from "../files.ts";
 import { IngestRunner } from "../ingest/pipeline.ts";
 import { piComplete } from "../ingest/pi-complete.ts";
@@ -26,7 +27,7 @@ import { KnowledgeStore } from "../kb/store.ts";
 import { TOPIC_POLICY, topicModel } from "../kb/topics.ts";
 import { createAttach } from "../library/attachments.ts";
 import { createRuntimes } from "../library/course-tools.ts";
-import { hostedSearch } from "../library/web-search.ts";
+import { hostedSearch, type SearchFn } from "../library/web-search.ts";
 import {
   ASSIGNMENT_KINDS,
   type AssignmentPatch,
@@ -35,10 +36,23 @@ import {
 import { CourseNotes, noteTitle, type ProposalRecord } from "../library/notes.ts";
 import { scanFolder } from "../library/scan.ts";
 import { parseCourseDetails, SYLLABUS_PROMPT, syllabusText } from "../library/syllabus.ts";
-import { checkId, DOCUMENT_ROLES, LibraryStore, type DocumentRole } from "../library/store.ts";
+import {
+  checkId,
+  DOCUMENT_ROLES,
+  LibraryError,
+  LibraryStore,
+  type DocumentRole,
+} from "../library/store.ts";
 import { folioModel } from "../model-catalog.ts";
-import { OFFERED_MODELS, SUBSCRIPTIONS } from "../model-choices.ts";
-import { DEFAULT_MODEL } from "../agents.ts";
+import { modelGroups, offered, openrouterCatalog } from "../model-choices.ts";
+import {
+  CONNECTIONS,
+  connectionById,
+  parseRef,
+  studyModel,
+  type Connection,
+  type ConnectionId,
+} from "../model-refs.ts";
 import { createSessionStore } from "../session-store.ts";
 import { ARTIFACT_SCHEME, ArtifactRegistry, artifactResponse, MAX_ARTIFACT } from "./artifacts.ts";
 import {
@@ -50,7 +64,6 @@ import {
 } from "./hardening.ts";
 import {
   CHANNELS,
-  type ConnectionView,
   type CourseInput,
   type DesktopBootstrap,
   type DesktopEvent,
@@ -60,6 +73,9 @@ import {
   type InvokeResult,
   type JobOrigin,
   type KnowledgeView,
+  STUDY_ROLES,
+  type ModelRole,
+  type ModelsView,
   type TrashEntryView,
   type ProposalAction,
   type SyllabusDraft,
@@ -107,58 +123,126 @@ protocol.registerSchemesAsPrivileged([
 let window: BrowserWindow | undefined;
 const emit = (event: DesktopEvent) => window?.webContents.send(CHANNELS.event, event);
 
-const catalog = createModels();
-catalog.setProvider(openaiProvider());
-const resolveModel = (id: string) => {
-  const model = folioModel(catalog, id);
+const catalog = modelCatalog();
+const resolveModel = (id: string, provider = "openai") => {
+  const model = folioModel(catalog, id, provider);
   if (!model) throw new Error(`Model '${id}' is not in Pi's catalog.`);
   return model;
+};
+/** A model by its `connection/model` reference; a bare ID is a ChatGPT model. */
+const resolveRef = (ref: string) => {
+  const parsed = parseRef(ref);
+  return parsed ? resolveModel(parsed.id, parsed.connection.provider) : resolveModel(ref);
 };
 const connection = createFolioModels({ home: connectionHome });
 const streamFn: StreamFn = async (model, context, options) =>
   (await connection).models.streamSimple(model, context, options);
+// Which model does what: config.json in Folio's home, edited in Settings or by hand.
+const config = FolioConfig.open(home, catalog);
 
 let signIn: AbortController | undefined;
-async function connectionView(): Promise<ConnectionView> {
-  const { store } = await connection;
-  return { connected: (await readConnectionStatus(store)).connected, signingIn: !!signIn };
+const connected = async (): Promise<Set<ConnectionId>> => readConnections((await connection).store);
+/** The connection behind a role's model. */
+const roleConnection = async (role: ModelRole): Promise<Connection> =>
+  parseRef((await config).roles[role])!.connection;
+/** The role's connection when Folio has its sign-in or key; otherwise its name, to ask for it. */
+async function roleReady(role: ModelRole): Promise<{ ready: boolean; name: string }> {
+  const needed = await roleConnection(role);
+  return { ready: (await connected()).has(needed.id), name: needed.name };
 }
+/** The first connection studying uses that Folio lacks, or null when it has them all. */
+async function studyMissing(): Promise<string | null> {
+  for (const role of STUDY_ROLES) {
+    const { ready, name } = await roleReady(role);
+    if (!ready) return name;
+  }
+  return null;
+}
+
+async function modelsView(): Promise<ModelsView> {
+  const [on, settings] = await Promise.all([connected(), config]);
+  return {
+    connections: CONNECTIONS.map((each) => ({
+      id: each.id,
+      name: each.name,
+      kind: each.kind,
+      connected: on.has(each.id),
+      signingIn: each.id === "chatgpt" && !!signIn,
+    })),
+    groups: modelGroups(catalog, on, settings.openrouter),
+    roles: settings.roles,
+    problems: settings.problems,
+    openrouter: settings.openrouter,
+  };
+}
+
+/** Tells the window, and lets waiting studies start when what they need is there. */
+async function modelsChanged(): Promise<void> {
+  emit({ type: "models", models: await modelsView() });
+  (await jobs).runner.connectionChanged();
+}
+void config.then((settings) =>
+  settings.watch(() => {
+    void modelsChanged();
+  }),
+);
+
+/**
+ * Web search on the research role's model. Each search is its own request carrying the query
+ * and nothing else.
+ */
+const search: SearchFn = async (query, signal) => {
+  const ref = (await config).roles.research;
+  const { ready, name } = await roleReady("research");
+  if (!ready)
+    throw new LibraryError(
+      `Web search runs on ${name}, which isn't connected. Answer from the course and general knowledge, and say what you could not check.`,
+    );
+  return hostedSearch(streamFn, resolveRef(ref))(query, signal);
+};
 
 const library = LibraryStore.open({ home });
 const notes = library.then((store) => new CourseNotes(store));
 // One reader of course PDFs for the tutor: page text, and pages as images.
 const pageReader = library.then((store) => new PageReader(store));
-// Topics are compared and given overviews by GPT-6.1 Terra at low effort.
-const knowledgeStore = library.then((store) =>
+// Topics are compared and given overviews at low effort, by the model set for them.
+const knowledgeStore = Promise.all([library, config]).then(([store, settings]) =>
   KnowledgeStore.open(store, {
-    topics: topicModel(piComplete(async () => (await connection).models, resolveModel)),
+    topics: topicModel(
+      piComplete(async () => (await connection).models, resolveRef),
+      () => studyModel(settings.roles.topics),
+    ),
   }),
 );
-const jobs = Promise.all([JobStore.open(home), library]).then(([store, courses]) => {
-  const runner = new IngestRunner({
-    store,
-    library: courses,
-    complete: piComplete(async () => (await connection).models, resolveModel),
-    prepare: prepareSource,
-    emit: (job) => emit({ type: "job", job }),
-    async publish(bundle) {
-      const published = await (await knowledgeStore).publish(bundle);
-      emit({ type: "library" });
-      return published.generation;
-    },
-    removed: (id) => emit({ type: "jobRemoved", id }),
-    connected: async () => (await connectionView()).connected,
-    knowledge: async (courseId) => (await knowledgeStore).knowledge(courseId),
-    async regroup(courseId) {
-      const result = await (await knowledgeStore).regroup(courseId);
-      emit({ type: "library" });
-      return result ? { merged: result.merged } : null;
-    },
-  });
-  // Jobs interrupted by a quit go back in the queue and continue where they stopped.
-  runner.recover();
-  return { store, runner };
-});
+const jobs = Promise.all([JobStore.open(home), library, config]).then(
+  ([store, courses, settings]) => {
+    const runner = new IngestRunner({
+      store,
+      library: courses,
+      // Each step on the model set for it, through the connection that model needs.
+      roles: () => studyRoles(settings.roles),
+      complete: piComplete(async () => (await connection).models, resolveRef),
+      prepare: prepareSource,
+      emit: (job) => emit({ type: "job", job }),
+      async publish(bundle) {
+        const published = await (await knowledgeStore).publish(bundle);
+        emit({ type: "library" });
+        return published.generation;
+      },
+      removed: (id) => emit({ type: "jobRemoved", id }),
+      connected: async () => (await studyMissing()) === null,
+      knowledge: async (courseId) => (await knowledgeStore).knowledge(courseId),
+      async regroup(courseId) {
+        const result = await (await knowledgeStore).regroup(courseId);
+        emit({ type: "library" });
+        return result ? { merged: result.merged } : null;
+      },
+    });
+    // Jobs interrupted by a quit go back in the queue and continue where they stopped.
+    runner.recover();
+    return { store, runner };
+  },
+);
 
 /**
  * Lectures and recitations are studied as soon as they arrive, after a moment in which a wrong
@@ -214,32 +298,36 @@ setTimeout(() => {
     .catch((error: unknown) => console.error("Folio could not queue unstudied lectures:", error));
 }, BACKLOG_DELAY).unref();
 const sessionStore = createSessionStore({ home });
-const service = Promise.all([sessionStore, library, notes, knowledgeStore, pageReader]).then(
-  ([store, courses, courseNotes, knowledge, pages]) => {
-    const runtimes = createRuntimes(courses, {
-      notes: courseNotes,
-      changed: () => emit({ type: "library" }),
-      knowledge,
-      pages,
-      visuals: true,
-      // Each search is its own request on GPT-6.1 Terra, carrying the query and nothing else.
-      search: hostedSearch(streamFn, resolveModel("gpt-6.1-terra")),
-    });
-    return new ChatService({
-      store,
-      streamFn,
-      resolveModel,
-      modelId: DEFAULT_MODEL,
-      models: OFFERED_MODELS,
-      connected: async () => (await connectionView()).connected,
-      emit,
-      courseRuntime: runtimes.course,
-      libraryRuntime: runtimes.library,
-      // Pages, images, lectures and courses the student adds, checked against the chat.
-      attach: createAttach(courses, pages, { studied: (id) => !!knowledge.current(id) }),
-    });
-  },
-);
+const service = Promise.all([
+  sessionStore,
+  library,
+  notes,
+  knowledgeStore,
+  pageReader,
+  config,
+]).then(([store, courses, courseNotes, knowledge, pages, settings]) => {
+  const runtimes = createRuntimes(courses, {
+    notes: courseNotes,
+    changed: () => emit({ type: "library" }),
+    knowledge,
+    pages,
+    visuals: true,
+    search,
+  });
+  return new ChatService({
+    store,
+    streamFn,
+    resolveModel,
+    model: () => settings.roles.teaching,
+    offered: (ref) => offered(ref, settings.openrouter),
+    connected: async (needed) => (await connected()).has(needed.id),
+    emit,
+    courseRuntime: runtimes.course,
+    libraryRuntime: runtimes.library,
+    // Pages, images, lectures and courses the student adds, checked against the chat.
+    attach: createAttach(courses, pages, { studied: (id) => !!knowledge.current(id) }),
+  });
+});
 
 // Removed things wait 30 days in Folio's Trash, then move on to the Mac's Trash.
 const trash = new Trash(home, { discard: (path) => shell.trashItem(path) });
@@ -303,7 +391,7 @@ async function startSignIn(): Promise<void> {
   if (signIn) return;
   const controller = new AbortController();
   signIn = controller;
-  emit({ type: "connection", connection: await connectionView() });
+  emit({ type: "models", models: await modelsView() });
   const { models, store } = await connection;
   const interaction: AuthInteraction = {
     signal: controller.signal,
@@ -334,8 +422,7 @@ async function startSignIn(): Promise<void> {
       emit({ type: "error", chatId: null, message: errorMessage(error) });
   } finally {
     signIn = undefined;
-    emit({ type: "connection", connection: await connectionView() });
-    (await jobs).runner.connectionChanged();
+    await modelsChanged();
   }
 }
 
@@ -384,12 +471,13 @@ async function readSyllabus(path: string): Promise<SyllabusDraft> {
       ...draft,
       note: "This file has no text Folio can read, for example a scan. Fill in the details yourself.",
     };
-  if (!(await connectionView()).connected)
-    return { ...draft, note: "Connect ChatGPT and Folio can fill these in from the syllabus." };
+  const { ready, name } = await roleReady("syllabus");
+  if (!ready)
+    return { ...draft, note: `Connect ${name} and Folio can fill these in from the syllabus.` };
   const reply = await (
     await connection
   ).models.completeSimple(
-    resolveModel(DEFAULT_MODEL),
+    resolveRef((await config).roles.syllabus),
     {
       systemPrompt: SYLLABUS_PROMPT,
       messages: [{ role: "user", content: text, timestamp: Date.now() }],
@@ -472,22 +560,8 @@ async function importPaths(
 const handlers: Record<InvokeMethod, (...args: unknown[]) => Promise<unknown>> = {
   async bootstrap(): Promise<DesktopBootstrap> {
     const { chats, unavailable } = await (await service).chats();
-    const model = resolveModel(DEFAULT_MODEL);
-    const connection = await connectionView();
     return {
-      connection,
-      model: { id: model.id, name: model.name },
-      subscriptions: SUBSCRIPTIONS.map((subscription) => ({
-        provider: subscription.provider,
-        name: subscription.name,
-        available: subscription.available,
-        // Only ChatGPT can be signed in to so far.
-        connected: subscription.provider === "openai" && connection.connected,
-        models: [
-          ...subscription.models.map((id) => ({ id, name: resolveModel(id).name })),
-          ...subscription.older.map((id) => ({ id, name: resolveModel(id).name, older: true })),
-        ],
-      })),
+      models: await modelsView(),
       chats,
       unavailableChats: unavailable,
       platform: process.platform,
@@ -506,8 +580,43 @@ const handlers: Record<InvokeMethod, (...args: unknown[]) => Promise<unknown>> =
   async signOut() {
     signIn?.abort();
     await (await connection).models.logout("openai");
-    emit({ type: "connection", connection: await connectionView() });
-    (await jobs).runner.connectionChanged();
+    await modelsChanged();
+  },
+  async saveKey(id, key) {
+    const target = connectionById(id);
+    if (target?.kind !== "key") throw new Error("Folio does not take a key for that.");
+    const clean = cleanKey(target, key);
+    await checkKey(target.id, clean);
+    await (
+      await connection
+    ).store.modify(target.provider, async () => ({ type: "api_key", key: clean }));
+    await modelsChanged();
+  },
+  async removeKey(id) {
+    const target = connectionById(id);
+    if (target?.kind !== "key") throw new Error("Folio does not take a key for that.");
+    await (await connection).models.logout(target.provider);
+    await modelsChanged();
+  },
+  async setRoleModel(role, ref) {
+    try {
+      await (await config).setRole(role as ModelRole, ref as string);
+    } finally {
+      await modelsChanged();
+    }
+  },
+  async setOpenRouterModels(ids) {
+    try {
+      await (await config).setOpenRouter(ids);
+    } finally {
+      await modelsChanged();
+    }
+  },
+  openrouterCatalog: async () => openrouterCatalog(catalog),
+  async revealConfig() {
+    const settings = await config;
+    await settings.ensure();
+    shell.showItemInFolder(settings.path);
   },
   listCourses: courses,
   async createCourse(input) {
@@ -696,8 +805,8 @@ const handlers: Record<InvokeMethod, (...args: unknown[]) => Promise<unknown>> =
     checkId(courseId);
     if (!Array.isArray(documentIds) || documentIds.some((id) => typeof id !== "string"))
       throw new Error("Choose lectures or recitations to study.");
-    if (!(await connectionView()).connected)
-      throw new Error("Connect your ChatGPT account in Settings to study documents.");
+    const missing = await studyMissing();
+    if (missing) throw new Error(`Connect ${missing} in Settings to study documents.`);
     return (await jobs).runner.start(courseId, documentIds as string[]);
   },
   async pauseJob(id) {
@@ -706,8 +815,8 @@ const handlers: Record<InvokeMethod, (...args: unknown[]) => Promise<unknown>> =
   },
   async resumeJob(id) {
     checkId(id);
-    if (!(await connectionView()).connected)
-      throw new Error("Connect your ChatGPT account in Settings to resume.");
+    const missing = await studyMissing();
+    if (missing) throw new Error(`Connect ${missing} in Settings to resume.`);
     return (await jobs).runner.resume(id);
   },
   async cancelJob(id) {

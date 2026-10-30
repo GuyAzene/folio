@@ -85,7 +85,12 @@
     return (last && writtenDirection(estimateDirection(last.text))) || "ltr";
   });
   const running = $derived(folio.running(chat));
-  const connected = $derived(folio.connection.connected);
+  /** The model the next question goes to: the chat's own, or the one new chats start with. */
+  const modelRef = $derived(
+    (chatId ? chat?.model : undefined) ?? folio.modelChoice,
+  );
+  const needed = $derived(folio.connectionFor(modelRef));
+  const connected = $derived(!!needed?.connected);
   // A page or image can be sent on its own; a lecture or course needs a question.
   const canSend = $derived(
     connected && !running && (text.trim().length > 0 || !!quote || visual),
@@ -229,11 +234,24 @@
       class="flex items-center gap-3 rounded-t-[13px] border-b border-line-subtle bg-sunken px-3.5 py-2.5"
     >
       <span class="min-w-0 flex-1 text-text-2">
-        {folio.connection.signingIn
-          ? "Finish signing in with ChatGPT in your browser."
-          : "Connect your ChatGPT account to start chatting."}
+        {#if needed?.kind === "key"}
+          Add your {needed.name} API key to {chatId
+            ? "go on with this chat"
+            : `chat with ${folio.modelName(modelRef)}`}.
+        {:else if needed?.signingIn}
+          Finish signing in with ChatGPT in your browser.
+        {:else}
+          Connect your ChatGPT account to {chatId
+            ? "go on with this chat"
+            : "start chatting"}.
+        {/if}
       </span>
-      {#if folio.connection.signingIn}
+      {#if needed?.kind === "key"}
+        <button
+          class="h-7 shrink-0 rounded-md bg-ink px-2.5 text-[12px] font-medium whitespace-nowrap text-on-ink shadow-1 hover:opacity-90"
+          onclick={() => folio.openSettings("connections")}>Add key</button
+        >
+      {:else if needed?.signingIn}
         <button
           class="h-7 shrink-0 rounded-md border border-line bg-surface px-2.5 text-[12px] font-medium whitespace-nowrap shadow-1 hover:bg-hover"
           onclick={() => folio.api.cancelSignIn()}>Cancel</button
@@ -352,10 +370,10 @@
     {#if !collapsed}
       <span class="flex-1"></span>
       <ModelPicker
-        chatModelId={chatId ? (chat?.modelId ?? null) : null}
+        chatModel={chatId ? (chat?.model ?? null) : null}
         onnewchat={onnewchat ?? (() => folio.newChat(courseId))}
       />
-      <ReasoningPicker />
+      <ReasoningPicker fastAvailable={folio.fastFor(modelRef)} />
     {/if}
     {#if running}
       <button

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import type { JobView } from "../src/desktop/api.ts";
+import { DEFAULT_ROLES, studyRoles } from "../src/config.ts";
 import { renderDraft } from "../src/ingest/draft.ts";
 import {
   computeLedger,
@@ -235,6 +236,7 @@ function fakeModels(options: { stubborn?: boolean; doubt?: boolean; failWriting?
 async function setup(
   complete = fakeModels().complete,
   publish?: (bundle: DraftBundle) => Promise<number>,
+  roles?: ConstructorParameters<typeof IngestRunner>[0]["roles"],
 ) {
   const home = await mkdtemp(resolve(tmpdir(), "folio-ingest-test-"));
   homes.push(home);
@@ -255,6 +257,7 @@ async function setup(
     store,
     library,
     complete,
+    roles,
     prepare: async () => fakeSource(),
     emit: (job) => events.push(job),
     publish:
@@ -357,6 +360,51 @@ describe("ingestion pipeline", () => {
     });
     // Every structured request asks for its answer as a strict tool call with the step's schema.
     expect(models.calls.every((call) => call.schema)).toBe(true);
+  });
+
+  it("runs each step on the model set for it, through that model's own connection", async () => {
+    const models = fakeModels();
+    let roles = studyRoles({
+      ...DEFAULT_ROLES,
+      reader: "chatgpt/gpt-6.1-sol",
+      writer: "openrouter/deepseek/deepseek-v4-pro",
+      checker: "anthropic/claude-sonnet-5-5",
+    });
+    const { store, runner, course, lecture, finished } = await setup(
+      models.complete,
+      undefined,
+      () => roles,
+    );
+    const job = await runner.start(course.id, [lecture.id]);
+    await finished(job.id);
+    expect(store.job(job.id).status).toBe("done");
+    const used = (start: string) =>
+      new Set(
+        models.calls.filter((call) => call.system.startsWith(start)).map((call) => call.model),
+      );
+    // A ChatGPT model keeps its bare ID, as every study before named it.
+    expect(used("You read a few pages")).toEqual(new Set(["gpt-6.1-sol"]));
+    expect(used("You write a reviewed study wiki")).toEqual(
+      new Set(["openrouter/deepseek/deepseek-v4-pro"]),
+    );
+    expect(used("You independently check")).toEqual(new Set(["anthropic/claude-sonnet-5-5"]));
+    const providers = (role: string) =>
+      new Set(
+        store
+          .nodes(job.id)
+          // Each step's own node; the group above a role's steps names no provider.
+          .filter((node) => node.role === role && node.provider)
+          .map((node) => node.provider),
+      );
+    expect(providers("reader")).toEqual(new Set(["openai"]));
+    expect(providers("author")).toEqual(new Set(["openrouter"]));
+    expect(providers("reviewer")).toEqual(new Set(["anthropic"]));
+    // A change in Settings applies to the next study.
+    roles = studyRoles(DEFAULT_ROLES);
+    models.calls.length = 0;
+    const again = await runner.start(course.id, [lecture.id]);
+    await finished(again.id);
+    expect(used("You write a reviewed study wiki")).toEqual(new Set(["gpt-6.1-sol"]));
   });
 
   it("keeps each document's close-ups under its own reader when two are read at once", async () => {

@@ -35,9 +35,11 @@ export function piComplete(
   retryAfter: readonly number[] = RETRY_AFTER,
 ): CompleteFn {
   function send(request: ModelRequest): Promise<AssistantMessage> {
+    const model = resolveModel(request.model);
+    const forced = request.answer ? forcedTool(model) : undefined;
     return models().then((pi) =>
       pi.completeSimple(
-        resolveModel(request.model),
+        model,
         {
           systemPrompt: request.system,
           messages: [{ role: "user", content: request.content, timestamp: Date.now() }],
@@ -57,11 +59,9 @@ export function piComplete(
         },
         {
           maxTokens: request.maxTokens,
-          reasoning: request.reasoning,
+          reasoning: forced?.thinks === false ? undefined : request.reasoning,
           signal: request.signal,
-          // Pi's type lists "auto" and "none"; the Responses API also takes "required", which
-          // makes calling the tool mandatory (verified on the ChatGPT plan).
-          ...(request.answer ? { toolChoice: "required" as ToolChoice } : {}),
+          ...(forced ? { toolChoice: forced.choice } : {}),
         },
       ),
     );
@@ -89,6 +89,18 @@ export function piComplete(
       if (request.signal?.aborted) return answerOf(reply, used, request.answer?.name);
     }
   };
+}
+
+/**
+ * How each API makes calling the answer tool mandatory. Pi's type lists "auto" and "none"; the
+ * Responses and Chat Completions APIs also take "required" (verified on the ChatGPT plan), and
+ * Anthropic and Gemini call it "any". Anthropic refuses a forced tool while the model thinks, so
+ * those requests go without thinking.
+ */
+export function forcedTool(model: Model<Api>): { choice: ToolChoice; thinks: boolean } {
+  if (model.api === "anthropic-messages") return { choice: "any" as ToolChoice, thinks: false };
+  if (model.api === "google-generative-ai") return { choice: "any" as ToolChoice, thinks: true };
+  return { choice: "required" as ToolChoice, thinks: true };
 }
 
 function answerOf(

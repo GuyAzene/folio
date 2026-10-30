@@ -109,7 +109,8 @@ export interface ChatView {
   kind: ChatKind;
   title: string;
   status: SessionStatus;
-  modelId: string;
+  /** The chat's model, as a `connection/model` reference; a saved chat keeps it. */
+  model: string;
   updatedAt: string;
   /** Null for a plain chat. */
   courseId: string | null;
@@ -453,33 +454,83 @@ export interface ImportResult {
   error?: string;
 }
 
+/** The ChatGPT plan, or a service Folio reaches with the student's own API key. */
 export interface ConnectionView {
+  /** "chatgpt", "openai", "anthropic", "google" or "openrouter". */
+  id: string;
+  name: string;
+  /** The plan signs in through the browser; the others take an API key. */
+  kind: "plan" | "key";
   connected: boolean;
+  /** The ChatGPT sign-in is waiting for the browser. */
   signingIn: boolean;
 }
 
 export interface ModelView {
-  id: string;
+  /** A `connection/model` reference, such as "chatgpt/gpt-6.1-sol". */
+  ref: string;
   name: string;
   /** An earlier model, listed under "Older models". */
   older?: boolean;
+  /** False for a model that reads text only: it can't see a page or an image. */
+  images: boolean;
+  /** OpenRouter: the lab that made the model, by which the composer groups them. */
+  lab?: string;
 }
 
-/** A subscription and the models Folio offers through it. */
-export interface SubscriptionView {
-  provider: string;
+/** A connection and the models the composer offers through it. */
+export interface ModelGroupView {
+  connection: string;
   name: string;
-  /** False until Folio can sign in to this subscription. */
-  available: boolean;
   connected: boolean;
   models: ModelView[];
 }
 
+/**
+ * What each model does, as the student set it in Settings or config.json: the tutor's model for
+ * new chats, web search, each study step, and reading a syllabus.
+ */
+export const MODEL_ROLES = [
+  "teaching",
+  "research",
+  "planner",
+  "reader",
+  "closeup",
+  "writer",
+  "checker",
+  "topics",
+  "syllabus",
+] as const;
+export type ModelRole = (typeof MODEL_ROLES)[number];
+
+/**
+ * Roles whose model must see pages: the study steps that read slides. The others may read text
+ * only; a text-only tutor gets a note where a page image would be, and reads the page's text.
+ */
+export const IMAGE_ROLES: readonly ModelRole[] = ["planner", "reader", "closeup", "checker"];
+
+/** The roles studying uses: a study starts only once each one's connection is there. */
+export const STUDY_ROLES: readonly ModelRole[] = [
+  "planner",
+  "reader",
+  "closeup",
+  "writer",
+  "checker",
+];
+
+export interface ModelsView {
+  connections: ConnectionView[];
+  groups: ModelGroupView[];
+  /** Each role's model, as a reference: config.json's when Folio can use it, else the default. */
+  roles: Record<ModelRole, string>;
+  /** Entries of config.json Folio could not use, each saying why; their defaults apply. */
+  problems: string[];
+  /** The OpenRouter models the composer offers. */
+  openrouter: string[];
+}
+
 export interface DesktopBootstrap {
-  connection: ConnectionView;
-  /** The default model for new chats. */
-  model: ModelView;
-  subscriptions: SubscriptionView[];
+  models: ModelsView;
   chats: ChatSummary[];
   /** Saved files that could not be read; they are preserved on disk. */
   unavailableChats: number;
@@ -487,9 +538,9 @@ export interface DesktopBootstrap {
 }
 
 /**
- * How long the tutor thinks before it answers, from quick to thorough. Every offered model takes
- * all five (checked with one request each on a ChatGPT Pro plan, 2026-10-29); higher is slower
- * and uses more of the plan.
+ * How long the tutor thinks before it answers, from quick to thorough. Every ChatGPT model takes
+ * all five (checked with one request each on a ChatGPT Pro plan, 2026-10-29); Pi brings a level
+ * another model lacks to its nearest one. Higher is slower and costs more.
  */
 export const THINKING_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
 export type Thinking = (typeof THINKING_LEVELS)[number];
@@ -502,13 +553,13 @@ export interface SendInput {
   /** For a new chat: the course it belongs to (null for a plain chat) and the page in view. */
   courseId?: string | null;
   focus?: Focus | null;
-  /** For a new chat: one of the offered models; existing chats keep theirs. */
-  modelId?: string | null;
+  /** For a new chat: an offered model's reference; existing chats keep theirs. */
+  model?: string | null;
   /** What the student added to the question with the composer's +. */
   attachments?: AttachmentInput[];
   /** How long the tutor thinks about this question; it applies from this question on. */
   thinking?: Thinking;
-  /** Answer this question on OpenAI's faster tier, which uses more of the plan. */
+  /** Answer this question on OpenAI's faster tier, which costs more. OpenAI models only. */
   fast?: boolean;
   /** False when the student turned web search off in Settings. */
   webSearch?: boolean;
@@ -524,7 +575,8 @@ export type DesktopEvent =
   | { type: "job"; job: JobView }
   | { type: "jobRemoved"; id: string }
   | { type: "trash" }
-  | { type: "connection"; connection: ConnectionView }
+  /** Connections, the composer's models or config.json changed. */
+  | { type: "models"; models: ModelsView }
   | { type: "error"; chatId: string | null; message: string };
 
 export interface FolioApi {
@@ -537,6 +589,17 @@ export interface FolioApi {
   signIn(): Promise<void>;
   cancelSignIn(): Promise<void>;
   signOut(): Promise<void>;
+  /** Checks the key with its provider, then keeps it in Folio's key file. */
+  saveKey(connection: string, key: string): Promise<void>;
+  removeKey(connection: string): Promise<void>;
+  /** Sets one role's model in config.json; refused when the file changed outside Folio. */
+  setRoleModel(role: ModelRole, ref: string): Promise<void>;
+  /** Sets which OpenRouter models the composer offers, in config.json. */
+  setOpenRouterModels(ids: string[]): Promise<void>;
+  /** Every OpenRouter model Folio can use, for picking the composer's. */
+  openrouterCatalog(): Promise<ModelView[]>;
+  /** Shows config.json in Finder, writing today's choices to it first if it doesn't exist. */
+  revealConfig(): Promise<void>;
   listCourses(): Promise<CourseView[]>;
   createCourse(input: CourseInput): Promise<CourseView>;
   updateCourse(id: string, patch: CourseInput, revision: number): Promise<CourseView>;

@@ -41,6 +41,7 @@ import {
   type Verdict,
 } from "./prompts.ts";
 import { missingNumbers, tokenRecall } from "./reconcile.ts";
+import { parseRef } from "../model-refs.ts";
 import type { Box, PageInventory, Region, SourceInventory } from "./types.ts";
 
 /** One opened source: its inventory and page renders. Implemented with pdf.js in the app. */
@@ -85,7 +86,8 @@ export interface IngestOptions {
   publish: (bundle: DraftBundle) => Promise<number>;
   /** A job left the list: dismissed, or replaced by a later run over the same documents. */
   removed?: (jobId: string) => void;
-  roles?: RoleModels;
+  /** Read again at each step, so a change in Settings applies from the next step on. */
+  roles?: RoleModels | (() => RoleModels);
   /** Parallel reader and reviewer requests across all jobs. */
   concurrency?: number;
   /** Jobs studied at once; the rest wait their turn. */
@@ -171,16 +173,25 @@ export const PUBLISH_FAILED = "The study notes were written but couldn't be adde
 
 export class IngestRunner {
   readonly #options: IngestOptions;
-  readonly #roles: RoleModels;
+  readonly #roleOption: RoleModels | (() => RoleModels);
   readonly #running = new Map<string, AbortController>();
   /** Each running job's run, so a caller can wait until it has really stopped. */
   readonly #runs = new Map<string, Promise<void>>();
   readonly #limit: <T>(line: string, task: () => Promise<T>) => Promise<T>;
   #filling: Promise<void> = Promise.resolve();
 
+  /**
+   * Which model plays each role. A ChatGPT model is named by its bare ID, as studies always
+   * have; any other by its `connection/model` reference.
+   */
+  get #roles(): RoleModels {
+    const roles = this.#roleOption;
+    return typeof roles === "function" ? roles() : roles;
+  }
+
   constructor(options: IngestOptions) {
     this.#options = options;
-    this.#roles = options.roles ?? DEFAULT_ROLES;
+    this.#roleOption = options.roles ?? DEFAULT_ROLES;
     this.#limit = fairLimiter(options.concurrency ?? 3);
   }
 
@@ -1164,7 +1175,7 @@ export class IngestRunner {
     const cached = store.step<T>(key);
     const created = this.#node(jobId, parentId, key, {
       ...node,
-      provider: node.model ? this.#roles.provider : null,
+      provider: node.model ? (parseRef(node.model)?.connection.provider ?? "openai") : null,
     });
     if (cached !== undefined) {
       if (created.status !== "done")

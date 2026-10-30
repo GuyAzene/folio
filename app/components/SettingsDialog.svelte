@@ -1,14 +1,32 @@
 <script lang="ts">
-  import { X } from "@lucide/svelte";
+  import { Cpu, KeyRound, SlidersHorizontal, X } from "@lucide/svelte";
   import { Dialog, ToggleGroup } from "bits-ui";
-  import { folio, type ThemePreference } from "../lib/state.svelte.ts";
-  import ProviderMark from "./ProviderMark.svelte";
+  import {
+    folio,
+    type SettingsSection,
+    type ThemePreference,
+  } from "../lib/state.svelte.ts";
+  import ConnectionSettings from "./ConnectionSettings.svelte";
+  import ModelSettings from "./ModelSettings.svelte";
 
   const themes: { value: ThemePreference; label: string }[] = [
     { value: "system", label: "System" },
     { value: "light", label: "Light" },
     { value: "dark", label: "Dark" },
   ];
+
+  const SECTIONS: {
+    value: SettingsSection;
+    label: string;
+    icon: typeof Cpu;
+  }[] = [
+    { value: "general", label: "General", icon: SlidersHorizontal },
+    { value: "connections", label: "Connections", icon: KeyRound },
+    { value: "models", label: "Models", icon: Cpu },
+  ];
+
+  const toggle =
+    "h-[26px] rounded-md px-2.5 text-[12px] font-medium text-text-2 transition-colors data-[state=on]:bg-surface data-[state=on]:text-text data-[state=on]:shadow-[0_1px_2px_#18181b14,0_0_0_1px_#18181b0a] dark:data-[state=on]:bg-selected";
 </script>
 
 <Dialog.Root bind:open={folio.settingsOpen}>
@@ -17,12 +35,17 @@
       class="fixed inset-0 z-40 animate-[folio-fade_150ms_ease-out] bg-[#18181b]/20 backdrop-blur-[2px] dark:bg-black/50"
     />
     <Dialog.Content
-      class="fixed top-1/2 left-1/2 z-50 flex w-[min(480px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 flex-col rounded-2xl border border-line-subtle bg-raised shadow-3 outline-none"
+      onInteractOutside={(event) => {
+        // A button that swapped itself out as it was clicked (Add key, Choose…) was inside.
+        if (event.target instanceof Node && !event.target.isConnected)
+          event.preventDefault();
+      }}
+      class="fixed top-1/2 left-1/2 z-50 flex h-[min(600px,calc(100vh-48px))] w-[min(720px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 flex-col rounded-2xl border border-line-subtle bg-raised shadow-3 outline-none"
     >
       <div
-        class="flex animate-[folio-scale_180ms_var(--ease-out-quint)] flex-col"
+        class="flex min-h-0 flex-1 animate-[folio-scale_180ms_var(--ease-out-quint)] flex-col"
       >
-        <div class="flex items-center justify-between px-5 pt-4 pb-1">
+        <div class="flex items-center justify-between px-5 pt-4 pb-2">
           <Dialog.Title class="text-[15px] font-semibold tracking-[-0.01em]"
             >Settings</Dialog.Title
           >
@@ -34,127 +57,104 @@
           </Dialog.Close>
         </div>
         <Dialog.Description class="sr-only"
-          >Appearance and account settings.</Dialog.Description
+          >Appearance, connections and which model does what.</Dialog.Description
         >
 
-        <section class="flex items-center justify-between gap-4 px-5 py-4">
-          <div class="flex flex-col gap-0.5">
-            <span class="font-medium">Appearance</span>
-            <span class="text-[12px] text-text-3">Light is the default.</span>
-          </div>
-          <ToggleGroup.Root
-            type="single"
-            value={folio.theme}
-            onValueChange={(value) =>
-              value && folio.setTheme(value as ThemePreference)}
-            class="flex rounded-lg border border-line-subtle bg-bg p-0.5"
+        <div class="flex min-h-0 flex-1 max-sm:flex-col">
+          <nav
+            class="flex shrink-0 gap-0.5 px-3 pb-3 sm:w-[168px] sm:flex-col max-sm:border-b max-sm:border-line-subtle"
+            aria-label="Settings sections"
           >
-            {#each themes as theme (theme.value)}
-              <ToggleGroup.Item
-                value={theme.value}
-                class="h-[26px] rounded-md px-2.5 text-[12px] font-medium text-text-2 transition-colors data-[state=on]:bg-surface data-[state=on]:text-text data-[state=on]:shadow-[0_1px_2px_#18181b14,0_0_0_1px_#18181b0a] dark:data-[state=on]:bg-selected"
+            {#each SECTIONS as section (section.value)}
+              {@const Icon = section.icon}
+              <button
+                class="flex h-8 items-center gap-2.5 rounded-md px-2.5 text-left transition-colors {folio.settingsSection ===
+                section.value
+                  ? 'bg-hover font-medium text-text'
+                  : 'text-text-2 hover:bg-hover hover:text-text'}"
+                aria-current={folio.settingsSection === section.value
+                  ? "page"
+                  : undefined}
+                onclick={() => (folio.settingsSection = section.value)}
               >
-                {theme.label}
-              </ToggleGroup.Item>
+                <Icon size={15} strokeWidth={1.75} />
+                {section.label}
+              </button>
             {/each}
-          </ToggleGroup.Root>
-        </section>
+          </nav>
 
-        <div class="mx-5 h-px bg-line-subtle"></div>
-
-        <section class="flex items-center justify-between gap-4 px-5 py-4">
-          <div class="flex min-w-0 flex-col gap-0.5">
-            <span class="font-medium">Web search</span>
-            <span class="text-[12px] text-text-3"
-              >The tutor may search the internet when you want more than your
-              course material. Only a short query leaves Folio.</span
-            >
-          </div>
-          <ToggleGroup.Root
-            type="single"
-            value={folio.webSearch ? "on" : "off"}
-            onValueChange={(value) => value && folio.setWebSearch(value === "on")}
-            class="flex shrink-0 rounded-lg border border-line-subtle bg-bg p-0.5"
+          <div
+            class="scroll-quiet min-h-0 flex-1 overflow-y-auto px-5 pt-1 pb-5 sm:pl-2"
           >
-            {#each [{ value: "on", label: "On" }, { value: "off", label: "Off" }] as option (option.value)}
-              <ToggleGroup.Item
-                value={option.value}
-                class="h-[26px] rounded-md px-2.5 text-[12px] font-medium text-text-2 transition-colors data-[state=on]:bg-surface data-[state=on]:text-text data-[state=on]:shadow-[0_1px_2px_#18181b14,0_0_0_1px_#18181b0a] dark:data-[state=on]:bg-selected"
-              >
-                {option.label}
-              </ToggleGroup.Item>
-            {/each}
-          </ToggleGroup.Root>
-        </section>
-
-        <div class="mx-5 h-px bg-line-subtle"></div>
-
-        <section class="flex flex-col gap-1 px-5 py-4">
-          <span class="mb-1 font-medium">Subscriptions</span>
-          <div class="flex items-center justify-between gap-4 py-1">
-            <div class="flex items-center gap-2.5">
-              <ProviderMark provider="openai" name="ChatGPT" size={16} />
-              <div class="flex flex-col gap-0.5">
-                <span>ChatGPT</span>
-                <span class="flex items-center gap-1.5 text-[12px] text-text-3">
-                  <span
-                    class="size-1.5 rounded-full {folio.connection.connected
-                      ? 'bg-success'
-                      : 'bg-text-4'}"
-                  ></span>
-                  {folio.connection.connected
-                    ? "Connected with your plan"
-                    : folio.connection.signingIn
-                      ? "Waiting for the browser"
-                      : "Not connected"}
-                </span>
-              </div>
-            </div>
-            {#if folio.connection.connected}
-              <button
-                class="h-8 rounded-md border border-line bg-surface px-3 font-medium shadow-1 hover:bg-hover"
-                onclick={() => folio.api.signOut()}>Sign out</button
-              >
-            {:else if folio.connection.signingIn}
-              <button
-                class="h-8 rounded-md border border-line bg-surface px-3 font-medium shadow-1 hover:bg-hover"
-                onclick={() => folio.api.cancelSignIn()}>Cancel</button
-              >
+            {#if folio.settingsSection === "connections"}
+              <ConnectionSettings />
+            {:else if folio.settingsSection === "models"}
+              <ModelSettings />
             {:else}
-              <button
-                class="h-8 rounded-md bg-ink px-3 font-medium text-on-ink shadow-1 hover:opacity-90"
-                onclick={() => folio.api.signIn()}>Connect</button
-              >
+              <section class="flex items-center justify-between gap-4 pb-4">
+                <div class="flex flex-col gap-0.5">
+                  <span class="font-medium">Appearance</span>
+                  <span class="text-[12px] text-text-3">Light is the default.</span
+                  >
+                </div>
+                <ToggleGroup.Root
+                  type="single"
+                  value={folio.theme}
+                  onValueChange={(value) =>
+                    value && folio.setTheme(value as ThemePreference)}
+                  class="flex rounded-lg border border-line-subtle bg-bg p-0.5"
+                >
+                  {#each themes as theme (theme.value)}
+                    <ToggleGroup.Item value={theme.value} class={toggle}>
+                      {theme.label}
+                    </ToggleGroup.Item>
+                  {/each}
+                </ToggleGroup.Root>
+              </section>
+
+              <div class="h-px bg-line-subtle"></div>
+
+              <section class="flex items-center justify-between gap-4 py-4">
+                <div class="flex min-w-0 flex-col gap-0.5">
+                  <span class="font-medium">Web search</span>
+                  <span class="text-[12px] text-text-3"
+                    >The tutor may search the internet when you want more than
+                    your course material. Only a short query leaves Folio.</span
+                  >
+                </div>
+                <ToggleGroup.Root
+                  type="single"
+                  value={folio.webSearch ? "on" : "off"}
+                  onValueChange={(value) =>
+                    value && folio.setWebSearch(value === "on")}
+                  class="flex shrink-0 rounded-lg border border-line-subtle bg-bg p-0.5"
+                >
+                  {#each [{ value: "on", label: "On" }, { value: "off", label: "Off" }] as option (option.value)}
+                    <ToggleGroup.Item value={option.value} class={toggle}>
+                      {option.label}
+                    </ToggleGroup.Item>
+                  {/each}
+                </ToggleGroup.Root>
+              </section>
+
+              <div class="h-px bg-line-subtle"></div>
+
+              <section class="flex items-center justify-between gap-4 pt-4">
+                <div class="flex flex-col gap-0.5">
+                  <span class="font-medium">New chats use</span>
+                  <span class="text-[12px] text-text-3"
+                    >Pick another in the composer. Chats are saved on this Mac.</span
+                  >
+                </div>
+                <button
+                  class="text-text-2 hover:text-text"
+                  onclick={() => (folio.settingsSection = "models")}
+                  >{folio.modelName(folio.modelChoice)}</button
+                >
+              </section>
             {/if}
           </div>
-          {#each folio.subscriptions.filter((subscription) => !subscription.available) as subscription (subscription.provider)}
-            <div class="flex items-center justify-between gap-4 py-1">
-              <div class="flex items-center gap-2.5">
-                <ProviderMark
-                  provider={subscription.provider}
-                  name={subscription.name}
-                  size={16}
-                />
-                <div class="flex flex-col gap-0.5">
-                  <span>{subscription.name}</span>
-                  <span class="text-[12px] text-text-3">Not available yet</span>
-                </div>
-              </div>
-            </div>
-          {/each}
-        </section>
-
-        <div class="mx-5 h-px bg-line-subtle"></div>
-
-        <section class="flex items-center justify-between gap-4 px-5 pt-4 pb-5">
-          <div class="flex flex-col gap-0.5">
-            <span class="font-medium">New chats use</span>
-            <span class="text-[12px] text-text-3"
-              >Pick another in the composer. Chats are saved on this Mac.</span
-            >
-          </div>
-          <span class="text-text-2">{folio.modelName(folio.modelChoice)}</span>
-        </section>
+        </div>
       </div>
     </Dialog.Content>
   </Dialog.Portal>

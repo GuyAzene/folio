@@ -47,6 +47,38 @@ describe("Pi bridge", () => {
     expect(options.toolChoice).toBe("required");
   });
 
+  it("forces the answer tool as each API names it, and drops thinking where Anthropic refuses it", async () => {
+    const cases = [
+      ["openai-responses", "required", "medium"],
+      ["openai-completions", "required", "medium"],
+      ["google-generative-ai", "any", "medium"],
+      ["anthropic-messages", "any", undefined],
+    ] as const;
+    for (const [api, choice, reasoning] of cases) {
+      const { models, completeSimple } = fakeModels([
+        { type: "toolCall", id: "1", name: "submit", arguments: { page: 2 } },
+      ]);
+      const reply = await piComplete(
+        async () => models,
+        (id) => ({ id, api }) as never,
+      )({
+        model: "synthetic",
+        system: "s",
+        content: [],
+        maxTokens: 10,
+        reasoning: "medium",
+        answer: { name: "submit", description: "d", schema },
+      });
+      expect(reply.answers).toEqual([{ page: 2 }]);
+      const [, , options] = completeSimple.mock.calls[0] as unknown as [
+        unknown,
+        unknown,
+        { toolChoice: string; reasoning?: string },
+      ];
+      expect([api, options.toolChoice, options.reasoning]).toEqual([api, choice, reasoning]);
+    }
+  });
+
   it("passes arguments Pi could not read on as text, for the repair fallback", async () => {
     const { models } = fakeModels([
       {

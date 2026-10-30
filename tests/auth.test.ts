@@ -6,7 +6,7 @@ import { setTimeout } from "node:timers/promises";
 import { promisify } from "node:util";
 import type { OAuthCredential, OAuthAuth } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import { createFolioModels, readConnectionStatus } from "../src/auth.ts";
+import { createFolioModels, readConnections, readConnectionStatus } from "../src/auth.ts";
 
 const run = promisify(execFile);
 const homes: string[] = [];
@@ -101,7 +101,9 @@ describe("Folio ChatGPT connection", () => {
       "ChatGPT connection renewal failed. Run the login command to reconnect.",
     );
     expect(cause.cause).toBeUndefined();
-    expect((await store.read("openai"))?.refresh).toBe("synthetic-refresh");
+    expect(((await store.read("openai")) as OAuthCredential | undefined)?.refresh).toBe(
+      "synthetic-refresh",
+    );
   });
 
   it("serializes refreshes across store instances and preserves a failed refresh", async () => {
@@ -141,7 +143,9 @@ describe("Folio ChatGPT connection", () => {
       },
     });
     await expect(a.models.getAuth("openai")).rejects.toThrow("OAuth refresh failed");
-    expect((await a.store.read("openai"))?.refresh).toBe("synthetic-refresh");
+    expect(((await a.store.read("openai")) as OAuthCredential | undefined)?.refresh).toBe(
+      "synthetic-refresh",
+    );
   });
 
   it("serializes rotating-token refresh across separate processes", async () => {
@@ -170,7 +174,9 @@ describe("Folio ChatGPT connection", () => {
       run(process.execPath, ["--input-type=module", "--eval", program]),
     ]);
     expect(await readFile(trace, "utf8")).toBe("refresh\n");
-    expect((await store.read("openai"))?.access).toBe("synthetic-replacement");
+    expect(((await store.read("openai")) as OAuthCredential | undefined)?.access).toBe(
+      "synthetic-replacement",
+    );
   });
 
   it("cancels waiting for a credential update and commits an already-rotated token", async () => {
@@ -210,12 +216,102 @@ describe("Folio ChatGPT connection", () => {
       },
       { signal: rotated.signal },
     );
-    expect((await store.read("openai"))?.refresh).toBe("synthetic-rotated");
+    expect(((await store.read("openai")) as OAuthCredential | undefined)?.refresh).toBe(
+      "synthetic-rotated",
+    );
   });
 
   it("rejects putting protected connection data in the repository", async () => {
     await expect(createFolioModels({ home: resolve(".folio-credentials") })).rejects.toThrow(
       "outside the project",
     );
+  });
+});
+
+describe("Folio's API keys", () => {
+  const key = (value = "sk-synthetic-0123456789") => ({ type: "api_key" as const, key: value });
+
+  it("keep each key in a private file apart from the ChatGPT sign-in, and remove it", async () => {
+    const home = await makeHome();
+    const { models, store } = await createFolioModels({ home });
+    await store.modify("openai", async () => fixture());
+    const signIn = await readFile(resolve(home, "connection.json"), "utf8");
+    await store.modify("anthropic", async () => key("sk-ant-synthetic-0123"));
+    await store.modify("openrouter", async () => key("sk-or-synthetic-4567"));
+    expect(await readFile(resolve(home, "connection.json"), "utf8")).toBe(signIn);
+    expect((await stat(resolve(home, "keys.json"))).mode & 0o777).toBe(0o600);
+    expect([...(await readConnections(store))].sort()).toEqual([
+      "anthropic",
+      "chatgpt",
+      "openrouter",
+    ]);
+    expect((await models.getAuth("anthropic"))?.auth.apiKey).toBe("sk-ant-synthetic-0123");
+    const restarted = await createFolioModels({ home });
+    expect((await restarted.models.getAuth("openrouter"))?.auth.apiKey).toBe(
+      "sk-or-synthetic-4567",
+    );
+    await restarted.models.logout("anthropic");
+    expect(await models.getAuth("anthropic")).toBeUndefined();
+    expect([...(await readConnections(store))].sort()).toEqual(["chatgpt", "openrouter"]);
+    expect(await readFile(resolve(home, "connection.json"), "utf8")).toBe(signIn);
+  });
+
+  it("never read a key from the shell or a provider's own sign-in", async () => {
+    const names = ["ANTHROPIC_API_KEY", "GEMINI_API_KEY", "OPENROUTER_API_KEY", "OPENAI_API_KEY"];
+    const previous = names.map((name) => process.env[name]);
+    for (const name of names) process.env[name] = "sk-synthetic-never-use";
+    try {
+      const { models } = await createFolioModels({ home: await makeHome() });
+      for (const provider of ["openai", "openai-api", "anthropic", "google", "openrouter"])
+        expect(await models.getAuth(provider)).toBeUndefined();
+      for (const provider of ["openai-api", "anthropic", "google", "openrouter"])
+        expect(models.getProvider(provider)?.auth.oauth).toBeUndefined();
+    } finally {
+      names.forEach((name, index) => {
+        if (previous[index] === undefined) delete process.env[name];
+        else process.env[name] = previous[index];
+      });
+    }
+  });
+
+  it("send OpenAI API models to the API on the key, never as a ChatGPT sign-in", async () => {
+    const { models, store } = await createFolioModels({ home: await makeHome() });
+    await store.modify("openai-api", async () => key());
+    const model = models.getModel("openai-api", "gpt-6.1-sol")!;
+    expect(model.provider).toBe("openai-api");
+    expect(model.baseUrl).toBe("https://api.openai.com/v1");
+    expect((await models.getAuth(model))?.auth.apiKey).toBe("sk-synthetic-0123456789");
+    expect(await models.getAuth("openai")).toBeUndefined();
+  });
+
+  it("refuse keys that can't be real, and providers Folio doesn't connect to", async () => {
+    const home = await makeHome();
+    const { store } = await createFolioModels({ home });
+    for (const bad of ["short", "has a space in it", "line\nbreak-0123456789"])
+      await expect(store.modify("anthropic", async () => key(bad))).rejects.toThrow(
+        "Invalid API key",
+      );
+    await expect(store.modify("xai", async () => key())).rejects.toThrow("does not connect");
+    expect(await store.list()).toEqual([]);
+  });
+
+  it("keep keys of providers a newer Folio added, and never overwrite a future format", async () => {
+    const home = await makeHome();
+    const file = resolve(home, "keys.json");
+    const { store } = await createFolioModels({ home });
+    const later = {
+      type: "api_key",
+      key: "sk-later-0123456789",
+      addedAt: "2026-11-01T00:00:00.000Z",
+    };
+    await writeFile(file, JSON.stringify({ version: 1, keys: { later } }), { mode: 0o600 });
+    await store.modify("google", async () => key("AIza-synthetic-0123"));
+    const saved = JSON.parse(await readFile(file, "utf8"));
+    expect(saved.keys.later).toEqual(later);
+    expect(saved.keys.google.key).toBe("AIza-synthetic-0123");
+    await writeFile(file, JSON.stringify({ version: 2 }), { mode: 0o600 });
+    await expect(store.read("google")).rejects.toThrow("Unsupported or invalid");
+    await expect(store.modify("google", async () => key())).rejects.toThrow("Unsupported");
+    expect(JSON.parse(await readFile(file, "utf8"))).toEqual({ version: 2 });
   });
 });

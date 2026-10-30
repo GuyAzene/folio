@@ -3,6 +3,7 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import { Conversation, type CourseRuntime } from "../conversation.ts";
 import type { AttachReach, ResolvedAttachment } from "../library/attachments.ts";
 import { MAX_IMAGE_BYTES } from "../library/images.ts";
+import { connectionOf, parseRef, type Connection } from "../model-refs.ts";
 import type { SessionStore } from "../session-store.ts";
 import {
   THINKING_LEVELS,
@@ -24,12 +25,13 @@ const MAX_IMAGES = 4;
 export interface ChatServiceOptions {
   store: SessionStore;
   streamFn: StreamFn;
-  resolveModel: (id: string) => Model<Api>;
-  /** The model for new chats unless the student picks another. */
-  modelId: string;
-  /** Models a new chat may use; defaults to just `modelId`. */
-  models?: readonly string[];
-  connected: () => Promise<boolean>;
+  resolveModel: (id: string, provider?: string) => Model<Api>;
+  /** The model for new chats unless the student picks another, as a `connection/model` reference. */
+  model: () => string;
+  /** Whether a new chat may use this model; without it, only `model()` may. */
+  offered?: (ref: string) => boolean;
+  /** Whether Folio has the connection's sign-in or key. */
+  connected: (connection: Connection) => Promise<boolean>;
   emit: (event: DesktopEvent) => void;
   /** Builds a course chat's tools; without it, only plain chats are available. */
   courseRuntime?: (
@@ -87,17 +89,26 @@ export class ChatService {
       submissionId,
       courseId,
       focus,
-      modelId,
+      model,
       attachments,
       thinking,
       fast,
       webSearch,
     } = validSend(input);
-    const models = this.#options.models ?? [this.#options.modelId];
-    if (modelId && !models.includes(modelId)) throw new Error("That model is not available.");
-    if (!(await this.#options.connected()))
-      throw new Error("Connect your ChatGPT account in Settings to start chatting.");
     const existing = chatId ? await this.#conversation(chatId) : null;
+    const ref = model ?? this.#options.model();
+    if (!existing && !(this.#options.offered?.(ref) ?? ref === this.#options.model()))
+      throw new Error("That model is not available.");
+    const connection = existing
+      ? connectionOf(existing.snapshot.provider)
+      : parseRef(ref)?.connection;
+    if (!connection) throw new Error("That model is not available.");
+    if (!(await this.#options.connected(connection)))
+      throw new Error(
+        connection.kind === "plan"
+          ? `Connect your ChatGPT account in Settings to ${existing ? "go on with this chat" : "start chatting"}.`
+          : `Add your ${connection.name} API key in Settings to ${existing ? "go on with this chat" : "start chatting"}.`,
+      );
     // What was added is checked before a new chat is created, so a refusal leaves nothing behind.
     let added: ResolvedAttachment[] = [];
     if (attachments.length) {
@@ -112,9 +123,7 @@ export class ChatService {
         attachments,
       );
     }
-    const conversation =
-      existing ??
-      (await this.#create(courseId ?? null, focus ?? null, modelId ?? this.#options.modelId));
+    const conversation = existing ?? (await this.#create(courseId ?? null, focus ?? null, ref));
     const id = conversation.snapshot.id;
     // A course chat's question carries the page in view, so the tutor's prompt stays the same.
     const extras = conversation.kind === "course" ? { focus: focus ?? null } : {};
@@ -172,11 +181,8 @@ export class ChatService {
     this.#open.clear();
   }
 
-  async #create(
-    courseId: string | null,
-    focus: Focus | null,
-    modelId: string,
-  ): Promise<Conversation> {
+  async #create(courseId: string | null, focus: Focus | null, ref: string): Promise<Conversation> {
+    const { connection, id } = parseRef(ref)!;
     const conversation = await this.#watch(
       Conversation.open({
         store: this.#options.store,
@@ -186,7 +192,8 @@ export class ChatService {
         focus: courseId ? focus : null,
         courseRuntime: this.#options.courseRuntime,
         libraryRuntime: this.#options.libraryRuntime,
-        modelId,
+        provider: connection.provider,
+        modelId: id,
         streamFn: this.#options.streamFn,
         resolveModel: this.#options.resolveModel,
       }),
@@ -298,7 +305,7 @@ function validSend(input: unknown): SendInput & { attachments: AttachmentInput[]
     submissionId,
     courseId,
     focus,
-    modelId,
+    model,
     attachments,
     thinking,
     fast,
@@ -316,7 +323,7 @@ function validSend(input: unknown): SendInput & { attachments: AttachmentInput[]
     (typeof courseId !== "string" || !UUID.test(courseId))
   )
     throw new Error("Unknown course.");
-  if (modelId !== undefined && modelId !== null && typeof modelId !== "string")
+  if (model !== undefined && model !== null && !parseRef(model))
     throw new Error("That model is not available.");
   if (thinking !== undefined && !THINKING_LEVELS.includes(thinking as Thinking))
     throw new Error("That thinking level is not available.");
@@ -329,7 +336,7 @@ function validSend(input: unknown): SendInput & { attachments: AttachmentInput[]
     submissionId,
     courseId: (courseId as string | null | undefined) ?? null,
     focus: focus === undefined ? null : validFocus(focus),
-    modelId: (modelId as string | null | undefined) ?? null,
+    model: (model as string | null | undefined) ?? null,
     attachments: validAttachments(attachments),
     ...(thinking !== undefined ? { thinking: thinking as Thinking } : {}),
     ...(fast ? { fast: true } : {}),
