@@ -46,6 +46,30 @@ async function open(sources: string[]): Promise<Running> {
   return app;
 }
 
+/**
+ * Waits for the demo to be connected and in place. Folio sizes a frame only from what the demo
+ * reports once it is connected, and the chat scrolls as the frame grows; a click before that
+ * can land beside its target, or a question go nowhere.
+ */
+async function settled(running: Running): Promise<void> {
+  const iframe = running.page.locator(".visual iframe").first();
+  // 160 px is the frame's height until the demo first reports its own.
+  await running.page.waitForFunction(
+    () => document.querySelector<HTMLIFrameElement>(".visual iframe")?.clientHeight !== 160,
+    undefined,
+    { timeout: 10_000 },
+  );
+  for (let last = "", tries = 0; tries < 40; tries++) {
+    const now = await iframe.evaluate((node) => {
+      const box = node.getBoundingClientRect();
+      return `${Math.round(box.top)}:${Math.round(box.height)}`;
+    });
+    if (now === last) return;
+    last = now;
+    await running.page.waitForTimeout(150);
+  }
+}
+
 async function demoFrame(running: Running): Promise<Frame> {
   await running.page.locator(".visual iframe").first().waitFor();
   for (let tries = 0; tries < 50; tries++) {
@@ -54,6 +78,7 @@ async function demoFrame(running: Running): Promise<Frame> {
       .find((candidate) => candidate.url().startsWith("folio-artifact://"));
     if (frame) {
       await frame.waitForLoadState("load");
+      await settled(running);
       return frame;
     }
     await running.page.waitForTimeout(100);
@@ -65,17 +90,6 @@ void describe("Demos in Folio's window", () => {
   void it("runs a demo, sized to its content, in a process of its own", async () => {
     const app = await open([COUNTER]);
     const frame = await demoFrame(app);
-    // The frame resizes to its content and the chat scrolls with it; a click while that settles
-    // can land beside the button, so the clicks wait for it.
-    const iframe = app.page.locator(".visual iframe");
-    for (let last = -1, height = 0, tries = 0; tries < 40; tries++) {
-      height = await iframe.evaluate(
-        (node) => node.getBoundingClientRect().top + node.clientHeight,
-      );
-      if (height === last) break;
-      last = height;
-      await app.page.waitForTimeout(150);
-    }
     await frame.locator("#next").click();
     await frame.locator("#next").click();
     assert.equal(await frame.locator("#out").textContent(), "2");
