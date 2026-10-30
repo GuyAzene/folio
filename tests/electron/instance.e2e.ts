@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { chmod, lstat, readdir, readFile, readlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { relative, resolve } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { after, describe, it } from "node:test";
 import type { ElectronApplication } from "playwright-core";
 import { JobStore } from "../../src/jobs/store.ts";
@@ -24,9 +25,10 @@ after(async () => {
 const QUIET = { FOLIO_STUDY_DELAY_MS: "600000" };
 
 /**
- * Everything in a home but the open Folio's own browser storage: each entry's mode, and each
- * file's size, time and contents. Folder times are left out, since a chat's run lease touches
- * its lock folder every two seconds.
+ * Everything in a home but the open Folio's own browser storage and its passing locks: each
+ * entry's mode, and each file's size, time and contents. Folder times are left out, since a
+ * chat's run lease touches its lock folder every two seconds, and so is anything that went away
+ * while it was read.
  */
 async function snapshot(home: string): Promise<Map<string, string>> {
   const entries = new Map<string, string>();
@@ -36,18 +38,23 @@ async function snapshot(home: string): Promise<Map<string, string>> {
   for (const path of [home, ...paths]) {
     const name = relative(home, path);
     if (name === "electron" || name.startsWith("electron/")) continue;
-    const info = await lstat(path);
-    const mode = (info.mode & 0o777).toString(8);
-    entries.set(
-      name,
-      info.isSymbolicLink()
-        ? `link ${await readlink(path)}`
-        : info.isFile()
-          ? `${mode} ${info.size} ${info.mtimeMs} ${createHash("sha256")
-              .update(await readFile(path))
-              .digest("hex")}`
-          : mode,
-    );
+    if (/\.lock(\/|$)/.test(name)) continue;
+    try {
+      const info = await lstat(path);
+      const mode = (info.mode & 0o777).toString(8);
+      entries.set(
+        name,
+        info.isSymbolicLink()
+          ? `link ${await readlink(path)}`
+          : info.isFile()
+            ? `${mode} ${info.size} ${info.mtimeMs} ${createHash("sha256")
+                .update(await readFile(path))
+                .digest("hex")}`
+            : mode,
+      );
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
   }
   return entries;
 }
@@ -55,6 +62,18 @@ async function snapshot(home: string): Promise<Map<string, string>> {
 /** Whether the open Folio's only window is minimized. */
 const minimized = (app: ElectronApplication) =>
   app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.isMinimized());
+
+/** The home once the open Folio has stopped writing to it: two snapshots in a row that agree. */
+async function settled(home: string): Promise<Map<string, string>> {
+  let last = await snapshot(home);
+  for (let tries = 0; tries < 50; tries++) {
+    await new Promise((ready) => setTimeout(ready, 200));
+    const next = await snapshot(home);
+    if (isDeepStrictEqual(next, last)) return next;
+    last = next;
+  }
+  throw new Error("The open Folio kept writing to its home.");
+}
 
 async function until(check: () => Promise<boolean>, what: string): Promise<void> {
   for (let waited = 0; !(await check()); waited += 100) {
@@ -96,13 +115,13 @@ void describe("A second Folio on the same home", () => {
           window.minimize();
         }),
     );
-    const before = await snapshot(seeded.home);
+    const before = await settled(seeded.home);
 
     const code = await launchAgain(seeded.home, { ...QUIET, FOLIO_CONNECTION_HOME: connection });
     assert.equal(code, 0);
     await until(async () => !(await minimized(first.app)), "the open Folio to come forward");
 
-    assert.deepEqual(await snapshot(seeded.home), before);
+    assert.deepEqual(await settled(seeded.home), before);
     await assert.rejects(lstat(connection), { code: "ENOENT" });
     assert.equal(jobs.job(job.id).status, "running");
     assert.equal(jobs.node(node.id).status, "running");
