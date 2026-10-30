@@ -1,9 +1,9 @@
-import { deflateSync } from "node:zlib";
+import { deflateSync, inflateSync } from "node:zlib";
 
 /**
  * A dependency-free builder for synthetic lecture slides: positioned text, vector drawings
- * and small raster images, all in top-left page points like the inventory's boxes. Every
- * fixture is disposable test data, never real course material.
+ * and raster images, all in top-left page points like the inventory's boxes. Every fixture is
+ * disposable test data, never real course material.
  */
 
 /** [x, y] in page points with a top-left origin. */
@@ -13,13 +13,20 @@ export type Point = [number, number];
  * "sans" is Helvetica. "symbol" is the standard Symbol font: pass its byte codes (see SYMBOL).
  * "hebrew" draws Helvetica glyphs whose ToUnicode map yields Hebrew letters, written in visual
  * order the way many producers do, so pdf.js has to restore the logical order. The page shows
- * Latin glyphs; only the text layer is Hebrew. Brackets are not mirrored.
+ * Latin glyphs; only the text layer is Hebrew. Brackets are not mirrored. To show Hebrew, draw
+ * it into a `png` image and lay `invisible` Hebrew text over it.
+ * "math" draws Helvetica-Oblique letters whose text layer is Unicode mathematical italic (𝑀,
+ * 𝑥), as equation editors encode them; digits and other characters stay as they are.
  */
-export type SlideFont = "sans" | "symbol" | "hebrew";
+export type SlideFont = "sans" | "symbol" | "hebrew" | "math";
 
 export interface TextRun {
   text: string;
   font?: SlideFont;
+  /** This run's own size, such as a smaller subscript; the text's size otherwise. */
+  size?: number;
+  /** Raises the run above the baseline, in points; negative for a subscript. */
+  rise?: number;
 }
 
 export interface SlideText {
@@ -30,6 +37,11 @@ export interface SlideText {
   text?: string;
   /** Consecutive runs on one line, each continuing where the previous one ended. */
   runs?: TextRun[];
+  /**
+   * In the text layer but not drawn (render mode 3), as on a scanned slide whose text was
+   * recognized: laid over a picture, it gives the picture's words a text layer.
+   */
+  invisible?: boolean;
 }
 
 export type SlideShape =
@@ -53,6 +65,11 @@ export interface SlideImage {
   height: number;
   /** The raster's pixel size; a generated RGB gradient. */
   pixels?: [number, number];
+  /**
+   * A picture to show instead of the gradient: an 8-bit RGB or RGBA PNG, not interlaced, as
+   * @napi-rs/canvas encodes one. Its transparency becomes a soft mask.
+   */
+  png?: Uint8Array;
   /** Shows only this part of the picture, through a clip path (top-left x, y, width, height). */
   clip?: [number, number, number, number];
 }
@@ -79,6 +96,16 @@ export const SYMBOL = {
 const HEBREW_FIRST = 0x05d0;
 const HEBREW_LAST = 0x05ea;
 const HEBREW_CODE = 0xc0;
+
+/**
+ * Mathematical italic for each ASCII letter: A–Z from U+1D434, a–z from U+1D44E, except h,
+ * whose italic form is the Planck constant (U+210E) because its slot is unassigned.
+ */
+function mathItalic(letter: string): string {
+  if (letter === "h") return "\u210e";
+  const code = letter.charCodeAt(0);
+  return String.fromCodePoint(code >= 0x61 ? 0x1d44e + code - 0x61 : 0x1d434 + code - 0x41);
+}
 
 /**
  * Logical Hebrew text to glyph codes in visual (left-to-right drawing) order: the line is
@@ -178,29 +205,54 @@ function gradient([width, height]: [number, number]): Uint8Array {
   return pixels;
 }
 
-const FONT_KEYS: Record<SlideFont, string> = { sans: "F1", symbol: "F2", hebrew: "F3" };
+const FONT_KEYS: Record<SlideFont, string> = {
+  sans: "F1",
+  symbol: "F2",
+  hebrew: "F3",
+  math: "F4",
+};
 
 function textOperations(text: SlideText, height: number): string {
   const runs = text.runs ?? [{ text: text.text ?? "" }];
-  const size = n(text.size ?? 18);
-  const operations = ["BT", `1 0 0 1 ${n(text.x)} ${n(height - text.y)} Tm`];
+  // Text state outlives ET: an invisible text keeps its render mode to itself.
+  const operations = [
+    ...(text.invisible ? ["q"] : []),
+    "BT",
+    `1 0 0 1 ${n(text.x)} ${n(height - text.y)} Tm`,
+    ...(text.invisible ? ["3 Tr"] : []),
+  ];
+  let rise = 0;
   for (const run of runs) {
     const font = run.font ?? "sans";
     const bytes = font === "hebrew" ? hebrewCodes(run.text) : run.text;
-    operations.push(`/${FONT_KEYS[font]} ${size} Tf`, `${pdfString(bytes)} Tj`);
+    if ((run.rise ?? 0) !== rise) operations.push(`${n((rise = run.rise ?? 0))} Ts`);
+    operations.push(
+      `/${FONT_KEYS[font]} ${n(run.size ?? text.size ?? 18)} Tf`,
+      `${pdfString(bytes)} Tj`,
+    );
   }
-  operations.push("ET");
+  if (rise) operations.push("0 Ts");
+  operations.push("ET", ...(text.invisible ? ["Q"] : []));
   return operations.join("\n");
 }
 
-function hebrewToUnicode(): string {
-  const count = HEBREW_LAST - HEBREW_FIRST + 1;
+/** A ToUnicode CMap for single-byte codes, each mapped to a string of one or more characters. */
+function toUnicode(entries: [code: number, text: string][]): string {
   const hex = (value: number, width: number) =>
     value.toString(16).toUpperCase().padStart(width, "0");
-  const entries = Array.from(
-    { length: count },
-    (_, index) => `<${hex(HEBREW_CODE + index, 2)}> <${hex(HEBREW_FIRST + index, 4)}>`,
-  );
+  // A JavaScript string is already UTF-16: its code units, surrogate pairs included.
+  const utf16 = (text: string) =>
+    Array.from({ length: text.length }, (_, index) => hex(text.charCodeAt(index), 4)).join("");
+  const lines: string[] = [];
+  // A bfchar block holds at most 100 entries.
+  for (let at = 0; at < entries.length; at += 100) {
+    const block = entries.slice(at, at + 100);
+    lines.push(
+      `${block.length} beginbfchar`,
+      ...block.map(([code, text]) => `<${hex(code, 2)}> <${utf16(text)}>`),
+      "endbfchar",
+    );
+  }
   return [
     "/CIDInit /ProcSet findresource begin",
     "12 dict begin",
@@ -211,12 +263,7 @@ function hebrewToUnicode(): string {
     "1 begincodespacerange",
     "<00> <FF>",
     "endcodespacerange",
-    `1 beginbfchar`,
-    "<20> <0020>",
-    "endbfchar",
-    `${entries.length} beginbfchar`,
-    ...entries,
-    "endbfchar",
+    ...lines,
     "endcmap",
     "CMapName currentdict /CMap defineresource pop",
     "end",
@@ -244,13 +291,27 @@ export function syntheticSlides(slides: SyntheticSlide[]): Uint8Array {
     "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
   );
   const symbol = add("<< /Type /Font /Subtype /Type1 /BaseFont /Symbol >>");
-  const cmap = encoder.encode(hebrewToUnicode());
-  const toUnicode = add(`<< /Length ${cmap.length} >>`, cmap);
-  const hebrew = add(
-    `<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding ` +
-      `/ToUnicode ${toUnicode} 0 R >>`,
+  const mapped = (baseFont: string, entries: [number, string][]) => {
+    const cmap = encoder.encode(toUnicode(entries));
+    const map = add(`<< /Length ${cmap.length} >>`, cmap);
+    return add(
+      `<< /Type /Font /Subtype /Type1 /BaseFont /${baseFont} /Encoding /WinAnsiEncoding ` +
+        `/ToUnicode ${map} 0 R >>`,
+    );
+  };
+  const hebrew = mapped("Helvetica", [
+    [0x20, " "],
+    ...Array.from({ length: HEBREW_LAST - HEBREW_FIRST + 1 }, (_, index): [number, string] => [
+      HEBREW_CODE + index,
+      String.fromCharCode(HEBREW_FIRST + index),
+    ]),
+  ]);
+  const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+  const math = mapped(
+    "Helvetica-Oblique",
+    letters.split("").map((letter): [number, string] => [letter.charCodeAt(0), mathItalic(letter)]),
   );
-  const fonts = `/Font << /F1 ${sans} 0 R /F2 ${symbol} 0 R /F3 ${hebrew} 0 R >>`;
+  const fonts = `/Font << /F1 ${sans} 0 R /F2 ${symbol} 0 R /F3 ${hebrew} 0 R /F4 ${math} 0 R >>`;
 
   const pageIds: number[] = [];
   for (const slide of slides) {
@@ -261,13 +322,20 @@ export function syntheticSlides(slides: SyntheticSlide[]): Uint8Array {
     for (const shape of slide.shapes ?? [])
       operations.push("q", ...shapeOperations(shape, height), "Q");
     for (const image of slide.images ?? []) {
-      const pixels = image.pixels ?? [32, 24];
-      const data = deflateSync(gradient(pixels));
-      const id = add(
-        `<< /Type /XObject /Subtype /Image /Width ${pixels[0]} /Height ${pixels[1]} ` +
-          `/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode /Length ${data.length} >>`,
-        data,
-      );
+      const picture = image.png
+        ? decodePng(image.png)
+        : { size: image.pixels ?? [32, 24], rgb: gradient(image.pixels ?? [32, 24]), alpha: null };
+      const [pixelWidth, pixelHeight] = picture.size;
+      const raster = (colorSpace: string, samples: Uint8Array, extra = "") => {
+        const data = deflateSync(samples);
+        return add(
+          `<< /Type /XObject /Subtype /Image /Width ${pixelWidth} /Height ${pixelHeight} ` +
+            `/ColorSpace /${colorSpace} /BitsPerComponent 8 /Filter /FlateDecode${extra} /Length ${data.length} >>`,
+          data,
+        );
+      };
+      const mask = picture.alpha ? raster("DeviceGray", picture.alpha) : null;
+      const id = raster("DeviceRGB", picture.rgb, mask ? ` /SMask ${mask} 0 R` : "");
       const name = `Im${xObjects.length + 1}`;
       xObjects.push(`/${name} ${id} 0 R`);
       const clip = image.clip
@@ -321,6 +389,71 @@ export function syntheticSlides(slides: SyntheticSlide[]): Uint8Array {
     ),
   );
   return concat(chunks);
+}
+
+/**
+ * The pixels of an 8-bit RGB or RGBA PNG that is not interlaced: RGB samples, and the alpha
+ * channel when any pixel is not opaque. Anything else is refused rather than drawn wrong.
+ */
+function decodePng(png: Uint8Array): {
+  size: [number, number];
+  rgb: Uint8Array;
+  alpha: Uint8Array | null;
+} {
+  const view = new DataView(png.buffer, png.byteOffset, png.byteLength);
+  const signature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+  if (signature.some((byte, index) => png[index] !== byte)) throw new Error("Not a PNG.");
+  let header = { width: 0, height: 0, depth: 0, color: 0, interlace: 0 };
+  const data: Uint8Array[] = [];
+  for (let at = 8; at + 8 <= png.length;) {
+    const length = view.getUint32(at);
+    const type = String.fromCharCode(...png.subarray(at + 4, at + 8));
+    const body = png.subarray(at + 8, at + 8 + length);
+    if (type === "IHDR")
+      header = {
+        width: view.getUint32(at + 8),
+        height: view.getUint32(at + 12),
+        depth: body[8]!,
+        color: body[9]!,
+        interlace: body[12]!,
+      };
+    else if (type === "IDAT") data.push(body);
+    else if (type === "IEND") break;
+    at += 12 + length;
+  }
+  const { width, height, depth, color, interlace } = header;
+  if (depth !== 8 || (color !== 2 && color !== 6) || interlace !== 0)
+    throw new Error("Only 8-bit RGB or RGBA PNGs that are not interlaced can be embedded.");
+  const channels = color === 6 ? 4 : 3;
+  const stride = width * channels;
+  const filtered = inflateSync(concat(data));
+  const pixels = new Uint8Array(height * stride);
+  for (let row = 0; row < height; row++) {
+    const filter = filtered[row * (stride + 1)]!;
+    const line = filtered.subarray(row * (stride + 1) + 1, (row + 1) * (stride + 1));
+    for (let index = 0; index < stride; index++) {
+      const left = index >= channels ? pixels[row * stride + index - channels]! : 0;
+      const up = row ? pixels[(row - 1) * stride + index]! : 0;
+      const corner = row && index >= channels ? pixels[(row - 1) * stride + index - channels]! : 0;
+      let value = line[index]!;
+      if (filter === 1) value += left;
+      else if (filter === 2) value += up;
+      else if (filter === 3) value += (left + up) >> 1;
+      else if (filter === 4) {
+        const estimate = left + up - corner;
+        const [a, b, c] = [estimate - left, estimate - up, estimate - corner].map(Math.abs);
+        value += a! <= b! && a! <= c! ? left : b! <= c! ? up : corner;
+      }
+      pixels[row * stride + index] = value & 0xff;
+    }
+  }
+  const rgb = new Uint8Array(width * height * 3);
+  const alpha = new Uint8Array(width * height);
+  for (let pixel = 0; pixel < width * height; pixel++) {
+    rgb.set(pixels.subarray(pixel * channels, pixel * channels + 3), pixel * 3);
+    alpha[pixel] = channels === 4 ? pixels[pixel * channels + 3]! : 255;
+  }
+  return { size: [width, height], rgb, alpha: alpha.some((value) => value < 255) ? alpha : null };
 }
 
 function concat(parts: Uint8Array[]): Uint8Array {

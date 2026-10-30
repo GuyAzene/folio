@@ -30,19 +30,21 @@ export const DEFAULT_ROLES: Record<ModelRole, string> = {
   closeup: chatgpt(STUDY_DEFAULTS.escalation),
   writer: chatgpt(STUDY_DEFAULTS.author),
   checker: chatgpt(STUDY_DEFAULTS.reviewer),
+  rechecker: chatgpt(STUDY_DEFAULTS.recheck ?? STUDY_DEFAULTS.reviewer),
   topics: chatgpt("gpt-6.1-terra"),
   syllabus: chatgpt(DEFAULT_MODEL),
 };
 
-/** Studying's roles as the pipeline names them, from the config's. */
+/** Studying's roles as the pipeline names them, from the config's; each step keeps its effort. */
 export function studyRoles(roles: Record<ModelRole, string>): RoleModels {
   return {
-    provider: "openai",
+    ...STUDY_DEFAULTS,
     brief: studyModel(roles.planner),
     reader: studyModel(roles.reader),
     escalation: studyModel(roles.closeup),
     author: studyModel(roles.writer),
     reviewer: studyModel(roles.checker),
+    recheck: studyModel(roles.rechecker),
   };
 }
 
@@ -55,6 +57,7 @@ const PATHS: Record<ModelRole, readonly [string, string]> = {
   closeup: ["studying", "closeup"],
   writer: ["studying", "writer"],
   checker: ["studying", "checker"],
+  rechecker: ["studying", "rechecker"],
   topics: ["studying", "topics"],
   syllabus: ["library", "syllabus"],
 };
@@ -68,6 +71,7 @@ const WORK: Record<ModelRole, string> = {
   closeup: "re-reading hard parts of a slide",
   writer: "writing study notes",
   checker: "checking notes against the slides",
+  rechecker: "checking corrected notes against the slides",
   topics: "comparing topics",
   syllabus: "reading a syllabus",
 };

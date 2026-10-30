@@ -140,11 +140,17 @@ vp check            # formatting, lint and types
 vp run check:ui     # Svelte checks for the renderer
 vp test             # deterministic tests: no network, no real accounts
 vp run test:electron # Folio in a real window: security rules, diagrams, demos
+vp run study:report # where each study's time went, from jobs.sqlite (read-only; --job, --since)
+FOLIO_BENCH=1 vp run study:bench # study synthetic lectures with ChatGPT and score the notes
 vp run desktop:package # Folio.app and its disk image, in release/
 vp run desktop:install # the same, then Folio.app into /Applications
 vp build && vp pack # renderer, CLI and Electron bundles
 vp dev              # the interface alone, in a browser, with synthetic data
 ```
+
+The benchmark spends your ChatGPT plan, so it runs only with `FOLIO_BENCH=1` and never in `vp
+test`; `--fake` runs it offline, `--inject-omission k` takes k planted sections out of each first
+draft, and `--compare a b` sets two saved runs (`.bench/<commit>.json`) side by side.
 
 `vp dev` serves the interface against a development-only preview bridge with synthetic courses,
 which is handy for checking layouts. A terminal client with a small synthetic demo course also

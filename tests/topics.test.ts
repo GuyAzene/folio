@@ -9,6 +9,7 @@ import {
   mergeDraft,
   emptyKnowledge,
   upgradeKnowledge,
+  withoutDocuments,
   type Knowledge,
 } from "../src/kb/knowledge.ts";
 import { KnowledgeStore } from "../src/kb/store.ts";
@@ -286,5 +287,59 @@ describe("regrouping existing notes", () => {
     );
     await runner.withdraw(() => true);
     expect(complete).not.toHaveBeenCalled();
+  });
+});
+
+describe("a document leaving the notes", () => {
+  const SECOND_LECTURE = "00000000-0000-4000-8000-0000000000cc";
+  const bfsOf = (knowledge: Knowledge) => knowledge.pages.find((page) => page.slug === "alg-bfs")!;
+
+  it("gives a topic still taught by two documents an overview of what they teach now", async () => {
+    const { model } = judge(() => "same");
+    const { course, store } = await setup(model);
+    await store.publish(bundle(course.id, LECTURE, "alg-L01"));
+    await store.publish(recitation(course.id));
+    await store.publish(bundle(course.id, SECOND_LECTURE, "alg-L02"));
+    expect(bfsOf((await store.knowledge(course.id))!).blocks).toHaveLength(3);
+    await store.revise(
+      course.id,
+      (current) => withoutDocuments(current, [RECITATION]),
+      "Recitation 1 moved to the Trash",
+    );
+    const bfs = bfsOf((await store.knowledge(course.id))!);
+    expect(bfs.blocks.map((block) => block.session).sort()).toEqual(["alg-L01", "alg-L02"]);
+    expect(bfs.overview).toMatchObject({
+      text: expect.stringContaining("taught in more than one session"),
+      handles: bfs.blocks.map((block) => block.handle),
+    });
+  });
+
+  it("leaves a topic one document still teaches without an overview", async () => {
+    const { model } = judge(() => "same");
+    const { course, store } = await setup(model);
+    await store.publish(bundle(course.id, LECTURE, "alg-L01"));
+    await store.publish(recitation(course.id));
+    expect(bfsOf((await store.knowledge(course.id))!).overview).toBeDefined();
+    await store.revise(course.id, (current) => withoutDocuments(current, [RECITATION]), "gone");
+    const bfs = bfsOf((await store.knowledge(course.id))!);
+    expect(bfs.blocks.map((block) => block.session)).toEqual(["alg-L01"]);
+    expect(bfs.overview).toBeUndefined();
+  });
+
+  it("still takes the document out when overviews cannot be written", async () => {
+    const { model } = judge(() => "same");
+    const { course, store } = await setup(model);
+    await store.publish(bundle(course.id, LECTURE, "alg-L01"));
+    await store.publish(recitation(course.id));
+    await store.publish(bundle(course.id, SECOND_LECTURE, "alg-L02"));
+    model.overview = async () => {
+      throw new Error("Connection error.");
+    };
+    expect(
+      await store.revise(course.id, (current) => withoutDocuments(current, [RECITATION]), "gone"),
+    ).not.toBeNull();
+    const knowledge = (await store.knowledge(course.id))!;
+    expect(knowledge.sessions.map((session) => session.slug)).toEqual(["alg-L01", "alg-L02"]);
+    expect(bfsOf(knowledge).overview).toBeUndefined();
   });
 });

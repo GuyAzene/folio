@@ -1,4 +1,11 @@
-import type { Api, AssistantMessage, Context, Model, ToolChoice } from "@earendil-works/pi-ai";
+import type {
+  Api,
+  AssistantMessage,
+  Context,
+  Model,
+  ThinkingLevel,
+  ToolChoice,
+} from "@earendil-works/pi-ai";
 import { DROPPED } from "../dropped.ts";
 import type { CompleteFn, ModelReply, ModelRequest } from "./models.ts";
 
@@ -9,15 +16,32 @@ export interface PiModels {
     context: Context,
     options?: {
       maxTokens?: number;
-      reasoning?: "low" | "medium" | "high";
+      reasoning?: ThinkingLevel;
       signal?: AbortSignal;
       toolChoice?: ToolChoice;
+      sessionId?: string;
     },
   ): Promise<AssistantMessage>;
 }
 
 /** How long to wait before sending a dropped request again: one entry per extra try. */
 const RETRY_AFTER = [2_000, 8_000];
+
+/** How long to wait when the provider turns a request away for a moment (a 429). */
+const BUSY_AFTER = [10_000, 30_000, 60_000];
+
+/**
+ * A rate limit that passes within a minute, unlike the plan's usage limit, which pauses the job.
+ * Pi words every 429 as "You have hit your ChatGPT usage limit", adding when it resets if the
+ * provider said; a reset under a minute away is the short kind.
+ */
+function busy(problem: string): boolean {
+  if (/try again in ~[01] min/i.test(problem)) return true;
+  return (
+    /rate[_ ]limit|too many requests|\b429\b/i.test(problem) &&
+    !/usage[_ ]limit|quota/i.test(problem)
+  );
+}
 
 /**
  * Sends ingestion requests through Pi with the student's own sign-in. Each request is stateless
@@ -27,12 +51,17 @@ const RETRY_AFTER = [2_000, 8_000];
  *
  * A request whose connection drops is sent again, a couple of times, before the step fails:
  * Pi retries a request that fails before its answer starts, but not one cut off on the way.
- * Requests are stateless, so sending one again is safe; what the dropped tries used still counts.
+ * A request turned away by a short rate limit waits and is sent again too. Requests are
+ * stateless, so sending one again is safe; what the earlier tries used still counts.
+ *
+ * Every request about one document carries that document's cache key, which Pi sends as
+ * `prompt_cache_key`, so the provider can reuse the instructions and pages they share.
  */
 export function piComplete(
   models: () => Promise<PiModels>,
   resolveModel: (id: string) => Model<Api>,
   retryAfter: readonly number[] = RETRY_AFTER,
+  busyAfter: readonly number[] = BUSY_AFTER,
 ): CompleteFn {
   function send(request: ModelRequest): Promise<AssistantMessage> {
     const model = resolveModel(request.model);
@@ -61,6 +90,7 @@ export function piComplete(
           maxTokens: request.maxTokens,
           reasoning: forced?.thinks === false ? undefined : request.reasoning,
           signal: request.signal,
+          sessionId: request.cacheKey,
           ...(forced ? { toolChoice: forced.choice } : {}),
         },
       ),
@@ -68,25 +98,35 @@ export function piComplete(
   }
 
   return async (request) => {
-    const used = { input: 0, output: 0 };
-    for (let tries = 0; ; tries++) {
-      const wait = request.signal?.aborted ? undefined : retryAfter[tries];
-      let reply: AssistantMessage;
+    const used = { input: 0, output: 0, cached: 0 };
+    const tries = { dropped: 0, busy: 0 };
+    for (;;) {
+      let reply: AssistantMessage | undefined;
+      let thrown: unknown;
+      let problem: string;
       try {
         reply = await send(request);
+        used.input += reply.usage.input;
+        used.output += reply.usage.output;
+        used.cached += reply.usage.cacheRead ?? 0;
+        if (reply.stopReason !== "error") return answerOf(reply, used, request.answer?.name);
+        problem = reply.errorMessage ?? "";
       } catch (error) {
         // A connection can also drop before Pi has a reply to report it in.
-        if (wait === undefined || !(error instanceof Error) || !DROPPED.test(error.message))
-          throw error;
-        await pause(wait, request.signal);
-        continue;
+        if (!(error instanceof Error)) throw error;
+        thrown = error;
+        problem = error.message;
       }
-      used.input += reply.usage.input;
-      used.output += reply.usage.output;
-      const dropped = reply.stopReason === "error" && DROPPED.test(reply.errorMessage ?? "");
-      if (!dropped || wait === undefined) return answerOf(reply, used, request.answer?.name);
-      await pause(wait, request.signal);
-      if (request.signal?.aborted) return answerOf(reply, used, request.answer?.name);
+      const kind = DROPPED.test(problem) ? "dropped" : busy(problem) ? "busy" : undefined;
+      const wait =
+        kind && !request.signal?.aborted
+          ? (kind === "dropped" ? retryAfter : busyAfter)[tries[kind]++]
+          : undefined;
+      if (wait !== undefined) await pause(wait, request.signal);
+      if (wait === undefined || request.signal?.aborted) {
+        if (reply) return answerOf(reply, used, request.answer?.name);
+        throw thrown;
+      }
     }
   };
 }
@@ -105,7 +145,7 @@ export function forcedTool(model: Model<Api>): { choice: ToolChoice; thinks: boo
 
 function answerOf(
   reply: AssistantMessage,
-  used: { input: number; output: number },
+  used: ModelReply["usage"],
   answer: string | undefined,
 ): ModelReply {
   const calls = reply.content.filter((block) => block.type === "toolCall" && block.name === answer);

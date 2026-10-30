@@ -28,7 +28,7 @@ export interface AgentCard {
   retried: boolean;
 }
 
-const GROUPS = new Set(["Readers", "Reviewers"]);
+const GROUPS = new Set(["Readers", "Reviewers", "Rechecks"]);
 
 export function agentTree(nodes: AgentNodeView[]): AgentCard | null {
   const ids = new Set(nodes.map((node) => node.id));
@@ -43,7 +43,10 @@ export function agentTree(nodes: AgentNodeView[]): AgentCard | null {
   // Groups hand their children up; page preparation shows on the document card instead.
   const shown = (node: AgentNodeView): AgentNodeView[] => {
     if (node.role === "prepare") return [];
-    if ((node.role === "reader" || node.role === "reviewer") && GROUPS.has(node.title))
+    if (
+      (node.role === "reader" || node.role === "reviewer" || node.role === "recheck") &&
+      GROUPS.has(node.title)
+    )
       return (byParent.get(node.id) ?? []).flatMap(shown);
     return [node];
   };
@@ -125,7 +128,7 @@ function describe(node: AgentNodeView): Pick<AgentCard, "name" | "detail" | "by"
         name: "Planner",
         detail: "",
         by,
-        task: "Outline the material, its notation and its Hebrew–English terms",
+        task: "Plan the topics, the notation and the Hebrew–English terms",
       };
     case "reader":
       return { name: "Reader", detail: pages, by, task: `Read ${pages}, region by region` };
@@ -139,13 +142,29 @@ function describe(node: AgentNodeView): Pick<AgentCard, "name" | "detail" | "by"
     case "author":
       return node.attempt > 1
         ? { name: "Writer", detail: "revision", by, task: "Fix what the checks found" }
-        : { name: "Writer", detail: "", by, task: "Write the wiki pages, citing every region" };
+        : node.title.startsWith("Topic · ")
+          ? {
+              name: "Writer",
+              detail: node.title.slice("Topic · ".length),
+              by,
+              task: `Write this topic from ${pages}, citing every region`,
+            }
+          : { name: "Writer", detail: "", by, task: "Write the wiki pages, citing every region" };
     case "reviewer":
       return {
         name: "Checker",
         detail: pages,
         by,
         task: "Check every claim against the page images",
+      };
+    case "fix":
+      return { name: "Fixer", detail: pages, by, task: "Correct only what the check found" };
+    case "recheck":
+      return {
+        name: "Checker",
+        detail: pages,
+        by,
+        task: "Check the corrected claims against the page images",
       };
     case "ledger":
       return { name: "Coverage", detail: "", by: "Folio", task: node.task };

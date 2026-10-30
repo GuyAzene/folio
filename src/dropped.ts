@@ -3,4 +3,4 @@
  * Node report it: worth trying again, unlike a refusal, a usage limit or a bad answer.
  */
 export const DROPPED =
-  /connection error|connection (?:was )?(?:reset|closed|lost)|timed out|\bterminated\b|fetch failed|socket hang up|other side closed|premature close|network error|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|ENETUNREACH|EAI_AGAIN/i;
+  /connection error|connection (?:was )?(?:reset|closed|lost)|timed out|\bterminated\b|fetch failed|socket hang up|other side closed|premature close|network error|stream ended before|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|ENETUNREACH|EAI_AGAIN/i;

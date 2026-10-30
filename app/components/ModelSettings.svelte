@@ -47,6 +47,11 @@
         { role: "closeup", label: "Close-up", hint: "Reads the hard parts of a slide again." },
         { role: "writer", label: "Writer", hint: "Writes the study notes." },
         { role: "checker", label: "Checker", hint: "Checks the notes against the slides." },
+        {
+          role: "rechecker",
+          label: "Recheck",
+          hint: "Checks the few sentences a correction changed.",
+        },
         { role: "topics", label: "Topics", hint: "Merges topics across lectures." },
       ],
     },

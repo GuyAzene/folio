@@ -173,7 +173,7 @@ sends.
 
 Which model does what lives in `config.json`, edited in Settings or by hand (`src/config.ts`):
 the tutor for new chats, web search, each step of studying (planner, reader, close-up, writer,
-checker, topics) and reading a syllabus. Folio checks every entry in code: the model must exist
+checker, recheck, topics) and reading a syllabus. Folio checks every entry in code: the model must exist
 on its connection, and the steps that read slides must see images. An entry it can't use is
 listed in Settings and its default applies; the file is never rewritten behind the student's
 back, a change from Settings is refused when the file changed outside Folio, and hand edits are
@@ -189,13 +189,13 @@ tool.
 Adding a lecture or recitation to a course is what starts its study; reading or explaining a
 document never does. A PDF lecture or recitation is queued a moment after it is added (time to
 fix a wrong role for free), and once after start Folio queues every lecture and recitation it
-never studied. Studies run two at a time: what the student asked for first, then new files, then
-the backlog, then redos. Each step runs on the model set for it (see
-[Connections and models](#connections-and-models)); without a connection one of them needs,
-studies wait and start when it is there. A
-study the student cancels is not started again unless they ask. A file that moves to the Trash,
-leaves its course or stops being a lecture has its study stopped first, and Folio waits until
-nothing reads it any more before it moves; its study notes leave the course with it.
+never studied. Studies run two at a time, sharing one pool of requests so that one's waits are the
+other's turn: what the student asked for first, then new files, then the backlog, then redos. Each
+step runs on the model set for it (see [Connections and models](#connections-and-models));
+without a connection one of them needs, studies wait and start when it is there. A study the
+student cancels is not started again unless they ask. A file that moves to the Trash, leaves its
+course or stops being a lecture has its study stopped first, and Folio waits until nothing reads
+it any more before it moves; its study notes leave the course with it.
 
 The student follows this, and nothing more: the Studying place lists what is being studied now,
 each with one line of what Folio is doing and a bar, then what comes next in the order Folio will
@@ -203,22 +203,64 @@ take it. One line appears only when something needs them (no connection, a used-
 that stopped). Finished studies leave the list, and no page counts what has been studied; a
 course's Overview shows a single "Studying …" line while Folio works on that course.
 
-A study job reads every page of a lecture: its text layer and regions, with close-up re-reads
-where a page needs them. It then drafts study notes by topic, each section citing the pages and
-regions it came from, and an independent checker tests the draft's claims against the page
-images. Up to three revision rounds follow, each on what is still wrong: regions not yet written
-up (read again up close first, if no close-up has read them) and claims the checker doubted.
-Whatever every round still missed is written up from the slide itself, as a cited section marked
-as not reviewed, so no part of a slide is dropped. A sentence the page contradicts leaves its
-section; every claim still unconfirmed is kept on its section for the tutor, never shown to the
-student as a warning. Every region ends up cited, or omitted as page furniture with a reason
-(page numbers, repeated headers, build steps, duplicates); the student never sees this
-accounting, which is a record for diagnosis. The result is published as a new, immutable
-version of the course's knowledge, with a SQLite FTS5 search index. Each document is a session
-numbered across its course (by the number in its title, or its place among the course's
-lectures), and a re-studied document replaces its own session. Each step's output is saved, so a
-job interrupted by a quit or a plan limit resumes where it stopped instead of starting over;
-after a quit, interrupted studies go back in the queue on their own.
+A study job plans the lecture and reads it at the same time. One request reads the lecture's whole
+text and the pages with the least of it, and returns the topics in teaching order with every page
+each spans (about six pages at most, so no writer takes long), its notation and its Hebrew–English
+terms. Meanwhile every page gets one careful reader of its own, many side by side: the reader writes
+out every region, every diagram's nodes and arrows, a chart's values, a table's cells and what is
+drawn inside any picture, including one that fills the page behind the text. A region is read again
+up close only for a reason code can name: the reader skipped it, flagged it unreadable or said it
+guessed; it is a picture the reader could say almost nothing about; or the reading lost words or
+numbers the text layer has. One request re-reads all of a page's hard regions. Once the plan is made
+and a topic's pages are read, a writer takes that topic, carrying every fact of its pages, beside
+the writers of the other topics and the pages still being read; code joins their drafts into one, in
+the plan's order. A lecture of one topic has a single writer. An independent checker goes through
+every page that teaches something, one page per request, as soon as every topic on that page is
+written (while the other topics are still being written), with the notes written so far in front of
+it; once all are written, it checks what is left, such as a claim citing a page outside its topic:
+for each region it lists the facts the region teaches and names the section that carries each one,
+in any language or wording, and it tests the notes' claims against the page images. Code keeps the
+books. A region no section cites whose every fact is carried somewhere gets a citation from those
+sections; a region the checker could not make out is read again up close. What the check stands
+behind becomes a numbered list of discrepancies: regions no section cites (read again up close
+first, if no close-up has read them), facts no section carries, claims the checker doubted, and
+citations of regions that do not exist. Fixers take that list a few discrepancies each, side by side
+(those touching one section together); each sees only its discrepancies, the sections they concern,
+the readings of the regions involved and those pages, and answers with patches: replace a section,
+add one to an existing topic, or omit a region as page furniture. Code applies a patch only if it
+names what it fixes, touches nothing else, leaves every cited region cited and is the only patch on
+its section, so every other section stays exactly as written; then only the claims a patch changed
+are checked again. There are at most two rounds, and none once a round stops reducing what is wrong
+or changes nothing. How much of a cited region's wording reaches its section (often little, when
+English notes explain a Hebrew slide) is recorded, never acted on. Word matching folds what a PDF's
+text layer encodes differently (NFKC: math-italic letters, subscripts, ligatures; direction marks;
+final letters), as the search index does. Whatever is still uncited, or has facts the check found in
+no section, or was left by a fix that could not be had, is written up from the slide itself, as a
+cited section marked as not reviewed, so no part of a slide is dropped. A sentence the page
+contradicts leaves its section; every claim still unconfirmed is kept on its section for the tutor,
+never shown to the student as a warning. Every region ends up cited, or omitted as page furniture
+with a reason (page numbers, repeated headers, build steps, duplicates); the student never sees this
+accounting, which is a record for diagnosis. The result is published as a new, immutable version of
+the course's knowledge, with a SQLite FTS5 search index. Each document is a session numbered across
+its course (by the number in its title, or its place among the course's lectures), and a re-studied
+document replaces its own session. Each step's output is saved, so a job interrupted by a quit or a
+plan limit resumes where it stopped instead of starting over; after a quit, interrupted studies go
+back in the queue on their own.
+
+Every step takes its turn for one pool of sixteen model requests in flight, writing and checking
+ahead of pages still waiting to be read. Each step has its own model and effort. By default
+GPT-6.1 Sol plans, writes, checks and fixes at high effort, and reads pages at medium, one careful
+request per page (more effort on a page makes reading slower, not better); GPT-6.1 Terra rechecks
+the few claims a fix changed, which on a real lecture it did as well as Sol in less time.
+`config.json` chooses another model for a step; `FOLIO_STUDY_PLANNER`, `_READER`, `_WRITER`,
+`_CHECKER`, `_RECHECKER` and `FOLIO_STUDY_EFFORT_<STEP>` change a step's model or effort for a
+trial, and `vp run study:compare` measures a cheaper reader or rechecker against it on the
+student's own files. A request whose stream is cut off is sent again, like a dropped
+connection. Every request about one document carries the same prompt-cache key, so the provider can
+reuse the instructions and pages they share; each step records how much of its input came from that
+cache. A request turned away by a short rate limit waits (10, 30, then 60 seconds) and goes again,
+while the plan's usage limit pauses the study. `FOLIO_STUDY_CONCURRENCY` and `FOLIO_STUDY_JOBS`
+raise the pool and the number of studies at once, to try what a plan allows.
 
 ### Topics shared across a course
 
@@ -235,7 +277,7 @@ things keep a topic shared:
   judges each pair: only "same" merges, leaving a redirect so old links keep resolving; "part of"
   and "related" become links. Block handles never change.
 - A topic taught in several sessions gets a short overview citing the sections it draws on,
-  written again only when those sections change.
+  written again whenever those sections change, also when a file leaves the course or comes back.
 
 Everything else on topic and anchor pages is derived from the blocks by code, and a version is
 not written unless every block belongs to one session and one topic and every link is live.

@@ -79,6 +79,36 @@ describe("Pi bridge", () => {
     }
   });
 
+  it("sends the document's cache key as Pi's session, and counts cached input", async () => {
+    const { models, completeSimple } = fakeModels([
+      { type: "toolCall", id: "1", name: "submit", arguments: { page: 2 } },
+    ]);
+    completeSimple.mockResolvedValueOnce({
+      role: "assistant",
+      content: [{ type: "toolCall", id: "1", name: "submit", arguments: { page: 2 } }],
+      stopReason: "toolUse",
+      usage: { input: 900, output: 20, cacheRead: 600 },
+    } as unknown as AssistantMessage);
+    const reply = await piComplete(
+      async () => models,
+      (id) => ({ id }) as never,
+    )({
+      model: "gpt-6-luna",
+      system: "s",
+      content: [],
+      maxTokens: 10,
+      cacheKey: "folio-0123",
+      answer: { name: "submit", description: "d", schema },
+    });
+    const [, , options] = completeSimple.mock.calls[0] as unknown as [
+      unknown,
+      unknown,
+      { sessionId?: string },
+    ];
+    expect(options.sessionId).toBe("folio-0123");
+    expect(reply.usage).toEqual({ input: 900, output: 20, cached: 600 });
+  });
+
   it("passes arguments Pi could not read on as text, for the repair fallback", async () => {
     const { models } = fakeModels([
       {
@@ -134,6 +164,7 @@ describe("a dropped connection", () => {
       async () => ({ completeSimple }) as unknown as PiModels,
       (id) => ({ id }) as never,
       [0, 0],
+      [0, 0, 0],
     );
     return { complete, completeSimple };
   };
@@ -146,9 +177,15 @@ describe("a dropped connection", () => {
     ]);
     const answer = await complete(request());
     expect(completeSimple).toHaveBeenCalledTimes(3);
+    // A stream the provider cut off before its last event is a dropped connection too.
+    const cut = bridge([
+      reply("error", "OpenAI Responses stream ended before a terminal response event"),
+      reply("toolUse"),
+    ]);
+    expect((await cut.complete(request())).answers).toEqual([{ page: 3 }]);
     expect(answer.answers).toEqual([{ page: 3 }]);
     expect(answer.error).toBeUndefined();
-    expect(answer.usage).toEqual({ input: 14, output: 6 });
+    expect(answer.usage).toEqual({ input: 14, output: 6, cached: 0 });
   });
 
   it("fails the step after a few tries, with the provider's words for the record", async () => {
@@ -182,5 +219,29 @@ describe("a dropped connection", () => {
     expect(completeSimple).toHaveBeenCalledTimes(1);
     const thrown = bridge([new Error("401 Unauthorized"), reply("toolUse")]);
     await expect(thrown.complete(request())).rejects.toThrow("401");
+  });
+
+  it("waits out a short rate limit, but not the plan's usage limit", async () => {
+    for (const message of [
+      "Codex error: Rate limit reached for requests. Please try again in 2s.",
+      "429 Too Many Requests",
+      "You have hit your ChatGPT usage limit (plus plan). Try again in ~1 min.",
+    ]) {
+      const { complete, completeSimple } = bridge([reply("error", message), reply("toolUse")]);
+      expect((await complete(request())).answers, message).toEqual([{ page: 3 }]);
+      expect(completeSimple).toHaveBeenCalledTimes(2);
+    }
+    const plan = bridge([
+      reply("error", "You have hit your ChatGPT usage limit (plus plan). Try again in ~94 min."),
+      reply("toolUse"),
+    ]);
+    expect(await plan.complete(request())).toMatchObject({
+      error: expect.stringContaining("usage limit"),
+    });
+    expect(plan.completeSimple).toHaveBeenCalledTimes(1);
+    // A limit that outlasts every wait is reported, and the job pauses on it.
+    const busy = bridge(Array.from({ length: 4 }, () => reply("error", "429 Too Many Requests")));
+    expect(await busy.complete(request())).toMatchObject({ error: "429 Too Many Requests" });
+    expect(busy.completeSimple).toHaveBeenCalledTimes(4);
   });
 });

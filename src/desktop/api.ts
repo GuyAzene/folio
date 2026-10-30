@@ -256,8 +256,13 @@ export type AgentRole =
   | "escalation"
   | "author"
   | "reviewer"
+  | "fix"
+  | "recheck"
   | "ledger"
   | "publish";
+
+/** The note on a step whose saved result was used again, so it made no request. */
+export const REUSED_STEP = "Reused from an earlier run.";
 
 /** What a finished step produced, as counts a student can read. */
 export interface StepOutcome {
@@ -271,8 +276,13 @@ export interface StepOutcome {
   /** Claims checked against the page images, and how many the checker could not confirm. */
   claims?: number;
   disagreements?: number;
-  /** Regions still unplaced after revision: a record for diagnosis, never shown as such. */
+  /** Regions whose facts the checker looked for in the notes. */
+  regions?: number;
+  /** Regions still unplaced after fixing: a record for diagnosis, never shown as such. */
   uncovered?: number;
+  /** What the first check found to fix, and how many of those fixing settled. */
+  discrepancies?: number;
+  fixed?: number;
 }
 
 /** One card in a job's agent tree: the run, a document, a step, or a model call. */
@@ -498,6 +508,7 @@ export const MODEL_ROLES = [
   "closeup",
   "writer",
   "checker",
+  "rechecker",
   "topics",
   "syllabus",
 ] as const;
@@ -507,7 +518,13 @@ export type ModelRole = (typeof MODEL_ROLES)[number];
  * Roles whose model must see pages: the study steps that read slides. The others may read text
  * only; a text-only tutor gets a note where a page image would be, and reads the page's text.
  */
-export const IMAGE_ROLES: readonly ModelRole[] = ["planner", "reader", "closeup", "checker"];
+export const IMAGE_ROLES: readonly ModelRole[] = [
+  "planner",
+  "reader",
+  "closeup",
+  "checker",
+  "rechecker",
+];
 
 /** The roles studying uses: a study starts only once each one's connection is there. */
 export const STUDY_ROLES: readonly ModelRole[] = [
@@ -516,6 +533,7 @@ export const STUDY_ROLES: readonly ModelRole[] = [
   "closeup",
   "writer",
   "checker",
+  "rechecker",
 ];
 
 export interface ModelsView {

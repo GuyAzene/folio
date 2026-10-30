@@ -214,7 +214,16 @@ export class KnowledgeStore {
       .catch(() => undefined)
       .then(async () => {
         const current = await this.knowledge(courseId);
-        return current ? this.#write(courseId, await change(current), null, summary) : null;
+        if (!current) return null;
+        // A topic still taught by two or more documents gets an overview of the sections it has
+        // now. No topics are compared, and a model failure publishes the change as it is.
+        const { knowledge } = await settleTopics(
+          await change(current),
+          this.index(courseId),
+          this.#topics,
+          [],
+        );
+        return this.#write(courseId, knowledge, null, summary);
       });
     this.#publishing.set(courseId, next);
     return next;

@@ -66,8 +66,8 @@ void describe("connections and models", () => {
       models.connections.filter((each) => each.connected).map((each) => each.id);
     assert.deepEqual(connected(boot.models), ["openrouter"]);
     assert.equal(boot.models.roles.writer, "openrouter/deepseek/deepseek-v4-pro");
-    // A text-only reader can't read slides: reported, and the default reads them instead.
-    assert.equal(boot.models.roles.reader, "chatgpt/gpt-6-luna");
+    // A text-only reader can't read slides: reported, and the default (a ChatGPT model) reads.
+    assert.match(boot.models.roles.reader, /^chatgpt\//);
     assert.match(
       boot.models.problems.join(" "),
       /studying\.reader: DeepSeek V4 Pro .* reads text only/,

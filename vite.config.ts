@@ -45,6 +45,17 @@ export default defineConfig({
         command: "node scripts/package.ts && node scripts/install.ts",
         cache: false,
       },
+      // Where each study's time went, from jobs.sqlite opened read-only (--job, --since).
+      "study:report": { command: "node scripts/study-report.ts", cache: false },
+      // Studies synthetic decks with planted facts and scores them: FOLIO_BENCH=1 spends the
+      // ChatGPT plan; --fake runs offline. Never part of vp test.
+      "study:bench": { command: "node scripts/study-bench.ts", cache: false },
+      // Times page reads at each effort and in bursts, and checks the prompt cache:
+      // FOLIO_PROBE=1 spends the ChatGPT plan on synthetic slides. Never part of vp test.
+      "study:probe": { command: "node scripts/study-probe.ts", cache: false },
+      // Compares models for reading pages and rechecking claims on the student's own files,
+      // printing only numbers: FOLIO_PROBE=1 spends the ChatGPT plan. Never part of vp test.
+      "study:compare": { command: "node scripts/study-compare.ts", cache: false },
       typecheck: { command: "vp check --no-fmt --no-lint", cache: false },
       // Folio in a real Electron window, built into a temporary folder; local only, no model calls.
       "test:electron": { command: "node --test tests/electron/*.e2e.ts", cache: false },

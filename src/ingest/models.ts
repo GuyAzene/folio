@@ -1,4 +1,4 @@
-import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
+import type { ImageContent, TextContent, ThinkingLevel } from "@earendil-works/pi-ai";
 import { jsonrepair } from "jsonrepair";
 import type { TSchema } from "typebox";
 import Value from "typebox/value";
@@ -9,8 +9,11 @@ export interface ModelRequest {
   system: string;
   content: (TextContent | ImageContent)[];
   maxTokens: number;
-  reasoning?: "low" | "medium" | "high";
+  /** How hard the model thinks, up to Pi's xhigh and max; the ChatGPT plan accepts all of them. */
+  reasoning?: ThinkingLevel;
   signal?: AbortSignal;
+  /** Shared by every request about one document, so the provider can reuse their common prefix. */
+  cacheKey?: string;
   /**
    * The answer must arrive as a call to this tool, whose arguments the provider constrains to the
    * schema while the model writes them, so a malformed answer cannot be produced.
@@ -22,7 +25,8 @@ export interface ModelReply {
   text: string;
   /** Pi's stop reason: "stop" or "toolUse"; anything else means the reply is incomplete. */
   stopReason: string;
-  usage: { input: number; output: number };
+  /** `cached`: prompt tokens the provider served from its prompt cache, on top of `input`. */
+  usage: { input: number; output: number; cached?: number };
   error?: string;
   /** The arguments of each call to the answer tool, in order. */
   answers?: unknown[];

@@ -32,6 +32,9 @@ sessions/
 # Local package archives
 *.tgz
 
+# Study benchmark results (vp run study:bench)
+.bench/
+
 # Local preview configuration
 .claude/launch.json
 

@@ -1,10 +1,12 @@
 import { createHash } from "node:crypto";
-import type {
-  AgentNodeView,
-  JobOrigin,
-  JobView,
-  PageCoverageView,
-  StepOutcome,
+import type { ThinkingLevel } from "@earendil-works/pi-ai";
+import {
+  REUSED_STEP,
+  type AgentNodeView,
+  type JobOrigin,
+  type JobView,
+  type PageCoverageView,
+  type StepOutcome,
 } from "../desktop/api.ts";
 import type { JobStore, NodeInput } from "../jobs/store.ts";
 import type { Knowledge } from "../kb/knowledge.ts";
@@ -24,11 +26,16 @@ import {
   authorSchema,
   BRIEF_SYSTEM,
   briefSchema,
+  CHECK_SYSTEM,
+  checkSchema,
   ESCALATION_SYSTEM,
   escalationSchema,
+  FIX_SYSTEM,
   OMIT_REASONS,
+  patchSchema,
   PROMPT_VERSION,
   READER_SYSTEM,
+  TOPIC_SYSTEM,
   readerSchema,
   REVIEWER_SYSTEM,
   reviewerSchema,
@@ -36,10 +43,21 @@ import {
   type Brief,
   type DraftPage,
   type EscalatedRegion,
+  type Patch,
   type ReadPage,
   type ReadRegion,
+  type RegionCoverage,
   type Verdict,
 } from "./prompts.ts";
+import {
+  answered,
+  applyPatches,
+  discrepancies,
+  missingFacts,
+  withRestated,
+  type Coverage,
+  type Discrepancy,
+} from "./patch.ts";
 import { missingNumbers, tokenRecall } from "./reconcile.ts";
 import { parseRef } from "../model-refs.ts";
 import type { Box, PageInventory, Region, SourceInventory } from "./types.ts";
@@ -62,16 +80,72 @@ export interface RoleModels {
   escalation: string;
   author: string;
   reviewer: string;
+  /** Rechecks the few claims a fix changed; studies before 2026-10-30 used the reviewer. */
+  recheck?: string;
+  /**
+   * How hard each step thinks. The few fixes think hardest; what is read, planned and written
+   * one level less, as Codex's Ultra runs its workers; the check, many pages side by side, at
+   * high. Studies before 2026-10-30 recorded none.
+   */
+  effort?: Record<StudyEffortRole, ThinkingLevel>;
 }
+
+export type StudyEffortRole =
+  | "brief"
+  | "reader"
+  | "escalation"
+  | "author"
+  | "reviewer"
+  | "fix"
+  | "recheck";
 
 export const DEFAULT_ROLES: RoleModels = {
   provider: "openai",
-  brief: "gpt-6-sol",
-  reader: "gpt-6-luna",
+  brief: "gpt-6.1-sol",
+  reader: "gpt-6.1-sol",
   escalation: "gpt-6.1-sol",
   author: "gpt-6.1-sol",
-  reviewer: "gpt-6-sol",
+  reviewer: "gpt-6.1-sol",
+  // Measured on a real lecture: caught every altered claim and kept every true one, as 6.1 Sol
+  // did, in less time and at half the cost. Terra and Luna each kept only about 72% of what
+  // 6.1 Sol read on a page, so reading stays on Sol.
+  recheck: "gpt-6.1-terra",
+  effort: {
+    brief: "high",
+    reader: "medium",
+    escalation: "high",
+    author: "high",
+    reviewer: "high",
+    fix: "high",
+    recheck: "medium",
+  },
 };
+
+const LEVELS: ThinkingLevel[] = ["minimal", "low", "medium", "high", "xhigh", "max"];
+
+/**
+ * These roles with any step's model or effort changed for a trial: FOLIO_STUDY_PLANNER, _READER,
+ * _WRITER, _CHECKER and _RECHECKER name a model; FOLIO_STUDY_EFFORT_<ROLE> an effort.
+ */
+export function trialRoles(
+  env: Record<string, string | undefined>,
+  roles: RoleModels = DEFAULT_ROLES,
+): RoleModels {
+  const effort = { ...(roles.effort ?? DEFAULT_ROLES.effort!) };
+  for (const role of Object.keys(effort) as StudyEffortRole[]) {
+    const value = env[`FOLIO_STUDY_EFFORT_${role.toUpperCase()}`] as ThinkingLevel | undefined;
+    if (value && LEVELS.includes(value)) effort[role] = value;
+  }
+  return {
+    ...roles,
+    brief: env.FOLIO_STUDY_PLANNER || roles.brief,
+    reader: env.FOLIO_STUDY_READER || roles.reader,
+    author: env.FOLIO_STUDY_WRITER || roles.author,
+    reviewer: env.FOLIO_STUDY_CHECKER || roles.reviewer,
+    recheck: env.FOLIO_STUDY_RECHECKER || roles.recheck,
+    effort,
+  };
+}
 
 export interface IngestOptions {
   store: JobStore;
@@ -88,7 +162,7 @@ export interface IngestOptions {
   removed?: (jobId: string) => void;
   /** Read again at each step, so a change in Settings applies from the next step on. */
   roles?: RoleModels | (() => RoleModels);
-  /** Parallel reader and reviewer requests across all jobs. */
+  /** Model requests in flight across all jobs: every step takes a turn through one limiter. */
   concurrency?: number;
   /** Jobs studied at once; the rest wait their turn. */
   parallelJobs?: number;
@@ -134,6 +208,8 @@ export interface DocumentDraft {
   draft: AuthorDraft;
   ledger: LedgerEntry[];
   verdicts: Record<string, Verdict & { region: string; text: string }>;
+  /** What the checker found each region teaches and where; studies before 2026-10-30 have none. */
+  coverage?: Coverage;
   exceptions: ReviewException[];
   models: RoleModels;
   promptVersion: number;
@@ -150,23 +226,16 @@ export interface DraftBundle {
 const READ_EDGE = 1568;
 const AUTHOR_EDGE = 1024;
 const RECALL_FLOOR = 0.8;
-/** How hard the author thinks in each revision round; there are as many rounds as entries. */
-const REVISION_EFFORT: ModelRequest["reasoning"][] = ["medium", "high", "high"];
-const LEDGER_RECALL_FLOOR = 0.5;
-const HARD_FLAGS = new Set([
-  "hebrew_in_image",
-  "small_text",
-  "chart",
-  "arrows",
-  "handwriting",
-  "unreadable",
-]);
+/** Rounds of fixing at most: returns fall fast, and a third round rarely finds anything new. */
+const FIX_ROUNDS = 2;
+/** Hard to read: a doubtful reading of a region flagged so is re-read up close. */
+const HARD_FLAGS = new Set(["hebrew_in_image", "small_text", "chart", "arrows"]);
 const QUIET_TYPES = new Set(["decoration", "header_footer"]);
 
 /**
  * Runs ingestion jobs as fixed code, not as an agent deciding its own work: prepare and
  * inventory, brief, readers in parallel, gate, escalate, author, ledger, independent review,
- * one revision, then published to the course. See docs/architecture.md.
+ * revision only on grounded issues, then published to the course. See docs/architecture.md.
  */
 /** Starts a run's failure note when the study notes were written but could not be published. */
 export const PUBLISH_FAILED = "The study notes were written but couldn't be added to the course:";
@@ -177,7 +246,7 @@ export class IngestRunner {
   readonly #running = new Map<string, AbortController>();
   /** Each running job's run, so a caller can wait until it has really stopped. */
   readonly #runs = new Map<string, Promise<void>>();
-  readonly #limit: <T>(line: string, task: () => Promise<T>) => Promise<T>;
+  readonly #limit: <T>(line: string, task: () => Promise<T>, priority?: number) => Promise<T>;
   #filling: Promise<void> = Promise.resolve();
 
   /**
@@ -192,7 +261,7 @@ export class IngestRunner {
   constructor(options: IngestOptions) {
     this.#options = options;
     this.#roleOption = options.roles ?? DEFAULT_ROLES;
-    this.#limit = fairLimiter(options.concurrency ?? 3);
+    this.#limit = fairLimiter(options.concurrency ?? 16);
   }
 
   /**
@@ -594,69 +663,268 @@ export class IngestRunner {
       signal.throwIfAborted();
 
       const session = sessionInfo(course, document, courseDocuments);
-      const brief = await this.#brief(jobId, branch.id, document, source, signal);
-      const topics = topicInventory(known, [
-        ...brief.outline.map((item) => item.title),
-        ...brief.terms.flatMap((term) => [term.english, term.hebrew]),
+      const regions: DocumentDraft["regions"] = {};
+      const done = new Map(
+        inventory.pages.map((page) => [page.page, Promise.withResolvers<void>()]),
+      );
+      const readPages = (pages: number[], signal: AbortSignal) =>
+        untilAll(
+          pages.map((page) => done.get(page)!.promise),
+          signal,
+        );
+      // Planning and reading start together: a reader needs only its own page. Each writer
+      // starts once the plan is made and its own pages are read, while later pages are still
+      // being read; a lecture of one topic has a single writer once every page is read.
+      let brief: Brief | undefined;
+      // Each slide is checked as soon as every topic covering it is written, while the other
+      // topics are still being written; whatever is left is checked once all are written.
+      const checked = { verdicts: {} as DocumentDraft["verdicts"], coverage: {} as Coverage };
+      const checkedPages = new Set<number>();
+      const [, parts] = await together<AuthorDraft[] | null>(signal, [
+        async (signal) => {
+          await this.#read(jobId, branch.id, document, source, regions, signal, (pages) =>
+            pages.forEach((page) => done.get(page)?.resolve()),
+          );
+          return null;
+        },
+        async (signal) => {
+          brief = await this.#brief(jobId, branch.id, document, source, signal);
+          const planned = brief;
+          const topics = topicInventory(known, [
+            ...planned.outline.map((item) => item.title),
+            ...planned.terms.flatMap((term) => [term.english, term.hebrew]),
+          ]);
+          const plan = topicPlan(planned, inventory);
+          // How many topics the writers take on, for the Studying page, also when reused.
+          for (const node of store.nodes(jobId))
+            if (node.role === "brief" && node.parentId === branch.id)
+              store.setNode(node.id, { outcome: { topics: plan.length } });
+          if (plan.length === 1) {
+            await readPages(
+              inventory.pages.map((page) => page.page),
+              signal,
+            );
+            return [
+              await this.#author(
+                jobId,
+                branch.id,
+                course,
+                document,
+                source,
+                planned,
+                regions,
+                session,
+                topics,
+                signal,
+              ),
+            ];
+          }
+          const written: (AuthorDraft | undefined)[] = plan.map(() => undefined);
+          return together(
+            signal,
+            plan.map((topic, index) => async (signal: AbortSignal) => {
+              await readPages(topic.pages, signal);
+              const part = await this.#writeTopic(
+                jobId,
+                branch.id,
+                course,
+                document,
+                source,
+                planned,
+                regions,
+                session,
+                topics,
+                plan,
+                index,
+                signal,
+              );
+              written[index] = part;
+              const ready = topic.pages.filter(
+                (page) =>
+                  !checkedPages.has(page) &&
+                  plan.every((other, at) => !other.pages.includes(page) || written[at]),
+              );
+              if (ready.length) {
+                for (const page of ready) checkedPages.add(page);
+                const sofar = mergeTopics(
+                  planned,
+                  written.filter((item): item is AuthorDraft => item !== undefined),
+                );
+                await this.#check(
+                  jobId,
+                  branch.id,
+                  document,
+                  source,
+                  sofar,
+                  regions,
+                  computeLedger(inventory, regions, sofar),
+                  signal,
+                  { pages: ready },
+                  checked,
+                );
+              }
+              return part;
+            }),
+          );
+        },
       ]);
-      const regions = await this.#read(jobId, branch.id, document, source, brief, signal);
-      let draft = await this.#author(
+      if (!brief || !parts) throw new Error("Planning finished without a plan.");
+      const planned: Brief = brief;
+      let draft = parts.length === 1 ? parts[0]! : mergeTopics(brief, parts);
+      let ledger = computeLedger(inventory, regions, draft);
+      // What is left: every slide a single writer wrote, a slide no topic covered, and claims
+      // that cite a slide outside their own topic, which its check could not see yet.
+      const check = await this.#check(
         jobId,
         branch.id,
-        course,
         document,
         source,
-        brief,
+        draft,
         regions,
-        session,
-        topics,
+        ledger,
         signal,
-        null,
+        { regionsDone: checkedPages },
+        checked,
       );
-      let ledger = computeLedger(inventory, regions, draft);
-      let verdicts = await this.#review(jobId, branch.id, document, source, draft, {}, signal);
+      let verdicts = check.verdicts;
+      let coverage = check.coverage;
+      // A region the checker could not make out is read again up close, once, so the fixer
+      // works from a better reading.
+      const unclear = Object.values(coverage).flatMap((entry) => {
+        const region = inventory.pages
+          .flatMap((page) => page.regions)
+          .find((candidate) => candidate.id === entry.region);
+        const reading = regions[entry.region];
+        return !entry.legible && region && !reading?.escalated
+          ? [{ region, reason: `the checker could not read it: ${entry.note}`, first: reading }]
+          : [];
+      });
+      if (unclear.length)
+        await this.#escalate(jobId, branch.id, document, source, unclear, regions, signal, 1);
+      // A region nothing cites whose facts the checker found in blocks is cited by them.
+      draft = withRestated(draft, ledger, coverage);
+      ledger = computeLedger(inventory, regions, draft);
 
-      // Up to three rounds, each on what is still wrong: regions not yet written up are read
-      // again up close first, then the author fixes them and any claim the checker doubted.
-      for (const [index, reasoning] of REVISION_EFFORT.entries()) {
-        const issues = revisionIssues(ledger, verdicts);
-        if (!issues.length) break;
-        const round = index + 1;
-        // A close-up helps a region that was never read up close, or still could not be read;
-        // one the author left out after a good reading needs the author, not another look.
+      // Fixed only for what a check can stand behind: regions nothing cites, facts of a slide
+      // no block carries, and claims the checker doubted against the page. A cited region whose
+      // words differ from the slide's (English notes on a Hebrew slide, a formula written
+      // another way) is never sent back for that alone. The fixer patches only the blocks
+      // concerned, and only its new claims are checked again. At most two rounds, and none once
+      // a round stops reducing what is wrong or changes nothing.
+      const regionIds = new Set(ledger.map((entry) => entry.region));
+      let found = discrepancies(ledger, verdicts, draft, coverage);
+      const firstFound = found.length;
+      if (check.group) {
+        const group = store.node(check.group);
+        store.setNode(group.id, { outcome: { ...group.outcome, discrepancies: firstFound } });
+      }
+      let previous = Infinity;
+      for (let round = 1; round <= FIX_ROUNDS; round++) {
+        if (!found.length || found.length >= previous) break;
+        previous = found.length;
+        // A close-up helps a region nothing cites that was never read up close; one already
+        // read up close needs the fixer, not the same look again.
         const closer = ledger.flatMap((entry) => {
           const region = inventory.pages
             .find((page) => page.page === entry.page)
             ?.regions.find((candidate) => candidate.id === entry.region);
           const reading = regions[entry.region];
           return entry.state === "unaccounted" &&
+            !entry.blocks.length &&
             region &&
-            (!reading?.escalated || !!reading.unreadable)
+            !reading?.escalated
             ? [{ region, reason: entry.reason, first: reading }]
             : [];
         });
         if (closer.length)
           await this.#escalate(jobId, branch.id, document, source, closer, regions, signal, round);
-        draft = await this.#author(
+        // A few discrepancies per request, side by side: one long request for everything is
+        // slow and fragile. Those that touch the same block stay in one part.
+        const parts = fixParts(found);
+        const answers = await together(
+          signal,
+          parts.map((part, index) => async (signal: AbortSignal) => {
+            const key = hash([
+              "fix",
+              PROMPT_VERSION,
+              hash(FIX_SYSTEM),
+              this.#roles.author,
+              document.sha256,
+              draft,
+              part,
+              regions,
+            ]);
+            const patches = await this.#fix(
+              jobId,
+              branch.id,
+              key,
+              document,
+              source,
+              planned,
+              regions,
+              draft,
+              part,
+              round,
+              parts.length > 1 ? index + 1 : 0,
+              signal,
+            );
+            return { key, part, patches };
+          }),
+        );
+        const result = applyPatches(
+          draft,
+          answers.flatMap((answer) => answer.patches),
+          found,
+          regionIds,
+        );
+        const fixes = new Set(result.applied.flatMap((patch) => patch.fixes));
+        for (const { key, part } of answers)
+          for (const node of store
+            .nodesByKey(jobId, key)
+            .filter((item) => item.status === "done")) {
+            store.setNode(node.id, {
+              outcome: {
+                discrepancies: part.length,
+                fixed: part.filter((item) => fixes.has(item.id)).length,
+              },
+            });
+            // A correction refused by the rules is kept with the reason, to be looked at later.
+            const own = new Set(part.map((item) => item.id));
+            for (const { patch, problem } of result.rejected)
+              if (patch.fixes.some((id) => own.has(id)))
+                store.recordRejection(node.id, {
+                  attempt: round,
+                  problem: `Correction refused: ${problem}`,
+                  reply: JSON.stringify(patch),
+                });
+          }
+        if (!result.applied.length) break;
+        coverage = answered(coverage, result.applied, found, draft);
+        draft = result.draft;
+        ledger = computeLedger(inventory, regions, draft);
+        verdicts = await this.#review(
           jobId,
           branch.id,
-          course,
           document,
           source,
-          brief,
-          regions,
-          session,
-          topics,
+          draft,
+          verdicts,
           signal,
-          { draft, issues, round, reasoning },
+          "recheck",
         );
-        ledger = computeLedger(inventory, regions, draft);
-        verdicts = await this.#review(jobId, branch.id, document, source, draft, verdicts, signal);
+        found = discrepancies(ledger, verdicts, draft, coverage);
       }
       // Whatever every round still missed is written up from the slide itself, and claims the
       // checker still doubts are settled for the tutor, never shown to the student as warnings.
-      const uncovered = ledger.filter((entry) => entry.state === "unaccounted").length;
-      draft = withFallbacks(draft, ledger, inventory, regions, document.title);
+      // Facts of a region the notes omit as page furniture are not missing.
+      const omitted = new Set(draft.omitted.map((entry) => entry.region));
+      const missing = new Set(
+        [...missingFacts(coverage, draft).keys()].filter((region) => !omitted.has(region)),
+      );
+      const uncovered = ledger.filter(
+        (entry) => entry.state === "unaccounted" || missing.has(entry.region),
+      ).length;
+      draft = withFallbacks(draft, ledger, inventory, regions, document.title, missing);
       ledger = computeLedger(inventory, regions, draft);
       draft = settleDisputes(draft, verdicts);
       for (const page of inventory.pages)
@@ -679,6 +947,8 @@ export class IngestRunner {
           ...draftOutcome(draft),
           ...verdictOutcome(verdicts),
           uncovered,
+          discrepancies: firstFound,
+          fixed: Math.max(0, firstFound - found.length),
         },
       });
       this.#emit(jobId);
@@ -692,6 +962,7 @@ export class IngestRunner {
         draft,
         ledger,
         verdicts,
+        coverage,
         exceptions,
         models: this.#roles,
         promptVersion: PROMPT_VERSION,
@@ -710,7 +981,14 @@ export class IngestRunner {
   ): Promise<Brief> {
     const { inventory } = source;
     const model = this.#roles.brief;
-    const key = hash(["brief", PROMPT_VERSION, model, document.sha256, inventory.version]);
+    const key = hash([
+      "brief",
+      PROMPT_VERSION,
+      hash(BRIEF_SYSTEM),
+      model,
+      document.sha256,
+      inventory.version,
+    ]);
     return this.#step(
       jobId,
       parentId,
@@ -743,22 +1021,40 @@ export class IngestRunner {
           content.push(text(`Image of page ${page.page}:`));
           content.push(png(await source.render(page.page, 768)));
         }
-        return this.#call<Brief>(
-          node,
-          { model, system: BRIEF_SYSTEM, content, maxTokens: 6000, reasoning: "low", signal },
-          briefSchema,
+        // Every request a document makes shares the job's slots, so two studies take turns.
+        const brief = await this.#request("write", jobId, document.id, () =>
+          this.#call<Brief>(
+            node,
+            {
+              model,
+              system: BRIEF_SYSTEM,
+              content,
+              maxTokens: 32000,
+              reasoning: this.#effort("brief"),
+              signal,
+              cacheKey: cacheKey(document),
+            },
+            briefSchema,
+          ),
         );
+        return brief;
       },
     );
   }
 
+  /**
+   * Reads every page, one careful reader per page, side by side. Readings land in `regions` as
+   * they come; `onRead` hears of each page once it and its close-ups are done, so a writer can
+   * start on its topic while later pages are still being read.
+   */
   async #read(
     jobId: string,
     parentId: string,
     document: DocumentRecord,
     source: PreparedSource,
-    brief: Brief,
+    regions: DocumentDraft["regions"],
     signal: AbortSignal,
+    onRead?: (pages: number[]) => void,
   ): Promise<DocumentDraft["regions"]> {
     const { store } = this.#options;
     const { inventory } = source;
@@ -770,99 +1066,110 @@ export class IngestRunner {
     });
     store.setNode(group.id, { status: "running" });
     this.#emit(jobId);
-    const briefText = briefContext(brief);
-    const regions: DocumentDraft["regions"] = {};
 
     await together(
       signal,
-      batches(inventory.pages).map(
-        (pages) => (signal) =>
-          this.#limit(`${jobId}:${document.id}`, async () => {
-            signal.throwIfAborted();
-            const model = this.#roles.reader;
-            const label = pageLabel(pages.map((page) => page.page));
-            const key = hash([
-              "reader",
-              PROMPT_VERSION,
+      batches(inventory.pages).map((pages) => async (signal) => {
+        signal.throwIfAborted();
+        const model = this.#roles.reader;
+        const label = pageLabel(pages.map((page) => page.page));
+        const key = hash([
+          "reader",
+          PROMPT_VERSION,
+          model,
+          document.sha256,
+          inventory.version,
+          pages.map((page) => page.page),
+        ]);
+        // Only the reader's own request holds a slot; its close-ups queue for their own.
+        const read = await this.#request("read", jobId, document.id, () =>
+          this.#step(
+            jobId,
+            group.id,
+            key,
+            {
+              role: "reader",
+              title: label,
+              task: `Read ${label.toLowerCase()} of ${document.title}`,
               model,
-              document.sha256,
-              inventory.version,
-              pages.map((page) => page.page),
-              hash(brief),
-            ]);
-            const read = await this.#step(
-              jobId,
-              group.id,
-              key,
-              {
-                role: "reader",
-                title: label,
-                task: `Read ${label.toLowerCase()} of ${document.title}`,
-                model,
-                pages: pages.map((page) => page.page),
-              },
-              async (node) => {
-                const content: ModelRequest["content"] = [text(briefText)];
-                for (const page of pages) {
-                  content.push(text(regionList(page)));
-                  content.push(png(await source.render(page.page, READ_EDGE)));
-                }
-                const result = await this.#call<{ pages: ReadPage[] }>(
-                  node,
-                  {
-                    model,
-                    system: READER_SYSTEM,
-                    content,
-                    maxTokens: 4000 + 3000 * pages.length,
-                    reasoning: "low",
-                    signal,
-                  },
-                  readerSchema,
-                  (parts) => ({ pages: parts.flatMap((part) => part.pages) }),
-                );
-                return result.pages;
-              },
-            );
+              pages: pages.map((page) => page.page),
+            },
+            async (node) => {
+              const content: ModelRequest["content"] = [];
+              for (const page of pages) {
+                content.push(text(regionList(page)));
+                content.push(png(await source.render(page.page, READ_EDGE)));
+              }
+              const result = await this.#call<{ pages: ReadPage[] }>(
+                node,
+                {
+                  model,
+                  system: READER_SYSTEM,
+                  content,
+                  maxTokens: 24000 * pages.length,
+                  reasoning: this.#effort("reader"),
+                  signal,
+                  cacheKey: cacheKey(document),
+                },
+                readerSchema,
+                (parts) => ({ pages: parts.flatMap((part) => part.pages) }),
+              );
+              return result.pages;
+            },
+          ),
+        );
 
-            // Gate (code): every region present and reconciled, or it is re-read up close.
-            const escalate: { region: Region; reason: string; first?: ReadRegion }[] = [];
-            for (const page of pages) {
-              const found = read.find((candidate) => candidate.page === page.page);
-              for (const region of page.regions) {
-                const reading = found?.regions.find((candidate) => candidate.id === region.id);
-                const reason = gateRegion(
-                  page,
-                  region,
-                  reading,
-                  found ? null : "the reader skipped this page",
-                );
-                if (reading) regions[region.id] = { ...reading, escalated: false, unreadable: "" };
-                if (reason) escalate.push({ region, reason, first: reading });
-              }
-              for (const [index, missed] of (found?.missed ?? []).entries()) {
-                const region: Region = {
-                  id: `p${page.page}.x${index + 1}`,
-                  page: page.page,
-                  kind: "image",
-                  box: [0, 0, page.width, page.height],
-                  text: "",
-                  direction: null,
-                  numbers: [],
-                };
-                escalate.push({
-                  region,
-                  reason: `the reader saw something the inventory missed: ${missed.description} (${missed.where})`,
-                });
-              }
-              store.setCoverage(jobId, document.id, page.page, "read");
-            }
-            const job = store.job(jobId);
-            store.updateJob(jobId, { pagesRead: job.pagesRead + pages.length });
-            this.#emit(jobId);
-            if (escalate.length)
-              await this.#escalate(jobId, key, document, source, escalate, regions, signal);
-          }),
-      ),
+        // Gate (code): every region present and reconciled, or it is re-read up close.
+        const escalate: { region: Region; reason: string; first?: ReadRegion }[] = [];
+        for (const page of pages) {
+          const found = read.find((candidate) => candidate.page === page.page);
+          for (const region of page.regions) {
+            const reading = found?.regions.find((candidate) => candidate.id === region.id);
+            const reason = gateRegion(
+              page,
+              region,
+              reading,
+              found ? null : "the reader skipped this page",
+            );
+            if (reading) regions[region.id] = { ...reading, escalated: false, unreadable: "" };
+            if (reason) escalate.push({ region, reason, first: reading });
+          }
+          for (const [index, missed] of (found?.missed ?? []).entries()) {
+            const region: Region = {
+              id: `p${page.page}.x${index + 1}`,
+              page: page.page,
+              kind: "image",
+              box: [0, 0, page.width, page.height],
+              text: "",
+              direction: null,
+              numbers: [],
+            };
+            // The reader describes what the inventory missed; a thin description gets a look.
+            if (missed.description.split(/\s+/).filter(Boolean).length >= 8)
+              regions[region.id] = {
+                id: region.id,
+                type: "other",
+                content: `${missed.description} (${missed.where})`,
+                claims: [],
+                flags: [],
+                escalated: false,
+                unreadable: "",
+              };
+            else
+              escalate.push({
+                region,
+                reason: `the reader saw something the inventory missed: ${missed.description} (${missed.where})`,
+              });
+          }
+          store.setCoverage(jobId, document.id, page.page, "read");
+        }
+        const job = store.job(jobId);
+        store.updateJob(jobId, { pagesRead: job.pagesRead + pages.length });
+        this.#emit(jobId);
+        if (escalate.length)
+          await this.#escalate(jobId, key, document, source, escalate, regions, signal);
+        onRead?.(pages.map((page) => page.page));
+      }),
     );
     store.setNode(group.id, { status: "done" });
     this.#emit(jobId);
@@ -871,7 +1178,7 @@ export class IngestRunner {
 
   /**
    * Re-reads hard regions up close, page by page. During reading, `from` is the reader step
-   * that found them; during a revision round, it is the document and the round makes a new read.
+   * that found them; during a revision round, it is the document's node.
    */
   async #escalate(
     jobId: string,
@@ -888,76 +1195,86 @@ export class IngestRunner {
     const parent = round ? { id: from } : store.nodesByKey(jobId, from).at(-1);
     const readerKey = from;
     const byPage = Map.groupBy(items, (item) => item.region.page);
-    for (const [page, group] of byPage) {
-      signal.throwIfAborted();
-      const model = this.#roles.escalation;
-      const key = hash([
-        "escalation",
-        PROMPT_VERSION,
-        model,
-        document.sha256,
-        readerKey,
-        page,
-        group.map((item) => item.region.id),
-        ...(round ? [round] : []),
-      ]);
-      const result = await this.#step(
-        jobId,
-        parent?.id ?? null,
-        key,
-        {
-          role: "escalation",
-          title: round ? `Page ${page} close-up · round ${round}` : `Page ${page} close-up`,
-          task: `Re-read ${group.length} hard region${group.length === 1 ? "" : "s"}: ${[...new Set(group.map((item) => item.reason.split(":")[0]))].join("; ")}`,
+    // One request per page, each queued for a slot of its own, so pages are re-read side by side.
+    await together(
+      signal,
+      [...byPage].map(([page, group]) => async (signal) => {
+        signal.throwIfAborted();
+        const model = this.#roles.escalation;
+        // A revision round's close-up is keyed by what it re-reads, not by the run or round, so a
+        // re-study or a resumed run reuses it.
+        const key = hash([
+          "escalation",
+          PROMPT_VERSION,
           model,
-          pages: [page],
-        },
-        async (node) => {
-          store.setCoverage(jobId, document.id, page, "escalated");
-          this.#emit(jobId);
-          const content: ModelRequest["content"] = [
-            text(`Page ${page}, whole:`),
-            png(await source.render(page, READ_EDGE)),
-          ];
-          for (const item of group) {
-            content.push(
-              text(
-                `Region ${item.region.id} [${item.region.kind}] — why: ${item.reason}.${item.region.text ? ` Text layer: "${item.region.text}"` : ""}${item.first ? ` First reader said: "${item.first.content}"` : ""}`,
-              ),
-            );
-            if (!item.region.id.includes(".x"))
-              content.push(png(await source.crop(page, item.region.box, READ_EDGE)));
-          }
-          return this.#call<{ regions: EscalatedRegion[] }>(
-            node,
+          document.sha256,
+          round ? hash(group.map((item) => item.first ?? null)) : readerKey,
+          page,
+          group.map((item) => item.region.id),
+        ]);
+        const result = await this.#request("read", jobId, document.id, () =>
+          this.#step(
+            jobId,
+            parent?.id ?? null,
+            key,
             {
+              role: "escalation",
+              title: round ? `Page ${page} close-up · round ${round}` : `Page ${page} close-up`,
+              task: `Re-read ${group.length} hard region${group.length === 1 ? "" : "s"}: ${[...new Set(group.map((item) => item.reason.split(":")[0]))].join("; ")}`,
               model,
-              system: ESCALATION_SYSTEM,
-              content,
-              maxTokens: 6000,
-              reasoning: "medium",
-              signal,
+              pages: [page],
             },
-            escalationSchema,
-            (parts) => ({ regions: parts.flatMap((part) => part.regions) }),
-          );
-        },
-      );
-      for (const region of result.regions) {
-        const edges = region.edges.map(
-          (edge) => `${edge.from} -> ${edge.to}${edge.label ? ` (${edge.label})` : ""}`,
+            async (node) => {
+              store.setCoverage(jobId, document.id, page, "escalated");
+              this.#emit(jobId);
+              const content: ModelRequest["content"] = [
+                text(`Page ${page}, whole:`),
+                png(await source.render(page, READ_EDGE)),
+              ];
+              for (const item of group) {
+                content.push(
+                  text(
+                    `Region ${item.region.id} [${item.region.kind}] — why: ${item.reason}.${item.region.text ? ` Text layer: "${item.region.text}"` : ""}${item.first ? ` First reader said: "${item.first.content}"` : ""}`,
+                  ),
+                );
+                if (!item.region.id.includes(".x"))
+                  content.push(png(await source.crop(page, item.region.box, READ_EDGE)));
+              }
+              return this.#call<{ regions: EscalatedRegion[] }>(
+                node,
+                {
+                  model,
+                  system: ESCALATION_SYSTEM,
+                  content,
+                  maxTokens: 24000,
+                  reasoning: this.#effort("escalation"),
+                  signal,
+                  cacheKey: cacheKey(document),
+                },
+                escalationSchema,
+                (parts) => ({ regions: parts.flatMap((part) => part.regions) }),
+              );
+            },
+          ),
         );
-        regions[region.id] = {
-          id: region.id,
-          type: region.type,
-          content: edges.length ? `${region.content}\nEdges: ${edges.join("; ")}` : region.content,
-          claims: region.claims,
-          flags: [],
-          escalated: true,
-          unreadable: region.unreadable,
-        };
-      }
-    }
+        for (const region of result.regions) {
+          const edges = region.edges.map(
+            (edge) => `${edge.from} -> ${edge.to}${edge.label ? ` (${edge.label})` : ""}`,
+          );
+          regions[region.id] = {
+            id: region.id,
+            type: region.type,
+            content: edges.length
+              ? `${region.content}\nEdges: ${edges.join("; ")}`
+              : region.content,
+            claims: region.claims,
+            flags: [],
+            escalated: true,
+            unreadable: region.unreadable,
+          };
+        }
+      }),
+    );
   }
 
   async #author(
@@ -971,12 +1288,6 @@ export class IngestRunner {
     session: SessionInfo,
     topics: string,
     signal: AbortSignal,
-    revision: {
-      draft: AuthorDraft;
-      issues: string[];
-      round: number;
-      reasoning: ModelRequest["reasoning"];
-    } | null,
   ): Promise<AuthorDraft> {
     const model = this.#roles.author;
     const { inventory } = source;
@@ -987,7 +1298,7 @@ export class IngestRunner {
       document.sha256,
       hash(regions),
       hash(brief),
-      revision ? hash(revision) : null,
+      null,
       topics ? hash(topics) : null,
     ]);
     return this.#step(
@@ -996,20 +1307,13 @@ export class IngestRunner {
       key,
       {
         role: "author",
-        title: revision ? `Author · revision ${revision.round}` : "Author",
-        task: revision
-          ? `Fix ${revision.issues.length} issue${revision.issues.length === 1 ? "" : "s"} found by the ledger and the reviewer`
-          : `Write the wiki for ${document.title}`,
+        title: "Author",
+        task: `Write the wiki for ${document.title}`,
         model,
-        attempt: revision ? revision.round + 1 : 1,
+        attempt: 1,
       },
       async (node) => {
-        const regionLines = Object.entries(regions)
-          .sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }))
-          .map(
-            ([id, region]) =>
-              `- ${id} [${region.type}${region.escalated ? ", re-read" : ""}] ${region.content}${region.claims.length ? `\n  claims: ${region.claims.map((claim) => `${claim.text} (${claim.basis})`).join(" | ")}` : ""}${region.unreadable ? `\n  unreadable: ${region.unreadable}` : ""}`,
-          );
+        const regionLines = readingLines(regions);
         const content: ModelRequest["content"] = [
           text(
             [
@@ -1031,27 +1335,403 @@ export class IngestRunner {
             content.push(text(`Page ${page.page}:`));
             content.push(png(await source.render(page.page, AUTHOR_EDGE)));
           }
-        if (revision)
-          content.push(
-            text(
-              `Your previous draft:\n${JSON.stringify(revision.draft)}\n\nFix these issues and return the complete corrected draft:\n${revision.issues.map((issue) => `- ${issue}`).join("\n")}`,
-            ),
-          );
-        const written = await this.#call<AuthorDraft>(
-          node,
-          {
-            model,
-            system: AUTHOR_SYSTEM,
-            content,
-            maxTokens: 32000,
-            reasoning: revision?.reasoning ?? "medium",
-            signal,
-          },
-          authorSchema,
+        const written = await this.#request("write", jobId, document.id, () =>
+          this.#call<AuthorDraft>(
+            node,
+            {
+              model,
+              system: AUTHOR_SYSTEM,
+              content,
+              maxTokens: 64000,
+              reasoning: this.#effort("author"),
+              signal,
+              cacheKey: cacheKey(document),
+            },
+            authorSchema,
+          ),
         );
         this.#options.store.setNode(node.id, { outcome: draftOutcome(written) });
         return written;
       },
+    );
+  }
+
+  /**
+   * Writes one topic of the lecture from its own pages, beside the writers of the other topics.
+   * Its answer is a draft like the author's, merged with the others by code.
+   */
+  async #writeTopic(
+    jobId: string,
+    parentId: string,
+    course: CourseRecord,
+    document: DocumentRecord,
+    source: PreparedSource,
+    brief: Brief,
+    regions: DocumentDraft["regions"],
+    session: SessionInfo,
+    topics: string,
+    plan: Topic[],
+    index: number,
+    signal: AbortSignal,
+  ): Promise<AuthorDraft> {
+    const model = this.#roles.author;
+    const topic = plan[index]!;
+    const own = new Set(topic.pages);
+    const readings = Object.fromEntries(
+      Object.entries(regions).filter(([id]) => own.has(pageNumber(id))),
+    );
+    const label = pageLabel(topic.pages);
+    const key = hash([
+      "topic",
+      PROMPT_VERSION,
+      hash(TOPIC_SYSTEM),
+      model,
+      document.sha256,
+      plan,
+      index,
+      hash(readings),
+      hash(brief),
+      topics ? hash(topics) : null,
+    ]);
+    // The slot comes first, so a writer shows as working only while its request is in flight.
+    return this.#request("write", jobId, document.id, () =>
+      this.#step(
+        jobId,
+        parentId,
+        key,
+        {
+          role: "author",
+          title: `Topic · ${topic.title}`,
+          task: `Write ${topic.title} from ${label.toLowerCase()}`,
+          model,
+          attempt: 1,
+          pages: topic.pages,
+        },
+        async (node) => {
+          const others = plan
+            .filter((_, at) => at !== index)
+            .map((item) => `- ${item.title} (${pageLabel(item.pages).toLowerCase()})`);
+          const content: ModelRequest["content"] = [
+            text(
+              [
+                `Course: ${course.name}${course.code ? ` (${course.code})` : ""}. Wiki page slugs are written without the course prefix "${session.prefix}"; Folio adds it.`,
+                `Session: ${session.slug}, ${session.type} "${document.title}".`,
+                briefContext(brief),
+                ...(topics
+                  ? [
+                      `Topics this course already has (slug · title · Hebrew · aliases · meaning · where it is taught). When this topic is one of them, write its page under that slug:\n${topics}`,
+                    ]
+                  : []),
+                `Your topic: "${topic.title}", on ${label.toLowerCase()}. The other writers cover:\n${others.join("\n")}`,
+                `Regions found on your pages (cite each one that belongs to your topic):\n${readingLines(readings).join("\n")}`,
+                `Allowed omission reasons: ${OMIT_REASONS.join(", ")}.`,
+              ].join("\n\n"),
+            ),
+          ];
+          for (const page of topic.pages) {
+            content.push(text(`Page ${page}:`));
+            content.push(png(await source.render(page, AUTHOR_EDGE)));
+          }
+          const written = await this.#call<AuthorDraft>(
+            node,
+            {
+              model,
+              system: TOPIC_SYSTEM,
+              content,
+              maxTokens: 64000,
+              reasoning: this.#effort("author"),
+              signal,
+              cacheKey: cacheKey(document),
+            },
+            authorSchema,
+          );
+          this.#options.store.setNode(node.id, { outcome: draftOutcome(written) });
+          return written;
+        },
+      ),
+    );
+  }
+
+  /**
+   * The independent check: every page that teaches something, one per request, against the whole
+   * notes. For each region the checker lists the facts it teaches and names the block that
+   * carries each one; for each claim, whether the page supports it. The notes come first in
+   * every request, so the provider can serve them from its cache after the first.
+   */
+  async #check(
+    jobId: string,
+    parentId: string,
+    document: DocumentRecord,
+    source: PreparedSource,
+    draft: AuthorDraft,
+    regions: DocumentDraft["regions"],
+    ledger: LedgerEntry[],
+    signal: AbortSignal,
+    scope: { pages?: number[]; regionsDone?: Set<number> } = {},
+    into: { verdicts: DocumentDraft["verdicts"]; coverage: Coverage } = {
+      verdicts: {},
+      coverage: {},
+    },
+  ): Promise<{ verdicts: DocumentDraft["verdicts"]; coverage: Coverage; group: string | null }> {
+    const { store } = this.#options;
+    const { inventory } = source;
+    const { verdicts, coverage } = into;
+    const pageOf = (region: string) => Number(/^p(\d+)\./.exec(region)?.[1] ?? 0);
+    const inScope = (page: number) => !scope.pages || scope.pages.includes(page);
+    // Only what has not been checked yet: claims without a verdict, regions without coverage.
+    const claims = draft.pages
+      .flatMap((page) => page.blocks.flatMap((block) => block.claims))
+      .map((claim) => ({ ...claim, id: `c${hash([claim.text, claim.region]).slice(0, 10)}` }))
+      .filter((claim) => pageOf(claim.region) > 0 && inScope(pageOf(claim.region)))
+      .filter((claim) => !verdicts[claim.id]);
+    // Page furniture and decoration teach nothing, so the checker is not asked about them.
+    const entries = new Map(ledger.map((entry) => [entry.region, entry]));
+    const listed = (page: PageInventory) =>
+      scope.regionsDone?.has(page.page)
+        ? []
+        : page.regions.filter(
+            (region) =>
+              !coverage[region.id] &&
+              entries.get(region.id)?.state !== "omitted" &&
+              !QUIET_TYPES.has(regions[region.id]?.type ?? ""),
+          );
+    const pages = inventory.pages
+      .filter((page) => inScope(page.page))
+      .filter(
+        (page) => listed(page).length || claims.some((claim) => pageOf(claim.region) === page.page),
+      )
+      .map((page) => page.page);
+    const existing = store.nodesByKey(jobId, `reviewers:${document.sha256}`)[0];
+    if (!pages.length) return { verdicts, coverage, group: existing?.id ?? null };
+    const regionCount = pages.reduce(
+      (sum, number) => sum + listed(inventory.pages.find((page) => page.page === number)!).length,
+      0,
+    );
+    const notes = `The notes, every block by topic:\n${draft.pages
+      .map(
+        (page) =>
+          `## ${page.slug} "${page.title}"\n${page.blocks.map((block) => `[${block.id}] ${block.title}: ${block.body}`).join("\n")}`,
+      )
+      .join("\n\n")}`;
+    // One group for the document's whole check, however many calls it takes.
+    const group = this.#node(jobId, parentId, `reviewers:${document.sha256}`, {
+      role: "reviewer",
+      title: "Reviewers",
+      task: `Check ${claims.length} claims and ${regionCount} regions against the page images`,
+      model: this.#roles.reviewer,
+    });
+    store.setNode(group.id, { status: "running" });
+    this.#emit(jobId);
+    const chunks: number[][] = [];
+    // One slide per request: each finishes sooner, and many run side by side.
+    for (const page of pages) chunks.push([page]);
+    await together(
+      signal,
+      chunks.map(
+        (chunk) => (signal) =>
+          this.#request("check", jobId, document.id, async () => {
+            signal.throwIfAborted();
+            const model = this.#roles.reviewer;
+            const batch = claims.filter((claim) => chunk.includes(pageOf(claim.region)));
+            const chunkPages = chunk.map((number) =>
+              inventory.pages.find((candidate) => candidate.page === number)!,
+            );
+            const asked = chunkPages.flatMap(listed).map((region) => region.id);
+            const hints = chunkPages.map((page) => {
+              const lines = listed(page).map((region) => {
+                const entry = entries.get(region.id);
+                const reading = regions[region.id]?.content.replace(/\s+/g, " ").trim() ?? "";
+                return `- ${region.id} [${region.kind}]${region.text ? ` "${region.text}"` : ""} · ${entry?.blocks.length ? `cited by ${entry.blocks.join(", ")}` : "not cited"}${reading ? ` · read: "${reading.length > 400 ? `${reading.slice(0, 397)}…` : reading}"` : ""}`;
+              });
+              const layer =
+                page.textLayer === "ok"
+                  ? ""
+                  : ` (text layer ${page.textLayer}: read everything from the image)`;
+              return `Page ${page.page}${layer}. Regions:\n${lines.join("\n") || "(none to list)"}`;
+            });
+            const key = hash([
+              "check",
+              PROMPT_VERSION,
+              hash(CHECK_SYSTEM),
+              model,
+              document.sha256,
+              hash(notes),
+              chunk,
+              hints,
+              batch.map((claim) => claim.id),
+            ]);
+            const label = pageLabel(chunk);
+            const result = await this.#step(
+              jobId,
+              group.id,
+              key,
+              {
+                role: "reviewer",
+                title: label,
+                task: `Check ${batch.length} claim${batch.length === 1 ? "" : "s"} and every region on ${label.toLowerCase()}`,
+                model,
+                pages: chunk,
+              },
+              async (node) => {
+                const content: ModelRequest["content"] = [text(notes)];
+                for (const [index, number] of chunk.entries()) {
+                  content.push(text(hints[index]!));
+                  content.push(png(await source.render(number, READ_EDGE)));
+                }
+                content.push(
+                  text(
+                    batch.length
+                      ? `Claims to check (answer with the claim ID in "claim"):\n${batch.map((claim) => `[${claim.id}] (${claim.region}) ${claim.text}`).join("\n")}`
+                      : "No claims to check on these pages.",
+                  ),
+                );
+                return this.#call<{ coverage: RegionCoverage[]; verdicts: Verdict[] }>(
+                  node,
+                  {
+                    model,
+                    system: CHECK_SYSTEM,
+                    content,
+                    maxTokens: Math.min(64000, 12000 + 150 * batch.length + 400 * asked.length),
+                    reasoning: this.#effort("reviewer"),
+                    signal,
+                    cacheKey: cacheKey(document),
+                  },
+                  checkSchema,
+                  (parts) => ({
+                    coverage: parts.flatMap((part) => part.coverage),
+                    verdicts: parts.flatMap((part) => part.verdicts),
+                  }),
+                );
+              },
+            );
+            for (const claim of batch) {
+              const verdict = result.verdicts.find((candidate) => candidate.claim === claim.id);
+              verdicts[claim.id] = verdict
+                ? { ...verdict, region: claim.region, text: claim.text }
+                : {
+                    claim: claim.id,
+                    verdict: "unreadable",
+                    note: "The reviewer gave no verdict.",
+                    region: claim.region,
+                    text: claim.text,
+                  };
+            }
+            for (const entry of result.coverage)
+              if (asked.includes(entry.region)) coverage[entry.region] = entry;
+          }),
+      ),
+    );
+    store.setNode(group.id, {
+      status: "done",
+      task: `Check ${Object.keys(verdicts).length} claims and ${Object.keys(coverage).length} regions against the page images`,
+      outcome: { ...verdictOutcome(verdicts), regions: Object.keys(coverage).length },
+    });
+    this.#emit(jobId);
+    return { verdicts, coverage, group: group.id };
+  }
+
+  /**
+   * Asks for patches that fix what the check found, and nothing else. The fixer sees the
+   * discrepancies, the blocks they concern, the readings of the regions involved and those pages,
+   * not the whole draft; code applies what it returns.
+   */
+  async #fix(
+    jobId: string,
+    parentId: string,
+    key: string,
+    document: DocumentRecord,
+    source: PreparedSource,
+    brief: Brief,
+    regions: DocumentDraft["regions"],
+    draft: AuthorDraft,
+    found: Discrepancy[],
+    round: number,
+    part: number,
+    signal: AbortSignal,
+  ): Promise<Patch[]> {
+    const model = this.#roles.author;
+    const pages = [...new Set(found.map((item) => item.page).filter((page) => page > 0))].sort(
+      (a, b) => a - b,
+    );
+    // The slot comes first, so a part shows as working only while its request is in flight.
+    return this.#request("write", jobId, document.id, () =>
+      this.#step(
+        jobId,
+        parentId,
+        key,
+        {
+          role: "fix",
+          title: part ? `Fix · round ${round} · part ${part}` : `Fix · round ${round}`,
+          task: `Fix ${found.length} thing${found.length === 1 ? "" : "s"} the check found`,
+          model,
+          attempt: round,
+          pages,
+        },
+        async (node) => {
+          const concerned = new Set(found.flatMap((item) => item.blocks));
+          const affected = draft.pages.flatMap((page) =>
+            page.blocks
+              .filter((block) => concerned.has(block.id))
+              .map((block) => ({ topic: page.slug, block })),
+          );
+          const involved = new Set([
+            ...found.map((item) => item.region),
+            ...affected.flatMap(({ block }) => block.locators.map((locator) => locator.region)),
+          ]);
+          const readings = [...involved]
+            .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+            .flatMap((id) => {
+              const region = regions[id];
+              return region
+                ? [
+                    `- ${id} [${region.type}${region.escalated ? ", re-read" : ""}] ${region.content}${region.unreadable ? `\n  unreadable: ${region.unreadable}` : ""}`,
+                  ]
+                : [];
+            });
+          const content: ModelRequest["content"] = [
+            text(
+              [
+                briefContext(brief),
+                `Topics in the notes (slug: block ids):\n${draft.pages.map((page) => `- ${page.slug} "${page.title}": ${page.blocks.map((block) => block.id).join(", ")}`).join("\n")}`,
+                `Discrepancies:\n${found.map((item) => `[${item.id}] ${item.kind} · ${item.region} (page ${item.page})${item.blocks.length ? ` · blocks ${item.blocks.join(", ")}` : ""}: ${item.detail}`).join("\n")}`,
+                ...(affected.length ? [`Blocks they concern:\n${JSON.stringify(affected)}`] : []),
+                `What readers found in these regions:\n${readings.join("\n")}`,
+                `Allowed omission reasons: ${OMIT_REASONS.join(", ")}.`,
+              ].join("\n\n"),
+            ),
+          ];
+          for (const page of pages) {
+            content.push(text(`Page ${page}:`));
+            content.push(png(await source.render(page, AUTHOR_EDGE)));
+          }
+          try {
+            const result = await this.#call<{ patches: Patch[] }>(
+              node,
+              {
+                model,
+                system: FIX_SYSTEM,
+                content,
+                maxTokens: Math.min(64000, 16000 + 1000 * found.length),
+                reasoning: this.#effort("fix"),
+                signal,
+                cacheKey: cacheKey(document),
+              },
+              patchSchema,
+              (parts) => ({ patches: parts.flatMap((part) => part.patches) }),
+            );
+            return result.patches;
+          } catch (error) {
+            // A fix that cannot be had leaves what it would have fixed to the slides' own words,
+            // written up below; only a plan limit or a stop ends the study here.
+            if (stopped(error) || (error instanceof ModelStepError && error.kind === "limit"))
+              throw error;
+            this.#options.store.setNode(node.id, {
+              note: `Not fixed; written up from the slides instead: ${(error as Error).message}`,
+            });
+            return [];
+          }
+        },
+      ),
     );
   }
 
@@ -1063,6 +1743,7 @@ export class IngestRunner {
     draft: AuthorDraft,
     previous: DocumentDraft["verdicts"],
     signal: AbortSignal,
+    role: "reviewer" | "recheck" = "reviewer",
   ): Promise<DocumentDraft["verdicts"]> {
     const { store } = this.#options;
     const pageOf = (region: string) => Number(/^p(\d+)\./.exec(region)?.[1] ?? 0);
@@ -1076,11 +1757,14 @@ export class IngestRunner {
       return !previous[claim.id];
     });
     if (!pending.length) return verdicts;
-    const group = this.#node(jobId, parentId, `reviewers:${hash(pending)}`, {
-      role: "reviewer",
-      title: "Reviewers",
-      task: `Check ${pending.length} claims against the page images`,
-      model: this.#roles.reviewer,
+    const group = this.#node(jobId, parentId, `${role}s:${hash(pending)}`, {
+      role,
+      title: role === "recheck" ? "Rechecks" : "Reviewers",
+      task:
+        role === "recheck"
+          ? `Check ${pending.length} corrected claim${pending.length === 1 ? "" : "s"} against the page images`
+          : `Check ${pending.length} claims against the page images`,
+      model: this.#checkModel(role),
     });
     store.setNode(group.id, { status: "running" });
     this.#emit(jobId);
@@ -1091,12 +1775,12 @@ export class IngestRunner {
       signal,
       chunks.map(
         (chunk) => (signal) =>
-          this.#limit(`${jobId}:${document.id}`, async () => {
+          this.#request("check", jobId, document.id, async () => {
             signal.throwIfAborted();
-            const model = this.#roles.reviewer;
+            const model = this.#checkModel(role);
             const batch = pending.filter((claim) => chunk.includes(pageOf(claim.region)));
             const key = hash([
-              "reviewer",
+              role,
               PROMPT_VERSION,
               model,
               document.sha256,
@@ -1108,7 +1792,7 @@ export class IngestRunner {
               group.id,
               key,
               {
-                role: "reviewer",
+                role,
                 title: label,
                 task: `Check ${batch.length} claim${batch.length === 1 ? "" : "s"} on ${label.toLowerCase()}`,
                 model,
@@ -1134,9 +1818,10 @@ export class IngestRunner {
                     model,
                     system: REVIEWER_SYSTEM,
                     content,
-                    maxTokens: 2000 + 150 * batch.length,
-                    reasoning: "medium",
+                    maxTokens: 8000 + 150 * batch.length,
+                    reasoning: this.#effort("recheck"),
                     signal,
+                    cacheKey: cacheKey(document),
                   },
                   reviewerSchema,
                   (parts) => ({ verdicts: parts.flatMap((part) => part.verdicts) }),
@@ -1179,7 +1864,7 @@ export class IngestRunner {
     });
     if (cached !== undefined) {
       if (created.status !== "done")
-        store.setNode(created.id, { status: "done", note: "Reused from an earlier run." });
+        store.setNode(created.id, { status: "done", note: REUSED_STEP });
       this.#emit(jobId);
       return cached;
     }
@@ -1228,6 +1913,27 @@ export class IngestRunner {
     });
   }
 
+  /** Queues a model request for a document, ahead of less urgent kinds of work. */
+  #request<T>(
+    kind: keyof typeof URGENCY,
+    jobId: string,
+    documentId: string,
+    task: () => Promise<T>,
+  ): Promise<T> {
+    return this.#limit(`${jobId}:${documentId}`, task, URGENCY[kind]);
+  }
+
+  /** The model that checks claims: the reviewer, or for a recheck the recheck model. */
+  #checkModel(role: "reviewer" | "recheck"): string {
+    return role === "recheck"
+      ? (this.#roles.recheck ?? this.#roles.reviewer)
+      : this.#roles.reviewer;
+  }
+
+  #effort(role: StudyEffortRole): ThinkingLevel {
+    return (this.#roles.effort ?? DEFAULT_ROLES.effort!)[role];
+  }
+
   async #call<T>(
     node: AgentNodeView,
     request: Parameters<CompleteFn>[0],
@@ -1259,6 +1965,152 @@ export class IngestRunner {
         this.#options.removed?.(job.id);
       }
   }
+}
+
+/**
+ * Discrepancies in parts of a few each, in page order, for fix requests sent side by side.
+ * Those that concern the same block stay in one part, so no two parts patch one block.
+ */
+export function fixParts(found: Discrepancy[], size = 6): Discrepancy[][] {
+  const parts: { items: Discrepancy[]; blocks: Set<string> }[] = [];
+  for (const item of [...found].sort((a, b) => a.page - b.page)) {
+    const last = parts.at(-1);
+    const target =
+      parts.find((part) => item.blocks.some((block) => part.blocks.has(block))) ??
+      (last && last.items.length < size ? last : undefined);
+    if (target) {
+      target.items.push(item);
+      for (const block of item.blocks) target.blocks.add(block);
+    } else parts.push({ items: [item], blocks: new Set(item.blocks) });
+  }
+  return parts.map((part) => part.items);
+}
+
+/** One part of the lecture a writer takes on, from the brief's outline. */
+export interface Topic {
+  title: string;
+  pages: number[];
+}
+
+/**
+ * The brief's outline as writers' topics: every page belongs to at least one, a page the outline
+ * left out going to the topic of the nearest page (an earlier one on a tie).
+ */
+export function topicPlan(brief: Brief, inventory: SourceInventory): Topic[] {
+  const real = new Set(inventory.pages.map((page) => page.page));
+  const plan = brief.outline
+    .map((item) => ({
+      title: item.title,
+      pages: [...new Set(item.pages.filter((page) => real.has(page)))].sort((a, b) => a - b),
+    }))
+    .filter((item) => item.pages.length);
+  if (!plan.length) return [{ title: brief.title, pages: [...real].sort((a, b) => a - b) }];
+  // Distances are to the outline's own pages, not to pages given out here.
+  const outlined = plan.map((item) => item.pages);
+  for (const page of [...real].sort((a, b) => a - b)) {
+    if (outlined.some((pages) => pages.includes(page))) continue;
+    const distance = (at: number) =>
+      Math.min(...outlined[at]!.map((other) => Math.abs(other - page)));
+    const nearest = plan.reduce((best, _, at) => (distance(at) < distance(best) ? at : best), 0);
+    plan[nearest]!.pages = [...plan[nearest]!.pages, page].sort((a, b) => a - b);
+  }
+  return plan;
+}
+
+/**
+ * The topic writers' drafts as one: topic pages in the outline's order, pages two writers gave
+ * the same slug joined, block IDs made unique, and the session's lists gathered.
+ */
+export function mergeTopics(brief: Brief, parts: AuthorDraft[]): AuthorDraft {
+  const pages: DraftPage[] = [];
+  const ids = new Set<string>();
+  const unique = <T>(items: T[], keyOf: (item: T) => string) =>
+    items.filter((item, at) => items.findIndex((other) => keyOf(other) === keyOf(item)) === at);
+  for (const part of parts)
+    for (const page of part.pages) {
+      const blocks = page.blocks.map((block) => {
+        let id = block.id;
+        for (let copy = 2; ids.has(id); copy++) id = `${block.id}-${copy}`;
+        ids.add(id);
+        return id === block.id ? block : { ...block, id };
+      });
+      const same = pages.find((existing) => existing.slug === page.slug);
+      if (same) {
+        same.blocks = [...same.blocks, ...blocks];
+        same.prerequisites = unique([...same.prerequisites, ...page.prerequisites], String);
+        same.similar_to = unique([...(same.similar_to ?? []), ...(page.similar_to ?? [])], String);
+      } else pages.push({ ...page, blocks });
+    }
+  return {
+    session: {
+      title: brief.title,
+      covers:
+        brief.covers ||
+        parts
+          .map((part) => part.session.covers)
+          .filter(Boolean)
+          .join(" ") ||
+        brief.outline.map((item) => item.title).join(", "),
+      worked_examples: unique(
+        parts.flatMap((part) => part.session.worked_examples),
+        (item) => `${item.title}|${item.page}`,
+      ),
+      worth_remembering: unique(
+        parts.flatMap((part) => part.session.worth_remembering),
+        String,
+      ),
+      open_threads: unique(
+        parts.flatMap((part) => part.session.open_threads),
+        String,
+      ),
+    },
+    pages,
+    omitted: unique(
+      parts.flatMap((part) => part.omitted),
+      (entry) => entry.region,
+    ),
+  };
+}
+
+/** What the readers found, one line per region, as the writers see it. */
+function readingLines(regions: DocumentDraft["regions"]): string[] {
+  return Object.entries(regions)
+    .sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }))
+    .map(
+      ([id, region]) =>
+        `- ${id} [${region.type}${region.escalated ? ", re-read" : ""}] ${region.content}${region.claims.length ? `\n  claims: ${region.claims.map((claim) => `${claim.text} (${claim.basis})`).join(" | ")}` : ""}${region.unreadable ? `\n  unreadable: ${region.unreadable}` : ""}`,
+    );
+}
+
+function pageNumber(region: string): number {
+  return Number(/^p(\d+)\./.exec(region)?.[1] ?? 0);
+}
+
+/** Waits for all of these, or stops waiting as soon as the work is called off. */
+function untilAll(promises: Promise<void>[], signal: AbortSignal): Promise<void> {
+  signal.throwIfAborted();
+  return new Promise((done, fail) => {
+    const stop = () => fail(signal.reason);
+    signal.addEventListener("abort", stop, { once: true });
+    Promise.all(promises).then(
+      () => {
+        signal.removeEventListener("abort", stop);
+        done();
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", stop);
+        fail(error);
+      },
+    );
+  });
+}
+
+/**
+ * One prompt-cache key per document: its requests share instructions and page images, and the
+ * provider routes requests with the same key to where that prefix is likely already cached.
+ */
+export function cacheKey(document: { sha256: string }): string {
+  return `folio-${document.sha256.slice(0, 32)}`;
 }
 
 /** A content hash that ignores object key order: readers finish in any order on every run. */
@@ -1328,22 +2180,32 @@ function stopped(error: unknown): boolean {
 export function fairLimiter(size: number) {
   let active = 0;
   // Lines in turn order: a line that just started a request goes to the back.
-  const lines = new Map<string, (() => void)[]>();
+  const lines = new Map<string, { start: () => void; priority: number }[]>();
   const dispatch = () => {
     while (active < size && lines.size) {
-      const [line, waiting] = lines.entries().next().value!;
+      // The most urgent kind of work goes first; within it, lines take turns.
+      let top = -Infinity;
+      for (const waiting of lines.values())
+        for (const item of waiting) top = Math.max(top, item.priority);
+      const [line, waiting] = [...lines].find(([, items]) =>
+        items.some((item) => item.priority === top),
+      )!;
       lines.delete(line);
-      const start = waiting.shift()!;
+      const next = waiting.splice(
+        waiting.findIndex((item) => item.priority === top),
+        1,
+      )[0]!;
       if (waiting.length) lines.set(line, waiting);
       active++;
-      start();
+      next.start();
     }
   };
-  return async <T>(line: string, task: () => Promise<T>): Promise<T> => {
+  return async <T>(line: string, task: () => Promise<T>, priority = 0): Promise<T> => {
     await new Promise<void>((resolve) => {
       const waiting = lines.get(line);
-      if (waiting) waiting.push(resolve);
-      else lines.set(line, [resolve]);
+      const item = { start: resolve, priority };
+      if (waiting) waiting.push(item);
+      else lines.set(line, [item]);
       dispatch();
     });
     try {
@@ -1355,25 +2217,18 @@ export function fairLimiter(size: number) {
   };
 }
 
-/** Three pages per reader; a page with no usable text layer gets a reader to itself. */
+/**
+ * How urgent each kind of request is when slots are scarce: finishing what is written comes
+ * before reading more pages, so writers and checkers do not wait behind the rest of the reading.
+ */
+const URGENCY = { read: 0, check: 1, write: 2 } as const;
+
+/**
+ * One page per reader: a careful look at one page, with many pages read side by side, catches
+ * what three pages skimmed together miss, and finishes sooner.
+ */
 export function batches(pages: PageInventory[]): PageInventory[][] {
-  const result: PageInventory[][] = [];
-  let current: PageInventory[] = [];
-  for (const page of pages) {
-    if (page.textLayer !== "ok") {
-      if (current.length) result.push(current);
-      result.push([page]);
-      current = [];
-      continue;
-    }
-    current.push(page);
-    if (current.length === 3) {
-      result.push(current);
-      current = [];
-    }
-  }
-  if (current.length) result.push(current);
-  return result;
+  return pages.map((page) => [page]);
 }
 
 function pageLabel(pages: number[]): string {
@@ -1402,7 +2257,13 @@ function regionList(page: PageInventory): string {
   return `Page ${page.page}${layer}. Regions:\n${page.regions.map((region) => `- ${region.id} [${region.kind}]${region.text ? ` "${region.text}"` : ""}`).join("\n")}`;
 }
 
-/** Why a region must be re-read up close, or null when the reader's account holds up. */
+/**
+ * Whether a region is re-read up close, and why. Text is checked against the text layer; a
+ * drawing, chart or picture is re-read only when its first reading is doubtful: the reader was
+ * unsure, its own labels are missing from the reading, or it is hard to read (arrows, a chart,
+ * small print, Hebrew in an image) and the reading is too thin to have caught it. A good first
+ * reading at full resolution is not read twice.
+ */
 export function gateRegion(
   page: PageInventory,
   region: Region,
@@ -1411,15 +2272,39 @@ export function gateRegion(
 ): string | null {
   if (pageProblem) return pageProblem;
   if (!reading) return "the reader skipped this region";
-  if (reading.flags.some((flag) => HARD_FLAGS.has(flag)))
-    return `flagged as hard: ${reading.flags.join(", ")}`;
+  const unreadable = reading.flags.filter(
+    (flag) => flag === "unreadable" || flag === "handwriting",
+  );
+  if (unreadable.length) return `flagged as hard: ${unreadable.join(", ")}`;
   if (QUIET_TYPES.has(reading.type)) return null;
-  if (page.textLayer !== "ok") return `no usable text layer on this page`;
-  if (region.kind !== "text") return `${region.kind} content is checked up close`;
+  if (reading.confidence === "unsure") return "the reader was unsure";
+  // A careful reader looked at the whole page; a picture is looked at again only when the
+  // reader found almost nothing to say about it, or said it guessed.
+  if (region.kind !== "text" && !region.text.trim())
+    return reading.content.split(/\s+/).filter(Boolean).length < 8
+      ? `${region.kind} read in only a few words`
+      : null;
+  if (page.textLayer !== "ok") return null;
   const recall = tokenRecall(region.text, reading.content);
-  if (recall < RECALL_FLOOR) return `the reader dropped words (kept ${Math.round(recall * 100)}%)`;
+  if (recall < RECALL_FLOOR)
+    return region.kind === "text"
+      ? `the reader dropped words (kept ${Math.round(recall * 100)}%)`
+      : `labels missing from the reading (kept ${Math.round(recall * 100)}%)`;
   const missing = missingNumbers(region.numbers, reading.content);
   if (missing.length) return `numbers or symbols missing: ${missing.join(", ")}`;
+  if (region.kind === "text") return null;
+  const hard = reading.flags.filter((flag) => HARD_FLAGS.has(flag));
+  const thin = thinReading(reading, hard);
+  return hard.length && thin ? `flagged as hard (${hard.join(", ")}): ${thin}` : null;
+}
+
+/** What makes a reading of a hard drawing or chart too thin to trust, if anything. */
+function thinReading(reading: ReadRegion, hard: string[]): string | null {
+  if (hard.includes("arrows") && !/->|→|⟶|⇒|=>/.test(reading.content))
+    return "no arrow written out";
+  if (hard.includes("chart") && !/\d/.test(reading.content)) return "no values read";
+  // Plain words, not content words: an automaton read as "q0 -> q1 on a" is symbols, not prose.
+  if (reading.content.split(/\s+/).filter(Boolean).length < 8) return "the reading is short";
   return null;
 }
 
@@ -1456,16 +2341,12 @@ export function computeLedger(
         )
         .join("\n");
       if (info.region?.kind === "text" && info.region.text.trim()) {
+        // Bookkeeping only: the checker decides whether the slide's facts are in the notes.
+        // Overlap is kept for diagnosis; English notes on a Hebrew slide share few words.
         const recall = tokenRecall(info.region.text, words);
         const missing = missingNumbers(info.region.numbers, words);
-        if (recall >= LEDGER_RECALL_FLOOR && !missing.length) {
-          state = "represented";
-          reason = `reconciled (${Math.round(recall * 100)}% of its words)`;
-        } else {
-          reason = missing.length
-            ? `cited, but ${missing.join(", ")} is missing from the cited blocks`
-            : `cited, but only ${Math.round(recall * 100)}% of its words reach the cited blocks`;
-        }
+        state = "represented";
+        reason = `cited (${Math.round(recall * 100)}% of its words reach the cited blocks${missing.length ? `; ${missing.join(", ")} not among them` : ""})`;
       } else {
         state = "described";
         reason = reading?.escalated
@@ -1489,24 +2370,6 @@ export function computeLedger(
     });
   }
   return entries.sort((a, b) => a.region.localeCompare(b.region, undefined, { numeric: true }));
-}
-
-function revisionIssues(ledger: LedgerEntry[], verdicts: DocumentDraft["verdicts"]): string[] {
-  return [
-    ...ledger
-      .filter((entry) => entry.state === "unaccounted")
-      .map(
-        (entry) =>
-          `Region ${entry.region} (page ${entry.page}) is ${entry.reason}. Write it up in a block that cites it, using what the reader and the close-up found, or omit it only if it is page furniture.`,
-      ),
-    ...Object.values(verdicts)
-      .filter((verdict) => verdict.verdict !== "supported")
-      .map((verdict) =>
-        verdict.verdict === "contradicted"
-          ? `The claim "${verdict.text}" (${verdict.region}) is contradicted by the page: ${verdict.note} Correct it to what the page says.`
-          : `The claim "${verdict.text}" (${verdict.region}) could not be checked against the page: ${verdict.note} Rewrite it as the page shows it, or cite the region that shows it.`,
-      ),
-  ];
 }
 
 /**
@@ -1566,10 +2429,11 @@ function withoutClaim(body: string, claim: string): string {
 }
 
 /**
- * Writes up, straight from the slide, every region still unplaced after the last revision: a
- * cited block on the topic its page is mostly about, so no part of a slide is dropped. Text keeps
- * the slide's own words (the text layer, or what the reader read); a figure keeps the reader's
- * description. These blocks are marked as not reviewed.
+ * Writes up, straight from the slide, every region still unplaced after the last fix, and every
+ * region with facts the checker found in no block: a cited block on the topic its page is mostly
+ * about, so no part of a slide is dropped. Text keeps the slide's own words (the text layer, or
+ * what the reader read); a figure keeps the reader's description. These blocks are marked as not
+ * reviewed.
  */
 export function withFallbacks(
   draft: AuthorDraft,
@@ -1577,8 +2441,9 @@ export function withFallbacks(
   inventory: SourceInventory,
   regions: DocumentDraft["regions"],
   sessionTitle: string,
+  missing: Set<string> = new Set(),
 ): AuthorDraft {
-  const left = ledger.filter((entry) => entry.state === "unaccounted");
+  const left = ledger.filter((entry) => entry.state === "unaccounted" || missing.has(entry.region));
   if (!left.length) return draft;
   const pages: DraftPage[] = structuredClone(draft.pages);
   const cites = (page: DraftPage, number: number) =>

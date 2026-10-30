@@ -77,6 +77,7 @@ CREATE TABLE IF NOT EXISTS nodes (
   calls INTEGER NOT NULL DEFAULT 0,
   input_tokens INTEGER NOT NULL DEFAULT 0,
   output_tokens INTEGER NOT NULL DEFAULT 0,
+  cached_tokens INTEGER NOT NULL DEFAULT 0,
   started_at TEXT,
   ended_at TEXT,
   attempt INTEGER NOT NULL DEFAULT 1,
@@ -137,6 +138,9 @@ export class JobStore {
     const columns = db.prepare("PRAGMA table_info(nodes)").all() as { name: string }[];
     if (!columns.some((column) => column.name === "outcome"))
       db.exec("ALTER TABLE nodes ADD COLUMN outcome TEXT");
+    // Likewise for prompt-cache hits, which older rows never counted.
+    if (!columns.some((column) => column.name === "cached_tokens"))
+      db.exec("ALTER TABLE nodes ADD COLUMN cached_tokens INTEGER NOT NULL DEFAULT 0");
     // Jobs from before automatic studying were all started by the student.
     const jobColumns = db.prepare("PRAGMA table_info(jobs)").all() as { name: string }[];
     if (!jobColumns.some((column) => column.name === "origin"))
@@ -370,13 +374,13 @@ export class JobStore {
     return this.node(id);
   }
 
-  /** Adds one model request's usage to a node. */
-  recordCall(id: string, usage: { input: number; output: number }): void {
+  /** Adds one model request's usage to a node; `cached` prompt tokens are counted apart from `input`. */
+  recordCall(id: string, usage: { input: number; output: number; cached?: number }): void {
     this.#db
       .prepare(
-        "UPDATE nodes SET calls = calls + 1, input_tokens = input_tokens + ?, output_tokens = output_tokens + ? WHERE id = ?",
+        "UPDATE nodes SET calls = calls + 1, input_tokens = input_tokens + ?, output_tokens = output_tokens + ?, cached_tokens = cached_tokens + ? WHERE id = ?",
       )
-      .run(usage.input, usage.output, id);
+      .run(usage.input, usage.output, usage.cached ?? 0, id);
   }
 
   /** Keeps a model reply that was not used, so the failure can be inspected later. */

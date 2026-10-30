@@ -63,6 +63,7 @@ describe("which model does what", () => {
         planner: "chatgpt/gpt-5.5",
         reader: "openrouter/deepseek/deepseek-v4-pro",
         checker: "xai/grok-4.7",
+        rechecker: "openrouter/deepseek/deepseek-v4-pro",
         writer: "anthropic/claude-opus-9",
         closeup: 7,
       },
@@ -79,6 +80,7 @@ describe("which model does what", () => {
       "studying.closeup: write a model as connection/model, such as chatgpt/gpt-6.1-sol.",
       "studying.writer: Anthropic has no model claude-opus-9 that Folio knows.",
       "studying.checker: write a model as connection/model, such as chatgpt/gpt-6.1-sol.",
+      "studying.rechecker: DeepSeek V4 Pro 0423 reads text only, and checking corrected notes against the slides needs page images.",
       'library: write an object, such as { "syllabus": "chatgpt/gpt-6.1-sol" }.',
     ]);
   });

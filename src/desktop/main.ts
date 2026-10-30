@@ -18,7 +18,7 @@ import { createFolioModels, readConnections } from "../auth.ts";
 import { FolioConfig, studyRoles } from "../config.ts";
 import { checkKey, cleanKey, modelCatalog } from "../connections.ts";
 import { writeAtomic } from "../files.ts";
-import { IngestRunner } from "../ingest/pipeline.ts";
+import { IngestRunner, trialRoles } from "../ingest/pipeline.ts";
 import { piComplete } from "../ingest/pi-complete.ts";
 import { prepareSource } from "../ingest/source.ts";
 import { JobStore } from "../jobs/store.ts";
@@ -214,13 +214,24 @@ const knowledgeStore = Promise.all([library, config]).then(([store, settings]) =
     ),
   }),
 );
+/**
+ * How many model requests studying keeps in flight at once, and how many documents it studies
+ * side by side. Two documents share the requests, so one's waits (its plan, its last checks, its
+ * fixes) are the other's turn; both can be changed to try what the student's plan allows.
+ */
+function setting(value: string | undefined, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
 const jobs = Promise.all([JobStore.open(home), library, config]).then(
   ([store, courses, settings]) => {
     const runner = new IngestRunner({
       store,
       library: courses,
       // Each step on the model set for it, through the connection that model needs.
-      roles: () => studyRoles(settings.roles),
+      roles: () => trialRoles(process.env, studyRoles(settings.roles)),
+      concurrency: setting(process.env.FOLIO_STUDY_CONCURRENCY, 16),
+      parallelJobs: setting(process.env.FOLIO_STUDY_JOBS, 2),
       complete: piComplete(async () => (await connection).models, resolveRef),
       prepare: prepareSource,
       emit: (job) => emit({ type: "job", job }),

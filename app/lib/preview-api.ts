@@ -574,15 +574,51 @@ function runningJob(): SimJob {
         ],
       },
     ),
+    // One writer per topic, each starting once its own pages are read.
     agent(
-      "a-L-author",
+      "a-L-w1",
       "a-L",
       "author",
-      "Author",
-      "Write the lecture's draft pages, citing page and region for every claim",
+      "Topic · Breadth-first search",
+      "Write Breadth-first search from pages 1–5",
       SOL,
       "queued",
-      { after: ["a-L-r4", "a-L-e8", "a-L-e11"], ticks: 4, final: [6, 96_400, 14_200] },
+      {
+        after: ["a-L-r2", "a-L-e5"],
+        ticks: 3,
+        final: [1, 31_200, 5_400],
+        pages: [1, 2, 3, 4, 5],
+      },
+    ),
+    agent(
+      "a-L-w2",
+      "a-L",
+      "author",
+      "Topic · Shortest paths",
+      "Write Shortest paths from pages 6–9",
+      SOL,
+      "queued",
+      {
+        after: ["a-L-r3", "a-L-e8"],
+        ticks: 3,
+        final: [1, 28_900, 4_800],
+        pages: [6, 7, 8, 9],
+      },
+    ),
+    agent(
+      "a-L-w3",
+      "a-L",
+      "author",
+      "Topic · Graph representations",
+      "Write Graph representations from pages 10–12",
+      SOL,
+      "queued",
+      {
+        after: ["a-L-r4", "a-L-e11"],
+        ticks: 3,
+        final: [1, 24_100, 4_100],
+        pages: [10, 11, 12],
+      },
     ),
     agent(
       "a-L-review",
@@ -592,7 +628,23 @@ function runningJob(): SimJob {
       "Check each claim against only its cited region crop",
       SOL6,
       "queued",
-      { after: ["a-L-author"], ticks: 3, final: [3, 41_200, 5_160] },
+      { after: ["a-L-w1", "a-L-w2", "a-L-w3"], ticks: 3, final: [3, 41_200, 5_160] },
+    ),
+    agent("a-L-fix", "a-L", "fix", "Fix · round 1", "Fix 2 things the check found", SOL, "queued", {
+      after: ["a-L-review"],
+      ticks: 2,
+      final: [1, 18_400, 2_900],
+      pages: [7, 9],
+    }),
+    agent(
+      "a-L-recheck",
+      "a-L",
+      "recheck",
+      "Page 7",
+      "Check 1 corrected claim on page 7",
+      SOL6,
+      "queued",
+      { after: ["a-L-fix"], ticks: 1, final: [1, 6_100, 420], pages: [7] },
     ),
     agent(
       "a-L-ledger",
@@ -602,7 +654,7 @@ function runningJob(): SimJob {
       "Checked every part of every slide",
       null,
       "queued",
-      { after: ["a-L-review"], ticks: 1, doc: L },
+      { after: ["a-L-recheck"], ticks: 1, doc: L },
     ),
 
     agent(
@@ -687,7 +739,7 @@ function runningJob(): SimJob {
       "Write the recitation's worked examples into the draft",
       SOL,
       "queued",
-      { after: ["a-R-r3", "a-R-e7", "a-L-author"], ticks: 3, final: [4, 61_900, 9_400] },
+      { after: ["a-R-r3", "a-R-e7", "a-L-w1"], ticks: 3, final: [4, 61_900, 9_400] },
     ),
     agent(
       "a-R-review",
@@ -1332,9 +1384,23 @@ function setCoverage(
 
 /** What a finished synthetic step produced, as the real pipeline records it. */
 function outcomeOf(job: SimJob, node: SimNode): AgentNodeView["outcome"] {
-  if (node.role === "author") return { topics: 6, sections: 14 };
-  if (node.role === "reviewer") return { claims: 24, disagreements: 1 };
+  if (node.role === "author")
+    return node.title.startsWith("Topic · ")
+      ? { topics: 1, sections: 5 }
+      : { topics: 6, sections: 14 };
+  if (node.role === "brief")
+    return job.nodes.some(
+      (item) => item.parentId === node.parentId && item.title.startsWith("Topic · "),
+    )
+      ? { topics: 3 }
+      : null;
+  if (node.role === "reviewer") {
+    const fixing = job.nodes.some((item) => item.role === "fix" && item.parentId === node.parentId);
+    return { claims: 24, disagreements: 1, regions: 96, ...(fixing ? { discrepancies: 2 } : {}) };
+  }
+  if (node.role === "fix") return { discrepancies: 2, fixed: 2 };
   if (node.role !== "document") return null;
+  const fixing = job.nodes.some((item) => item.role === "fix" && item.parentId === node.id);
   const documentId = job.documentIds.find(
     (candidate) => documents.find((document) => document.id === candidate)?.title === node.title,
   );
@@ -1346,6 +1412,7 @@ function outcomeOf(job: SimJob, node: SimNode): AgentNodeView["outcome"] {
     claims: 24,
     disagreements: 1,
     uncovered: (documentId && job.gaps[documentId]?.length) || 0,
+    ...(fixing ? { discrepancies: 2, fixed: 2 } : {}),
   };
 }
 
@@ -1475,6 +1542,7 @@ const previewRoles: ModelsView["roles"] = {
   closeup: "chatgpt/gpt-6.1-sol",
   writer: "openrouter/deepseek/deepseek-v4-pro",
   checker: "chatgpt/gpt-6-sol",
+  rechecker: "chatgpt/gpt-6.1-terra",
   topics: "chatgpt/gpt-6.1-terra",
   syllabus: "chatgpt/gpt-6.1-sol",
 };

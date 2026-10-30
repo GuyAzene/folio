@@ -1,11 +1,12 @@
-import type {
-  AgentNodeView,
-  AgentStatus,
-  JobView,
-  PageCoverageView,
-  StepOutcome,
-  StudyNotesView,
-  StudyTopicView,
+import {
+  REUSED_STEP,
+  type AgentNodeView,
+  type AgentStatus,
+  type JobView,
+  type PageCoverageView,
+  type StepOutcome,
+  type StudyNotesView,
+  type StudyTopicView,
 } from "../../src/desktop/api.ts";
 import { DROPPED } from "../../src/dropped.ts";
 import { agentTree, type AgentCard } from "./agent-tree.ts";
@@ -29,8 +30,12 @@ export interface StudyStage {
   provider: string | null;
 }
 
+/** The kinds of work a study does, in the order a study does them. */
+export type ActivityStep = "plan" | "read" | "closer" | "write" | "check" | "fix" | "recheck";
+
 export interface StudyActivity {
   id: string;
+  step: ActivityStep;
   title: string;
   model: string;
   provider: string | null;
@@ -39,6 +44,27 @@ export interface StudyActivity {
   start: number | null;
   end: number | null;
   retried: boolean;
+  /** Slides the request covered. */
+  slides: number[];
+  /** Its saved result from an earlier study of the same file was used, so it made no request. */
+  reused: boolean;
+}
+
+/** One kind of work, as one line that opens to its requests. */
+export interface StudyActivityGroup {
+  step: ActivityStep;
+  title: string;
+  /** How far along it is: "40 of 62 slides", "17 topics". */
+  detail: string;
+  status: AgentStatus;
+  /** Every request in it was reused from an earlier study. */
+  reused: boolean;
+  model: string;
+  provider: string | null;
+  tokens: number;
+  start: number | null;
+  end: number | null;
+  items: StudyActivity[];
 }
 
 export interface StudyDocument {
@@ -57,6 +83,8 @@ export interface StudyDocument {
   outcome: StepOutcome | null;
   problem: { message: string; detail: string } | null;
   activity: StudyActivity[];
+  /** The activity by kind of work, in study order. */
+  activityGroups: StudyActivityGroup[];
   tokens: number;
 }
 
@@ -104,8 +132,11 @@ export function explain(note: string | null): string {
 const flatten = (cards: AgentCard[]): AgentCard[] =>
   cards.flatMap((card) => [card, ...flatten(card.children)]);
 
+/** "slide 3" or "slides 3–4": a lecture's pages are its slides. */
 const pagesOf = (cards: AgentCard[]) =>
-  formatPages(cards.flatMap((card) => card.node.pages)).toLowerCase();
+  formatPages(cards.flatMap((card) => card.node.pages))
+    .toLowerCase()
+    .replace(/^page/, "slide");
 
 function stage(
   label: string,
@@ -131,11 +162,21 @@ function stage(
 }
 
 const ACTIVITY: Partial<Record<AgentNodeView["role"], (card: AgentCard) => string>> = {
-  brief: () => "Skim the whole document",
+  brief: () => "Plan the topics",
   reader: (card) => `Read ${pagesOf([card])}`,
   escalation: (card) => `Look closer at ${pagesOf([card])}`,
-  author: (card) => (card.node.attempt > 1 ? "Revise the notes" : "Write the study notes"),
-  reviewer: (card) => `Check ${pagesOf([card])} against the slides`,
+  author: (card) =>
+    card.node.attempt > 1
+      ? "Revise the notes"
+      : card.node.title.startsWith("Topic · ")
+        ? `Write ${card.node.title.slice("Topic · ".length)}`
+        : "Write the study notes",
+  reviewer: (card) => `Check ${pagesOf([card])}`,
+  fix: (card) => {
+    const [, round, part] = /round (\d+)(?: · part (\d+))?/.exec(card.node.title) ?? [];
+    return `${round && round !== "1" ? "Fix again" : "Fix what the check found"}${part ? `, part ${part}` : ""}`;
+  },
+  recheck: (card) => `Recheck ${pagesOf([card])}`,
 };
 
 export function studyDocuments(job: JobView, titleOf: (id: string) => string): StudyDocument[] {
@@ -164,14 +205,33 @@ export function studyDocuments(job: JobView, titleOf: (id: string) => string): S
         outcome: null,
         problem: null,
         activity: [],
+        activityGroups: [],
         tokens: 0,
       };
 
-    const all = flatten(card.children);
+    // What failed or stopped before the study last started again is history, not its state.
+    const since = card.node.startedAt;
+    const all = flatten(card.children).filter(
+      (item) =>
+        !(
+          (item.status === "failed" || item.status === "stopped") &&
+          since !== null &&
+          item.node.endedAt !== null &&
+          item.node.endedAt < since
+        ),
+    );
     const of = (role: AgentNodeView["role"]) => all.filter((item) => item.node.role === role);
-    const [briefs, readers, closeups, writers, checkers] = (
-      ["brief", "reader", "escalation", "author", "reviewer"] as const
-    ).map(of) as [AgentCard[], AgentCard[], AgentCard[], AgentCard[], AgentCard[]];
+    const [briefs, readers, closeups, writers, checkers, fixes, rechecked] = (
+      ["brief", "reader", "escalation", "author", "reviewer", "fix", "recheck"] as const
+    ).map(of) as [
+      AgentCard[],
+      AgentCard[],
+      AgentCard[],
+      AgentCard[],
+      AgentCard[],
+      AgentCard[],
+      AgentCard[],
+    ];
     const settled = (items: AgentCard[]) =>
       items.length > 0 && items.every((item) => item.status === "done");
     // Outcomes live on the writer and on the checker groups, which the tree folds away.
@@ -179,8 +239,49 @@ export function studyDocuments(job: JobView, titleOf: (id: string) => string): S
       job.nodes.filter(
         (node) => node.role === role && node.outcome && descends(job.nodes, node, card.node.id),
       );
-    const written = raw("author").at(-1)?.outcome;
-    const checked = raw("reviewer").at(-1)?.outcome;
+    // A lecture of several topics has a writer per topic, side by side; what they wrote together
+    // is the document's own outcome once it is done.
+    const toWrite = raw("brief")[0]?.outcome?.topics ?? 0;
+    const topicWriters = toWrite > 2;
+    const written = topicWriters
+      ? (card.node.outcome ??
+        raw("author")
+          .filter((node) => node.attempt === 1)
+          .reduce<StepOutcome>(
+            (sum, node) => ({
+              topics: (sum.topics ?? 0) + (node.outcome?.topics ?? 0),
+              sections: (sum.sections ?? 0) + (node.outcome?.sections ?? 0),
+            }),
+            {},
+          ))
+      : raw("author").at(-1)?.outcome;
+    const checked = raw("reviewer")[0]?.outcome;
+    // The first write and its check, then what fixing brought: fix rounds and their rechecks.
+    // Studies before patches revised by writing the notes again, checked by the same checkers.
+    const order = (item: AgentCard) => job.nodes.findIndex((node) => node.id === item.node.id);
+    const firstWrites = writers.filter((item) => item.node.attempt === 1);
+    const wroteTopics = firstWrites.filter((item) => item.status === "done").length;
+    const revisions = writers.filter((item) => item.node.attempt > 1);
+    const fixing = [...revisions, ...fixes];
+    const fixFrom = fixing.length ? Math.min(...fixing.map(order)) : Infinity;
+    const firstChecks = checkers.filter((item) => order(item) < fixFrom);
+    const rechecks = [...checkers.filter((item) => order(item) > fixFrom), ...rechecked];
+    const fixedText = (): string => {
+      const outcome = card.node.outcome?.discrepancies
+        ? card.node.outcome
+        : (() => {
+            // A round may be sent in parts; the first round's parts together are what was found.
+            const rounds = raw("fix");
+            const first = Math.min(...rounds.map((node) => node.attempt));
+            const found = rounds
+              .filter((node) => node.attempt === first)
+              .reduce((sum, node) => sum + (node.outcome?.discrepancies ?? 0), 0);
+            const fixed = rounds.reduce((sum, node) => sum + (node.outcome?.fixed ?? 0), 0);
+            return { discrepancies: found, fixed: Math.min(found, fixed) };
+          })();
+      if (outcome.discrepancies) return `${outcome.fixed ?? 0} of ${outcome.discrepancies} fixed`;
+      return revisions.length ? `Fixed in ${plural(revisions.length, "round")}` : "Nothing to fix";
+    };
     const allRead = pages.length > 0 && pagesRead === pages.length;
     // Close-ups can start until the last page is read; after that, writing begins.
     const later = card.status === "done" || writers.some((item) => item.status !== "queued");
@@ -196,24 +297,27 @@ export function studyDocuments(job: JobView, titleOf: (id: string) => string): S
 
     const stages = [
       stage(
-        "Read every page",
+        "Read every slide",
         [...briefs, ...readers],
         allRead && settled(readers),
         card.status !== "running"
           ? ""
           : preparing
-            ? "Preparing the pages"
+            ? "Preparing the slides"
             : pagesRead
-              ? `${pagesRead} of ${pages.length} pages · ${waiting.toLowerCase()}`
+              ? `${pagesRead} of ${pages.length} slides · ${waiting.toLowerCase()}`
               : waiting,
         (active) =>
           active.some((item) => item.node.role === "reader")
             ? pagesOf(active.filter((item) => item.node.role === "reader"))
-            : "Skimming the whole document first",
-        () => `${pagesRead} of ${pages.length} pages`,
+            : "Planning the topics",
+        () =>
+          readers.length && readers.every((item) => item.node.note === REUSED_STEP)
+            ? `${pagesRead} of ${pages.length} slides · from an earlier study`
+            : `${pagesRead} of ${pages.length} slides`,
       ),
       stage(
-        "Look closer at figures",
+        "Look closer where needed",
         closeups,
         later && (closeups.length === 0 || settled(closeups)),
         "",
@@ -221,17 +325,16 @@ export function studyDocuments(job: JobView, titleOf: (id: string) => string): S
         () => {
           const looked = new Set(closeups.flatMap((item) => item.node.pages)).size;
           return looked
-            ? `${plural(looked, "page")} re-read up close`
+            ? `${plural(looked, "slide")} re-read up close`
             : "Nothing needed a closer look";
         },
       ),
       stage(
-        "Write study notes",
-        writers,
-        settled(writers),
-        "",
-        (active) =>
-          active.some((item) => item.node.attempt > 1) ? "Revising after the check" : "",
+        "Write the study notes",
+        firstWrites,
+        topicWriters ? toWrite <= wroteTopics || card.status === "done" : settled(firstWrites),
+        topicWriters && wroteTopics ? `${wroteTopics} of ${toWrite} topics written` : "",
+        () => (topicWriters ? `${wroteTopics} of ${toWrite} topics written` : ""),
         () =>
           written?.topics !== undefined
             ? `${plural(written.topics, "topic")} · ${plural(written.sections ?? 0, "section")}`
@@ -239,14 +342,32 @@ export function studyDocuments(job: JobView, titleOf: (id: string) => string): S
       ),
       stage(
         "Check against the slides",
-        checkers,
-        settled(checkers) && settled(writers),
+        firstChecks,
+        settled(firstChecks) && settled(firstWrites),
         "",
         (active) => pagesOf(active),
         () =>
-          checked?.claims !== undefined
-            ? `${plural(checked.claims, "claim")} checked${checked.disagreements ? ` · ${checked.disagreements} questioned` : ""}`
-            : "",
+          checked?.regions !== undefined
+            ? `${plural(checked.claims ?? 0, "claim")} · ${plural(checked.regions, "region")} checked${checked.discrepancies ? ` · ${checked.discrepancies} to fix` : ""}`
+            : checked?.claims !== undefined
+              ? `${plural(checked.claims, "claim")} checked${checked.disagreements ? ` · ${checked.disagreements} questioned` : ""}`
+              : "",
+      ),
+      stage(
+        "Fix what the check found",
+        [...fixing, ...rechecks],
+        card.status === "done" ||
+          (fixing.length > 0 && settled(fixing) && (!rechecks.length || settled(rechecks))),
+        "",
+        (active) => {
+          const checking = active.filter(
+            (item) => item.node.role === "reviewer" || item.node.role === "recheck",
+          );
+          return checking.length
+            ? `Rechecking ${pagesOf(checking)}`
+            : "Fixing what the check found";
+        },
+        fixedText,
       ),
     ];
 
@@ -262,6 +383,37 @@ export function studyDocuments(job: JobView, titleOf: (id: string) => string): S
       (card.status === "failed" || (job.status === "failed" && card.status !== "done")
         ? (root?.node.note ?? null)
         : null);
+
+    // Each line times its own request; a step a restart stopped leaves the list until it runs
+    // again, unless the whole study stopped. A reused step made no request and takes no time.
+    const activity: StudyActivity[] = all
+      .filter(
+        (item) =>
+          ACTIVITY[item.node.role] && (item.status !== "stopped" || card.status === "stopped"),
+      )
+      .map((item) => {
+        const reused = item.node.note === REUSED_STEP;
+        return {
+          id: item.node.id,
+          step: STEP[item.node.role]!,
+          title: ACTIVITY[item.node.role]!(item),
+          model: modelLabel(item.node.model),
+          provider: item.node.provider,
+          status: item.status,
+          tokens: item.node.inputTokens + item.node.outputTokens,
+          start: reused ? null : item.node.startedAt ? Date.parse(item.node.startedAt) : item.start,
+          end: reused ? null : item.node.endedAt ? Date.parse(item.node.endedAt) : null,
+          retried: item.retried,
+          slides: item.node.pages,
+          reused,
+        };
+      })
+      // Reused steps first, as they came first; then by start, with steps not yet started last.
+      .sort(
+        (a, b) =>
+          (a.start ?? (a.reused ? -Infinity : Infinity)) -
+          (b.start ?? (b.reused ? -Infinity : Infinity)),
+      );
 
     return {
       documentId,
@@ -289,22 +441,86 @@ export function studyDocuments(job: JobView, titleOf: (id: string) => string): S
         problemNote || card.status === "failed"
           ? { message: explain(problemNote), detail: problemNote ?? "" }
           : null,
-      activity: all
-        .filter((item) => ACTIVITY[item.node.role])
-        .map((item) => ({
-          id: item.node.id,
-          title: ACTIVITY[item.node.role]!(item),
-          model: modelLabel(item.node.model),
-          provider: item.node.provider,
-          status: item.status,
-          tokens: item.tokens,
-          start: item.start,
-          end: item.end,
-          retried: item.retried,
-        }))
-        .sort((a, b) => (a.start ?? Infinity) - (b.start ?? Infinity)),
+      // Each line times its own request, not the close-ups that hang under a reader; a step a
+      // restart stopped leaves the list until it runs again, unless the whole study stopped.
+      activity,
+      activityGroups: activityGroups(activity, { read: pages.length, write: toWrite }),
       tokens: card.tokens,
     };
+  });
+}
+
+const STEP: Partial<Record<AgentNodeView["role"], ActivityStep>> = {
+  brief: "plan",
+  reader: "read",
+  escalation: "closer",
+  author: "write",
+  reviewer: "check",
+  fix: "fix",
+  recheck: "recheck",
+};
+
+const STEPS: Record<ActivityStep, { title: string; unit: "slide" | "topic" | "part" }> = {
+  plan: { title: "Plan the topics", unit: "part" },
+  read: { title: "Read the slides", unit: "slide" },
+  closer: { title: "Look closer", unit: "slide" },
+  write: { title: "Write the topics", unit: "topic" },
+  check: { title: "Check against the slides", unit: "slide" },
+  fix: { title: "Fix what the check found", unit: "part" },
+  recheck: { title: "Recheck what changed", unit: "slide" },
+};
+
+/**
+ * The activity as one line per kind of work, in study order: how much of it is done, its time
+ * from first request to last, and its tokens. `expected` is how many there will be, where the
+ * study knows before every request exists (slides to read, topics to write).
+ */
+export function activityGroups(
+  activity: StudyActivity[],
+  expected: Partial<Record<ActivityStep, number>> = {},
+): StudyActivityGroup[] {
+  return (Object.keys(STEPS) as ActivityStep[]).flatMap((step) => {
+    const items = activity.filter((item) => item.step === step);
+    if (!items.length) return [];
+    const { title, unit } = STEPS[step];
+    const finished = items.filter((item) => item.status === "done");
+    const running = items.some((item) => item.status === "running");
+    const failed = items.some((item) => item.status === "failed");
+    const status: AgentStatus = running
+      ? "running"
+      : failed
+        ? "failed"
+        : finished.length === items.length
+          ? "done"
+          : "queued";
+    // Slides counted once each; topics and parts by request.
+    const count = (list: StudyActivity[]) =>
+      unit === "slide" ? new Set(list.flatMap((item) => item.slides)).size : list.length;
+    const total = Math.max(count(items), expected[step] ?? 0);
+    const done = count(finished);
+    const detail =
+      step === "plan" || total === 0
+        ? ""
+        : status === "done"
+          ? plural(total, unit)
+          : `${done} of ${plural(total, unit)}`;
+    const starts = items.flatMap((item) => (item.start === null ? [] : [item.start]));
+    const ends = items.flatMap((item) => (item.end === null ? [] : [item.end]));
+    return [
+      {
+        step,
+        title,
+        detail,
+        status,
+        reused: items.every((item) => item.reused),
+        model: items[0]!.model,
+        provider: items[0]!.provider,
+        tokens: items.reduce((sum, item) => sum + item.tokens, 0),
+        start: starts.length ? Math.min(...starts) : null,
+        end: status === "done" && ends.length ? Math.max(...ends) : null,
+        items,
+      },
+    ];
   });
 }
 
@@ -315,21 +531,21 @@ export function studyDocuments(job: JobView, titleOf: (id: string) => string): S
 export function studyProgress(study: StudyDocument): { phase: string; fraction: number } {
   if (study.status === "done") return { phase: "Done", fraction: 1 };
   if (study.status === "queued" || !study.stages.length) return { phase: "Starting", fraction: 0 };
-  const [read, closer, write, check] = study.stages;
+  const [read, closer, write, check, fix] = study.stages;
   const pages = study.pages.length;
   const reading = pages ? (0.55 * study.pagesRead) / pages : 0;
   const waiting = (stage: StudyStage | undefined) => stage?.detail === "Waiting for its turn";
   if (read && read.state !== "done")
     return {
       phase:
-        read.detail === "Preparing the pages"
-          ? "Preparing the pages"
+        read.detail === "Preparing the slides"
+          ? "Preparing the slides"
           : waiting(read)
             ? "Waiting for its turn"
             : "Reading the slides",
       fraction: reading,
     };
-  if (closer?.state === "running") return { phase: "Looking closer at figures", fraction: 0.6 };
+  if (closer?.state === "running") return { phase: "Looking closer where needed", fraction: 0.6 };
   if (write && write.state !== "done")
     return {
       phase:
@@ -343,8 +559,10 @@ export function studyProgress(study: StudyDocument): { phase: string; fraction: 
   if (check && check.state !== "done")
     return {
       phase: waiting(check) ? "Waiting for its turn" : "Checking against the slides",
-      fraction: 0.88,
+      fraction: 0.85,
     };
+  if (fix?.state === "running")
+    return { phase: fix.detail || "Fixing what the check found", fraction: 0.92 };
   return { phase: "Adding to the study notes", fraction: 0.97 };
 }
 
