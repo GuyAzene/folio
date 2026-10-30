@@ -45,6 +45,8 @@ void describe("the notebook", () => {
     running.push(app);
     const { page } = app;
 
+    // Folio restores its saved tabs once the library loads; a click before that would be undone.
+    await page.getByPlaceholder("Ask about any of your courses").waitFor();
     await page.getByRole("button", { name: "Notes", exact: true }).click();
     await page.getByRole("textbox", { name: "Search notes" }).fill("priority");
     await page.getByText("1 result").waitFor();
