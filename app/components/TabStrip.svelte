@@ -66,8 +66,9 @@
     <ChevronRight size={16} strokeWidth={1.75} />
   </IconButton>
 
+  <!-- The strip's empty space moves the window; only the tabs and buttons take clicks. -->
   <div
-    class="no-drag ml-1 flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none]"
+    class="ml-1 flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none]"
   >
     {#each folio.tabs as tab, index (tab.id)}
       {@const location = current(index)}
@@ -82,7 +83,7 @@
         tabindex="0"
         aria-selected={active}
         draggable="true"
-        class="group flex h-[30px] max-w-[200px] min-w-[96px] shrink-0 cursor-default items-center gap-2 rounded-md border pr-1 pl-2.5 transition-colors {active
+        class="no-drag group flex h-[30px] max-w-[200px] min-w-[96px] shrink-0 cursor-default items-center gap-2 rounded-md border pr-1 pl-2.5 transition-colors {active
           ? 'border-line-subtle bg-sunken text-text shadow-1 dark:bg-selected'
           : 'border-transparent text-text-3 hover:bg-hover hover:text-text-2'} {dragging ===
         index

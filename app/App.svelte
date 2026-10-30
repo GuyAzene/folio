@@ -129,37 +129,13 @@
       {/if}
     </div>
 
-    <!-- One sidebar button, pinned beside the window controls: open or closed, it stays put. -->
-    <div
-      class="absolute top-[16.5px] z-40 {folio.platform === 'darwin'
-        ? 'left-[80px]'
-        : 'left-3'}"
-    >
-      <IconButton
-        label={folio.sidebarOpen ? "Hide sidebar" : "Show sidebar"}
-        shortcut="⌘\"
-        onclick={toggleSidebar}
-      >
-        <PanelLeft size={16} strokeWidth={1.75} />
-      </IconButton>
-    </div>
-
-    {#if compact && folio.sidebarOpen}
-      <button
-        class="absolute inset-0 z-20 animate-[folio-fade_150ms_ease-out] bg-[#18181b]/15 dark:bg-black/40"
-        aria-label="Close sidebar"
-        onclick={() => (folio.sidebarOpen = false)}
-      ></button>
-      <div
-        class="absolute inset-y-0 left-0 z-30 animate-[folio-in_200ms_var(--ease-out-quint)] border-r border-line-subtle bg-bg shadow-3"
-      >
-        <Sidebar />
-      </div>
-    {/if}
-
-    <main class="flex h-full min-w-0 flex-1 p-2 {docked ? 'pl-0' : ''}">
+    <!--
+      The frame around the page moves the window, like the tab strip's empty space. Not the drag
+      utility: its user-select: none would reach every page inside.
+    -->
+    <main class="flex h-full [-webkit-app-region:drag] min-w-0 flex-1 p-2 {docked ? 'pl-0' : ''}">
       <section
-        class="relative flex h-full min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-line-subtle bg-surface shadow-1"
+        class="no-drag relative flex h-full min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-line-subtle bg-surface shadow-1"
       >
         <TabStrip leftInset={!docked} />
         <div class="relative min-h-0 flex-1">
@@ -238,6 +214,37 @@
         {/if}
       </section>
     </main>
+
+    {#if compact && folio.sidebarOpen}
+      <button
+        class="no-drag absolute inset-0 z-20 animate-[folio-fade_150ms_ease-out] bg-[#18181b]/15 dark:bg-black/40"
+        aria-label="Close sidebar"
+        onclick={() => (folio.sidebarOpen = false)}
+      ></button>
+      <div
+        class="no-drag absolute inset-y-0 left-0 z-30 animate-[folio-in_200ms_var(--ease-out-quint)] border-r border-line-subtle bg-bg shadow-3"
+      >
+        <Sidebar />
+      </div>
+    {/if}
+
+    <!--
+      One sidebar button, pinned beside the window controls: open or closed, it stays put. It
+      comes last so that no drag region drawn after it (the tab strip's) can swallow its clicks.
+    -->
+    <div
+      class="absolute top-[16.5px] z-40 {folio.platform === 'darwin'
+        ? 'left-[80px]'
+        : 'left-3'}"
+    >
+      <IconButton
+        label={folio.sidebarOpen ? "Hide sidebar" : "Show sidebar"}
+        shortcut="⌘\"
+        onclick={toggleSidebar}
+      >
+        <PanelLeft size={16} strokeWidth={1.75} />
+      </IconButton>
+    </div>
   </div>
   <SettingsDialog />
   <NewCourseDialog />

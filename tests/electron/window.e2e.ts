@@ -55,6 +55,56 @@ void describe("Folio's window", () => {
     assert.deepEqual(after, before);
   });
 
+  void it("moves from the tab strip's empty space and the frame, never over its buttons", async () => {
+    const { page } = await open();
+    // Whether a point moves the window, as Chromium decides: of the elements with an app region
+    // that contain the point, the last in document order wins. Clicks there never reach the page,
+    // so a click a test sends cannot show it; the regions themselves have to be read.
+    const drags = (x: number, y: number) =>
+      page.evaluate(
+        ([px, py]) => {
+          let moves = false;
+          for (const element of document.querySelectorAll("*")) {
+            const region = getComputedStyle(element).getPropertyValue("-webkit-app-region");
+            if (region !== "drag" && region !== "no-drag") continue;
+            const box = element.getBoundingClientRect();
+            if (px >= box.left && px < box.right && py >= box.top && py < box.bottom)
+              moves = region === "drag";
+          }
+          return moves;
+        },
+        [x, y],
+      );
+    const middle = async (name: string) => {
+      const box = (await page.getByRole("button", { name }).boundingBox())!;
+      return [box.x + box.width / 2, box.y + box.height / 2] as const;
+    };
+    const { width, height } =
+      page.viewportSize() ??
+      (await page.evaluate(() => ({
+        width: innerWidth,
+        height: innerHeight,
+      })));
+
+    assert.equal(await drags(...(await middle("Hide sidebar"))), false);
+    await page.getByRole("button", { name: "Hide sidebar" }).click();
+    await page.getByRole("button", { name: "Show sidebar" }).waitFor();
+    await page.waitForTimeout(400);
+    assert.equal(await drags(...(await middle("Show sidebar"))), false, "the sidebar button");
+    assert.equal(await drags(...(await middle("New tab"))), false, "the new-tab button");
+    const tab = (await page.getByRole("tab").first().boundingBox())!;
+    assert.equal(await drags(tab.x + tab.width / 2, tab.y + tab.height / 2), false, "a tab");
+    const plus = (await page.getByRole("button", { name: "New tab" }).boundingBox())!;
+    assert.equal(
+      await drags(plus.x + plus.width + 40, plus.y + plus.height / 2),
+      true,
+      "the tab strip after its tabs",
+    );
+    assert.equal(await drags(width - 3, height / 2), true, "the frame beside the page");
+    assert.equal(await drags(width / 2, height - 3), true, "the frame below the page");
+    assert.equal(await drags(width / 2, height / 2), false, "the page itself");
+  });
+
   void it("renders formulas that the sanitizer would otherwise strip", async () => {
     const { page } = await open();
     await page.locator(".prose-folio .math .katex").first().waitFor();
