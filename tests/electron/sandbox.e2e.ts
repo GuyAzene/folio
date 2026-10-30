@@ -70,7 +70,8 @@ async function settled(running: Running): Promise<void> {
   }
 }
 
-async function demoFrame(running: Running): Promise<Frame> {
+/** The demo's frame once it has loaded, and settled unless `settle` is false. */
+async function demoFrame(running: Running, settle = true): Promise<Frame> {
   await running.page.locator(".visual iframe").first().waitFor();
   for (let tries = 0; tries < 50; tries++) {
     const frame = running.page
@@ -78,7 +79,7 @@ async function demoFrame(running: Running): Promise<Frame> {
       .find((candidate) => candidate.url().startsWith("folio-artifact://"));
     if (frame) {
       await frame.waitForLoadState("load");
-      await settled(running);
+      if (settle) await settled(running);
       return frame;
     }
     await running.page.waitForTimeout(100);
@@ -198,8 +199,9 @@ void describe("Demos in Folio's window", () => {
 
   void it("lets a demo that loops forever freeze only itself, then says it stopped", async () => {
     const loop = `<title>Spin</title><p>spinning</p><script>setTimeout(() => { for (;;) {} }, 200);</script>`;
+    // It may freeze before it ever reports its size, so there is nothing to settle.
     const app = await open([loop]);
-    await demoFrame(app);
+    await demoFrame(app, false);
     await app.page.waitForTimeout(600);
     const answers: number[] = [];
     for (let index = 0; index < 10; index++) {
