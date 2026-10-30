@@ -36,16 +36,16 @@ void describe("the assignments board", () => {
     const [record] = await library.listAssignments();
     assert.equal(record?.status, "doing");
     assert.equal(record?.documents.statement, seeded.assignmentId);
-    // The keyboard moves it on: 3 is Submitted.
-    const card = page.locator(`[data-card="${record!.id}"]`);
-    await card.focus();
-    await page.keyboard.press("3");
+    // The keyboard moves it on: 3 is Submitted. The card is drawn anew in the Doing column, so
+    // it is focused once it shows there.
+    const card = page.getByRole("button", { name: `${LONG.assignment}, Doing` });
+    await card.press("3");
     for (let waited = 0; waited < 5_000; waited += 100) {
       if ((await library.listAssignments())[0]?.status === "submitted") break;
       await page.waitForTimeout(100);
     }
     assert.equal((await library.listAssignments())[0]?.status, "submitted");
-    await card.press("Enter");
+    await page.getByRole("button", { name: `${LONG.assignment}, Submitted` }).press("Enter");
     await page.getByRole("button", { name: "Add what you handed in" }).waitFor();
   });
 });

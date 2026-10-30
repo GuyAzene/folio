@@ -67,9 +67,15 @@ jobs:
         run: vp node --test ${{ env.TEST_FLAGS }} tests/electron/*.e2e.ts
       - name: Package Folio.app
         run: vp run desktop:package
-      # The same checks on the packaged app, and `desktop:install` into temporary folders.
+      # On the packaged app, the checks of what packaging can break: its protocols, permissions
+      # and pages, pdf.js with canvas, one Folio per home, demos in their own processes, the
+      # diagram renderer's workers, and `desktop:install` into temporary folders.
       - name: The packaged app in a real window, and installing it
-        run: vp node --test ${{ env.TEST_FLAGS }} tests/electron/*.e2e.ts
+        run: >-
+          vp node --test ${{ env.TEST_FLAGS }}
+          tests/electron/window.e2e.ts tests/electron/runtime.e2e.ts
+          tests/electron/instance.e2e.ts tests/electron/sandbox.e2e.ts
+          tests/electron/diagrams.e2e.ts tests/electron/install.e2e.ts
         env:
           FOLIO_E2E_APP: ${{ github.workspace }}/release/mac-arm64/Folio.app
 

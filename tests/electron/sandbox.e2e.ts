@@ -91,8 +91,10 @@ void describe("Demos in Folio's window", () => {
   void it("runs a demo, sized to its content, in a process of its own", async () => {
     const app = await open([COUNTER]);
     const frame = await demoFrame(app);
-    await frame.locator("#next").click();
-    await frame.locator("#next").click();
+    // Delivered to the button itself: a pointer click into the sealed frame is not always
+    // delivered on GitHub's virtual Macs.
+    await frame.locator("#next").dispatchEvent("click");
+    await frame.locator("#next").dispatchEvent("click");
     assert.equal(await frame.locator("#out").textContent(), "2");
     const height = await app.page.locator(".visual iframe").evaluate((node) => node.clientHeight);
     assert.ok(height >= 80 && height < 400, `height ${height}`);
