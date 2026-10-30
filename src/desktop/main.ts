@@ -1026,7 +1026,10 @@ app.on("second-instance", () => {
   window.focus();
 });
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") app.quit();
+  // On a Mac, closing the window keeps Folio running. A quit already under way goes on, though:
+  // one that a signal started (the installer replacing Folio, or `kill`) is put off by
+  // before-quit while chats settle, and ends up here instead of quitting.
+  if (process.platform !== "darwin" || quitting) app.quit();
 });
 app.on("activate", () => {
   if (!window) createWindow();
