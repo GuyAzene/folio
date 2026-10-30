@@ -9,8 +9,9 @@
   import StatusIcon from "./StatusIcon.svelte";
 
   /**
-   * A course at a glance: where the student stopped reading, a place to ask, which lectures and
-   * recitations are studied, and on the side what is due, the study notes and their own notes.
+   * A course at a glance: where the student stopped reading and a place to ask, with what is
+   * due, the study notes and their own notes on the side. Studying is not counted here: Folio
+   * studies every lecture and recitation, and a line shows only while it is at work.
    * Everything here opens the real thing; nothing is a copy of it.
    */
   let {
@@ -41,7 +42,7 @@
       })
       .sort((a, b) => b.at.localeCompare(a.at)),
   );
-  /** What to read next when nothing was read yet: the first lecture not studied, or the first. */
+  /** What to read next when nothing was read yet: the first lecture not opened, or the first. */
   const start = $derived(
     lectures.find((item) => !folio.reading[item.id]) ?? lectures[0] ?? documents[0] ?? null,
   );
@@ -69,9 +70,17 @@
       .sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""))
       .slice(0, 4),
   );
-  const studiedCount = $derived(
-    [...lectures, ...recitations].filter((item) => folio.studied(item.id)).length,
-  );
+  /** What Folio is studying in this course right now, and how much is waiting after it. */
+  const studying = $derived.by(() => {
+    const live = folio.jobs.filter(
+      (job) => job.courseId === courseId && (job.status === "running" || job.status === "queued"),
+    );
+    if (!live.length) return null;
+    const now = live.find((job) => job.status === "running" && job.kind === "ingest");
+    const document = folio.document(now?.documentIds[0]);
+    const waiting = live.filter((job) => job.status === "queued").length;
+    return { document, updating: live.some((job) => job.kind === "regroup"), waiting };
+  });
 
   const label = (document: DocumentView) => shortTitle(document.title, course?.name);
 
@@ -83,51 +92,26 @@
     "inline-flex items-center gap-1 text-[12px] font-medium text-text-3 normal-case tracking-normal transition-colors hover:text-text";
 </script>
 
-{#snippet strip(title: string, items: DocumentView[])}
-  {#if items.length}
-    <div>
-      <div class={heading}>{title}</div>
-      <div class="grid grid-cols-[repeat(auto-fill,minmax(148px,1fr))] gap-2">
-        {#each items as document (document.id)}
-          {@const studied = folio.studied(document.id)}
-          {@const studying = !studied && folio.studying(document.id)}
-          {@const read = folio.reading[document.id]}
-          <button
-            class="group flex min-w-0 flex-col gap-2 rounded-lg border border-line-subtle bg-surface px-3 pt-2.5 pb-3 text-left shadow-card transition-[box-shadow,transform] duration-150 hover:-translate-y-px hover:shadow-1 dark:bg-raised"
-            title={document.title}
-            onclick={(event) =>
-              folio.openDocument(document.id, read?.page ?? 1, {
-                newTab: event.metaKey || event.ctrlKey,
-              })}
-          >
-            <span class="line-clamp-2 min-h-10 text-[13px] leading-5 font-medium text-text" dir="auto"
-              >{label(document)}</span
-            >
-            <!-- Fills in as Folio studies it; the page the student reached marks it too. -->
-            <span class="relative h-1 overflow-hidden rounded-full bg-line-subtle">
-              <span
-                class="absolute inset-y-0 left-0 rounded-full transition-[width] duration-500 {studied
-                  ? 'w-full bg-success'
-                  : studying
-                    ? 'w-1/2 animate-pulse bg-highlight'
-                    : 'w-0'}"
-              ></span>
-            </span>
-            <span class="flex items-center justify-between gap-2 text-[11.5px] text-text-3">
-              <span>{studied ? "Studied" : studying ? "Studying…" : "Not studied"}</span>
-              {#if read && document.pages}
-                <span class="tabular-nums">p. {read.page}/{document.pages}</span>
-              {/if}
-            </span>
-          </button>
-        {/each}
-      </div>
-    </div>
-  {/if}
-{/snippet}
-
 <div class="grid grid-cols-[minmax(0,1fr)_272px] gap-8 max-lg:grid-cols-1">
   <div class="flex min-w-0 flex-col gap-7">
+    {#if studying}
+      <!-- Folio's studying, followed quietly: only while it works on this course. -->
+      <button
+        class="-mb-3 flex h-9 items-center gap-2.5 self-start rounded-full border border-line-subtle bg-surface pr-3.5 pl-3 text-[12.5px] text-text-2 shadow-card transition-colors hover:text-text dark:bg-raised"
+        onclick={() => folio.navigate({ view: "jobs" })}
+      >
+        <span class="size-1.5 shrink-0 animate-pulse rounded-full bg-highlight"></span>
+        <span class="min-w-0 truncate" dir="auto">
+          {studying.document
+            ? `Studying ${label(studying.document)}`
+            : studying.updating
+              ? "Updating the study notes"
+              : "Studying soon"}{studying.waiting
+            ? ` · ${studying.waiting} more after it`
+            : ""}
+        </span>
+      </button>
+    {/if}
     {#if recent[0]}
       {@const last = recent[0]}
       {@const pages = last.document.pages}
@@ -232,18 +216,6 @@
       {/if}
     </section>
 
-    {#if lectures.length || recitations.length}
-      <section class="flex flex-col gap-4" aria-label="Lectures and recitations">
-        <div class="flex items-baseline justify-between gap-3">
-          <h2 class="text-[15px] font-semibold text-text">Lectures and recitations</h2>
-          <span class="text-[12.5px] text-text-3 tabular-nums"
-            >Studied {studiedCount} of {lectures.length + recitations.length}</span
-          >
-        </div>
-        {@render strip("Lectures", lectures)}
-        {@render strip("Recitations", recitations)}
-      </section>
-    {/if}
   </div>
 
   <aside class="flex min-w-0 flex-col gap-6" aria-label="This course">

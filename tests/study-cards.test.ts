@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import type { AgentNodeView, JobView } from "../src/desktop/api.ts";
 import { PUBLISH_FAILED } from "../src/ingest/pipeline.ts";
-import { explain, studyDocuments } from "../app/lib/study.ts";
+import { explain, studyDocuments, studyProgress } from "../app/lib/study.ts";
 
 const node = (
   id: string,
@@ -170,5 +170,33 @@ describe("failure wording", () => {
     expect(explain(`${PUBLISH_FAILED} UNIQUE constraint failed: blocks.handle`)).toBe(plain);
     // A job that failed before this wording existed reads the same.
     expect(explain("UNIQUE constraint failed: blocks.handle")).toBe(plain);
+  });
+});
+
+describe("study progress", () => {
+  const study = (view: JobView) => studyDocuments(view, () => "Lecture 1 Graphs")[0]!;
+
+  it("is one line and one bar, with reading the pages filling most of it", () => {
+    expect(studyProgress(study(job([], 0)))).toEqual({ phase: "Starting", fraction: 0 });
+    const reading = [
+      ...base,
+      node("prep", "doc", "prepare", "done"),
+      node("brief", "doc", "brief", "done"),
+      node("reader", "doc", "reader", "running", { pages: [3] }),
+    ];
+    const halfway = studyProgress(study(job(reading, 2)));
+    expect(halfway.phase).toBe("Reading the slides");
+    expect(halfway.fraction).toBeCloseTo(0.275);
+    const writing = [
+      ...base,
+      node("prep", "doc", "prepare", "done"),
+      node("brief", "doc", "brief", "done"),
+      node("reader", "doc", "reader", "done", { pages: [1, 2, 3, 4] }),
+      node("author", "doc", "author", "running"),
+    ];
+    expect(studyProgress(study(job(writing, 4)))).toEqual({
+      phase: "Writing the study notes",
+      fraction: 0.7,
+    });
   });
 });

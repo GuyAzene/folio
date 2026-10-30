@@ -1,199 +1,228 @@
 <script lang="ts">
-  import { Pause, Play } from "@lucide/svelte";
+  import { Ellipsis } from "@lucide/svelte";
+  import { DropdownMenu } from "bits-ui";
   import type { JobView } from "../../src/desktop/api.ts";
   import CourseTile from "../components/CourseTile.svelte";
-  import StudyCard from "../components/StudyCard.svelte";
-  import { formatDate, plural } from "../lib/labels.ts";
   import { folio } from "../lib/state.svelte.ts";
-  import { explain, studyDocuments } from "../lib/study.ts";
+  import { explain, studyDocuments, studyProgress } from "../lib/study.ts";
+  import { shortTitle } from "../lib/titles.ts";
 
-  // Work in progress first, then what waits on the plan or the student, then the rest.
-  const ORDER: Record<JobView["status"], number> = {
-    running: 0,
-    queued: 0,
-    waiting: 1,
-    stopped: 2,
-    failed: 2,
-    done: 3,
+  /**
+   * Folio studies every lecture and recitation the student adds, and keeps each course's study
+   * notes up to date; this page only lets them follow along. What is being studied now, with
+   * one bar each, then what comes next, in the order Folio will take it. A single line appears
+   * only when something needs the student. Finished studies leave the page.
+   */
+
+  const PRIORITY: Record<JobView["origin"], number> = {
+    student: 0,
+    upload: 1,
+    backlog: 2,
+    restudy: 3,
   };
-  const jobs = $derived(
-    folio.jobs.toSorted(
-      (a, b) =>
-        ORDER[a.status] - ORDER[b.status] ||
-        b.createdAt.localeCompare(a.createdAt),
-    ),
+
+  const running = $derived(folio.jobs.filter((job) => job.status === "running"));
+  const next = $derived(
+    folio.jobs
+      .filter((job) => job.status === "queued")
+      .toSorted(
+        (a, b) =>
+          PRIORITY[a.origin] - PRIORITY[b.origin] || a.createdAt.localeCompare(b.createdAt),
+      ),
+  );
+  /** Studies that stopped and wait for the student: paused, cut off, or out of plan. */
+  const stuck = $derived(folio.jobs.filter((job) => job.resumable));
+  const offline = $derived(next.some((job) => job.waitingFor === "connection"));
+  const limited = $derived(
+    stuck.some((job) => /usage[_ ]limit|rate[_ ]limit|quota|429/i.test(problem(job) ?? "")),
   );
 
-  let busy = $state<string | null>(null);
-  async function control(
-    job: JobView,
-    action: "pause" | "resume" | "cancel" | "dismiss",
-  ): Promise<void> {
-    busy = job.id;
-    await folio.controlJob(job.id, action);
-    busy = null;
+  function problem(job: JobView): string | null {
+    return job.nodes.find((node) => node.parentId === null)?.note ?? null;
   }
 
-  // One clock for every card, ticking only while something runs.
-  let now = $state(Date.now());
-  const ticking = $derived(folio.jobs.some((job) => job.status === "running"));
-  $effect(() => {
-    if (!ticking) return;
-    now = Date.now();
-    const timer = setInterval(() => (now = Date.now()), 1000);
-    return () => clearInterval(timer);
-  });
-
-  /** "2 lectures", "a lecture and a recitation". */
-  function what(job: JobView): string {
-    const roles = job.documentIds.map((id) => folio.document(id)?.role);
-    const lectures = roles.filter((role) => role === "lecture").length;
-    const recitations = roles.filter((role) => role === "recitation").length;
-    if (lectures && recitations)
-      return `${plural(lectures, "lecture")} and ${plural(recitations, "recitation")}`;
-    if (recitations) return plural(recitations, "recitation");
-    return plural(lectures || roles.length, "lecture");
+  function titleOf(id: string): string {
+    const document = folio.document(id);
+    return document ? shortTitle(document.title, folio.course(document.courseId)?.name) : "A file";
   }
 
-  function heading(job: JobView): string {
-    const course = folio.course(job.courseId)?.name ?? "your course";
-    if (job.kind === "regroup")
-      return job.status === "done"
-        ? `${course}'s notes are grouped by topic`
-        : job.status === "failed"
-          ? "Couldn't group the notes"
-          : `Grouping ${course}'s notes by topic`;
-    switch (job.status) {
-      case "running":
-        return `Studying for ${course}`;
-      case "queued":
-        return job.waitingFor === "connection" ? "Waiting for ChatGPT" : "Up next";
-      case "stopped":
-        return job.resumable ? "Paused" : "Cancelled";
-      case "failed":
-        return "Couldn't finish";
-      case "done":
-        return `Added to ${course}`;
-      default:
-        return "Waiting for your plan";
-    }
+  async function resumeAll(): Promise<void> {
+    for (const job of stuck) await folio.controlJob(job.id, "resume");
   }
 
-  function subline(job: JobView): string {
-    if (job.kind === "regroup") {
-      const result = job.nodes.find((node) => node.role === "publish")?.task;
-      if (job.status === "done")
-        return `${result ?? "Grouped"} · Each lecture and recitation is studied again after new files.`;
-      if (job.status === "failed") {
-        const note = job.nodes.find((node) => node.parentId === null)?.note;
-        return note ? explain(note) : "Resume tries again.";
-      }
-      return "A lecture and a recitation that teach the same thing will share one topic.";
-    }
-    switch (job.status) {
-      case "queued":
-        if (job.waitingFor === "connection")
-          return `${what(job)} · Connect your ChatGPT account in Settings; studying starts on its own.`;
-        return `${what(job)} · Starts when the studies ahead of it finish. The notes are added to the course when they're done.`;
-      case "running":
-        return `${what(job)} · You can keep working; the notes are added to the course when they're done.`;
-      case "stopped":
-        return job.resumable
-          ? `${what(job)} · Resume picks up where it stopped. Finished steps aren't redone.`
-          : what(job);
-      case "failed": {
-        const note = job.nodes.find((node) => node.parentId === null)?.note;
-        return `${what(job)} · ${note ? `${explain(note)} ` : ""}Resume tries again from where it stopped. Finished steps aren't redone.`;
-      }
-      case "done":
-        return `${what(job)} · ${formatDate(job.updatedAt)}`;
-      default: {
-        const note = job.nodes.find((node) => node.parentId === null)?.note;
-        return note ? explain(note) : what(job);
-      }
-    }
-  }
-
-  const button =
-    "inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full px-3.5 text-[13px] font-medium transition-colors disabled:opacity-50";
+  const menuItem =
+    "flex h-8 cursor-default items-center gap-2.5 rounded-md px-2.5 text-[13px] text-text outline-none select-none data-[highlighted]:bg-hover";
+  const heading =
+    "flex h-7 items-center gap-2 text-[11px] font-medium tracking-[0.06em] text-text-3 uppercase";
 </script>
 
-<div class="scroll-quiet h-full overflow-y-auto">
-  <div
-    class="mx-auto flex w-full max-w-[860px] flex-col px-8 pt-10 pb-16 max-sm:px-4"
-  >
-    <h1
-      class="text-[24px] leading-8 font-semibold tracking-[-0.015em] text-text"
+{#snippet actions(job: JobView, documentId: string | null)}
+  <DropdownMenu.Root>
+    <DropdownMenu.Trigger
+      class="flex size-7 shrink-0 items-center justify-center rounded-md text-text-3 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-hover hover:text-text focus-visible:opacity-100 data-[state=open]:bg-hover data-[state=open]:opacity-100"
+      aria-label="More"
     >
-      Studying
-    </h1>
+      <Ellipsis size={15} strokeWidth={1.75} />
+    </DropdownMenu.Trigger>
+    <DropdownMenu.Portal>
+      <DropdownMenu.Content
+        align="end"
+        sideOffset={6}
+        class="z-50 min-w-[200px] animate-[folio-scale_140ms_var(--ease-out-quint)] rounded-xl border border-line-subtle bg-raised p-1.5 shadow-3 outline-none"
+      >
+        {#if documentId}
+          <DropdownMenu.Item class={menuItem} onSelect={() => folio.openDocument(documentId)}
+            >Open</DropdownMenu.Item
+          >
+        {/if}
+        <DropdownMenu.Item class={menuItem} onSelect={() => folio.controlJob(job.id, "cancel")}
+          >{job.status === "queued" ? "Don't study this" : "Stop studying this"}</DropdownMenu.Item
+        >
+      </DropdownMenu.Content>
+    </DropdownMenu.Portal>
+  </DropdownMenu.Root>
+{/snippet}
+
+<div class="scroll-quiet h-full overflow-y-auto">
+  <div class="mx-auto flex w-full max-w-[720px] flex-col px-8 pt-10 pb-16 max-sm:px-4">
+    <h1 class="text-[24px] leading-8 font-semibold tracking-[-0.015em] text-text">Studying</h1>
     <p class="mt-1 text-text-3">
-      Lectures and recitations Folio is studying for you. When one finishes, its
-      notes are added to the course.
+      Folio studies every lecture and recitation you add, and keeps each course's study notes up
+      to date.
     </p>
 
-    {#each jobs as job (job.id)}
-      {@const course = folio.course(job.courseId)}
-      {@const live = job.status === "running" || job.status === "queued"}
-      {@const settled = job.status === "done"}
-      <section class="mt-10 flex flex-col gap-3">
-        <header class="flex flex-wrap items-center gap-x-3 gap-y-2">
-          {#if course}<CourseTile {course} size={28} />{/if}
-          <div class="flex min-w-0 flex-1 flex-col">
-            <h2
-              class="truncate text-[15px] leading-5 font-semibold tracking-[-0.01em] text-text"
-            >
-              {heading(job)}
-            </h2>
-            <p
-              class="line-clamp-2 text-[12.5px] leading-[18px] break-words text-text-3"
-              dir="auto"
-            >
-              {subline(job)}
-            </p>
-          </div>
-          <div class="flex shrink-0 items-center gap-1.5">
-            {#if job.resumable}
-              <button
-                type="button"
-                class="{button} bg-ink text-on-ink shadow-1 hover:opacity-90"
-                disabled={busy === job.id}
-                onclick={() => control(job, "resume")}
-              >
-                <Play size={11} strokeWidth={0} fill="currentColor" /> Resume
-              </button>
-            {:else if live}
-              <button
-                type="button"
-                class="{button} bg-surface text-text shadow-card hover:bg-hover dark:bg-raised"
-                disabled={busy === job.id}
-                onclick={() => control(job, "pause")}
-              >
-                <Pause size={11} strokeWidth={0} fill="currentColor" /> Pause
-              </button>
-            {/if}
-            <button
-              type="button"
-              class="{button} text-text-2 hover:bg-hover hover:text-text"
-              disabled={busy === job.id}
-              onclick={() => control(job, live ? "cancel" : "dismiss")}
-            >
-              {live ? "Cancel" : "Dismiss"}
-            </button>
-          </div>
-        </header>
-
-        {#each studyDocuments(job, (id) => folio.document(id)?.title ?? "Document") as study (study.documentId)}
-          <StudyCard {study} {now} finished={settled} />
-        {/each}
-      </section>
-    {:else}
+    {#if stuck.length || offline}
       <div
-        class="mt-10 rounded-xl border border-dashed border-line-strong px-6 py-12 text-center text-text-3"
+        class="mt-6 flex items-center gap-3 rounded-lg border border-line-subtle bg-sunken px-3.5 py-2.5 text-[13px] dark:bg-raised"
+        role="status"
       >
-        Nothing is being studied. Folio studies lectures and recitations as soon
-        as you add them to a course.
+        <span class="size-1.5 shrink-0 rounded-full bg-highlight"></span>
+        <span class="min-w-0 flex-1 text-text-2">
+          {#if offline && !stuck.length}
+            Connect ChatGPT and studying starts on its own.
+          {:else if limited}
+            Your ChatGPT plan reached its usage limit. Continue once it resets.
+          {:else}
+            {stuck.length === 1
+              ? `${titleOf(stuck[0]!.documentIds[0] ?? "")} stopped before it finished.`
+              : `${stuck.length} studies stopped before they finished.`}
+            {#if problem(stuck[0]!)}{explain(problem(stuck[0]!)).replace(/ ?Resume[^.]*\.$/, "")}{/if}
+          {/if}
+        </span>
+        {#if offline && !stuck.length}
+          <button
+            class="h-7 shrink-0 rounded-md bg-ink px-2.5 font-medium text-on-ink shadow-1 hover:opacity-90"
+            onclick={() => (folio.settingsOpen = true)}>Connect</button
+          >
+        {:else}
+          <button
+            class="h-7 shrink-0 rounded-md bg-ink px-2.5 font-medium text-on-ink shadow-1 hover:opacity-90"
+            onclick={resumeAll}>Continue</button
+          >
+        {/if}
       </div>
-    {/each}
+    {/if}
+
+    {#if running.length}
+      <section class="mt-8" aria-label="Now">
+        <div class={heading}>Now</div>
+        <div class="flex flex-col gap-2">
+          {#each running as job (job.id)}
+            {@const course = folio.course(job.courseId)}
+            {#if job.kind === "regroup"}
+              <div
+                class="group flex items-center gap-3 rounded-xl border border-line-subtle bg-surface px-4 py-3 shadow-card dark:bg-raised"
+              >
+                {#if course}<CourseTile {course} size={28} />{/if}
+                <div class="flex min-w-0 flex-1 flex-col gap-1.5">
+                  <span class="truncate font-medium text-text" dir="auto"
+                    >{course?.name ?? "Course"}</span
+                  >
+                  <span class="text-[12.5px] text-text-3">Updating the study notes</span>
+                  <span class="relative h-1 overflow-hidden rounded-full bg-line-subtle">
+                    <span class="absolute inset-y-0 left-0 w-1/3 animate-pulse rounded-full bg-ink"
+                    ></span>
+                  </span>
+                </div>
+                {@render actions(job, null)}
+              </div>
+            {:else}
+              {#each studyDocuments(job, titleOf) as study (study.documentId)}
+                {@const progress = studyProgress(study)}
+                {#if study.status !== "done"}
+                  <div
+                    class="group flex items-center gap-3 rounded-xl border border-line-subtle bg-surface px-4 py-3 shadow-card dark:bg-raised"
+                  >
+                    {#if course}<CourseTile {course} size={28} />{/if}
+                    <div class="flex min-w-0 flex-1 flex-col gap-1.5">
+                      <span class="flex min-w-0 items-baseline gap-2">
+                        <span class="min-w-0 truncate font-medium text-text" dir="auto"
+                          >{titleOf(study.documentId)}</span
+                        >
+                        {#if course}
+                          <span class="min-w-0 shrink truncate text-[12.5px] text-text-3" dir="auto"
+                            >{course.name}</span
+                          >
+                        {/if}
+                      </span>
+                      <span class="flex items-center justify-between gap-3 text-[12.5px] text-text-3">
+                        <span class="truncate">{progress.phase}</span>
+                        {#if study.pages.length && progress.phase === "Reading the slides"}
+                          <span class="shrink-0 tabular-nums"
+                            >{study.pagesRead} of {study.pages.length} pages</span
+                          >
+                        {/if}
+                      </span>
+                      <span class="relative h-1 overflow-hidden rounded-full bg-line-subtle">
+                        <span
+                          class="absolute inset-y-0 left-0 rounded-full bg-ink transition-[width] duration-700 ease-out"
+                          style:width="{Math.max(3, progress.fraction * 100)}%"
+                        ></span>
+                      </span>
+                    </div>
+                    {@render actions(job, study.documentId)}
+                  </div>
+                {/if}
+              {/each}
+            {/if}
+          {/each}
+        </div>
+      </section>
+    {/if}
+
+    {#if next.length}
+      <section class="mt-8" aria-label="Next">
+        <div class={heading}>
+          Next <span class="font-normal tracking-normal tabular-nums">{next.length}</span>
+        </div>
+        <div class="flex flex-col">
+          {#each next as job (job.id)}
+            {@const course = folio.course(job.courseId)}
+            {#each job.kind === "regroup" ? [null] : job.documentIds as documentId (documentId ?? job.id)}
+              <div class="group -mx-2 flex h-10 items-center gap-3 rounded-md px-2 hover:bg-hover">
+                {#if course}<CourseTile {course} size={18} />{/if}
+                <span class="min-w-0 truncate text-[13.5px] text-text" dir="auto"
+                  >{documentId ? titleOf(documentId) : "Update the study notes"}</span
+                >
+                {#if course}
+                  <span class="min-w-0 flex-1 truncate text-[12.5px] text-text-3" dir="auto"
+                    >{course.name}</span
+                  >
+                {:else}
+                  <span class="flex-1"></span>
+                {/if}
+                {@render actions(job, documentId)}
+              </div>
+            {/each}
+          {/each}
+        </div>
+      </section>
+    {/if}
+
+    {#if !running.length && !next.length && !stuck.length}
+      <div class="mt-10 text-text-3">
+        All caught up. Add a lecture or recitation to a course and Folio studies it right away.
+      </div>
+    {/if}
   </div>
 </div>

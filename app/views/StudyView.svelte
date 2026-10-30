@@ -264,10 +264,10 @@
         <div
           class="mx-auto flex max-w-[480px] flex-col items-center gap-2 px-6 py-24 text-center"
         >
-          <span class="font-medium text-text">Not studied yet</span>
+          <span class="font-medium text-text">No study notes yet</span>
           <span class="text-text-3">
-            When Folio studies {course.name}'s lectures, the notes it writes
-            appear here, by topic, with the slides they came from.
+            Folio studies {course.name}'s lectures and recitations as you add
+            them. The notes appear here, by topic, with the slides they came from.
           </span>
         </div>
       {:else if selected?.topic}

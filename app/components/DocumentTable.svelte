@@ -90,13 +90,7 @@
             aria-label="Original, read-only"
           />
           {#if showStudy && (document.role === "lecture" || document.role === "recitation")}
-            {#if folio.studied(document.id)}
-              <span
-                class="inline-flex shrink-0 items-center gap-1.5 text-[11px] text-text-3"
-              >
-                <span class="size-1.5 rounded-full bg-success"></span>Studied
-              </span>
-            {:else if folio.studying(document.id)}
+            {#if folio.studying(document.id)}
               <span
                 class="inline-flex shrink-0 items-center gap-1.5 text-[11px] text-text-3"
               >

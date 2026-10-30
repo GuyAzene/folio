@@ -40,12 +40,6 @@
     })).filter((section) => section.documents.length),
   );
   const knowledge = $derived(folio.knowledge[courseId] ?? null);
-  const teaching = $derived(
-    documents.filter(
-      (document) =>
-        document.role === "lecture" || document.role === "recitation",
-    ),
-  );
   const notes = $derived(
     folio.notes.filter((note) => note.courseId === courseId),
   );
@@ -128,26 +122,8 @@
           >
             {course.name}
           </h1>
-          {#if details || teaching.length}
-            <span
-              class="flex flex-wrap items-center gap-x-2 gap-y-1 text-text-3"
-            >
-              {#if details}<span>{details}</span>{/if}
-              {#if details && teaching.length}<span class="text-text-4">·</span
-                >{/if}
-              {#if teaching.length}
-                <span class="inline-flex items-center gap-1.5">
-                  <span
-                    class="size-1.5 rounded-full {knowledge
-                      ? 'bg-success'
-                      : 'bg-line-strong'}"
-                  ></span>
-                  {knowledge
-                    ? `Studied ${knowledge.sessions.length} of ${teaching.length}`
-                    : "Not studied yet"}
-                </span>
-              {/if}
-            </span>
+          {#if details}
+            <span class="text-text-3">{details}</span>
           {/if}
         </div>
         <div class="flex shrink-0 gap-1.5">

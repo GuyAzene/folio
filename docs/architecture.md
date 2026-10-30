@@ -159,6 +159,12 @@ study the student cancels is not started again unless they ask. A file that move
 leaves its course or stops being a lecture has its study stopped first, and Folio waits until
 nothing reads it any more before it moves; its study notes leave the course with it.
 
+The student follows this, and nothing more: the Studying place lists what is being studied now,
+each with one line of what Folio is doing and a bar, then what comes next in the order Folio will
+take it. One line appears only when something needs them (no connection, a used-up plan, a study
+that stopped). Finished studies leave the list, and no page counts what has been studied; a
+course's Overview shows a single "Studying …" line while Folio works on that course.
+
 A study job reads every page of a lecture: its text layer and regions, with close-up re-reads
 where a page needs them. It then drafts study notes by topic, each section citing the pages and
 regions it came from, and an independent checker tests the draft's claims against the page

@@ -308,6 +308,46 @@ export function studyDocuments(job: JobView, titleOf: (id: string) => string): S
   });
 }
 
+/**
+ * One document's study as a single line and bar: what Folio is doing now, in plain words, and
+ * how far along it is. Reading the pages is most of the work, so it fills most of the bar.
+ */
+export function studyProgress(study: StudyDocument): { phase: string; fraction: number } {
+  if (study.status === "done") return { phase: "Done", fraction: 1 };
+  if (study.status === "queued" || !study.stages.length) return { phase: "Starting", fraction: 0 };
+  const [read, closer, write, check] = study.stages;
+  const pages = study.pages.length;
+  const reading = pages ? (0.55 * study.pagesRead) / pages : 0;
+  const waiting = (stage: StudyStage | undefined) => stage?.detail === "Waiting for its turn";
+  if (read && read.state !== "done")
+    return {
+      phase:
+        read.detail === "Preparing the pages"
+          ? "Preparing the pages"
+          : waiting(read)
+            ? "Waiting for its turn"
+            : "Reading the slides",
+      fraction: reading,
+    };
+  if (closer?.state === "running") return { phase: "Looking closer at figures", fraction: 0.6 };
+  if (write && write.state !== "done")
+    return {
+      phase:
+        write.state === "running"
+          ? write.detail || "Writing the study notes"
+          : waiting(write)
+            ? "Waiting for its turn"
+            : "Writing the study notes",
+      fraction: 0.7,
+    };
+  if (check && check.state !== "done")
+    return {
+      phase: waiting(check) ? "Waiting for its turn" : "Checking against the slides",
+      fraction: 0.88,
+    };
+  return { phase: "Adding to the study notes", fraction: 0.97 };
+}
+
 function descends(nodes: AgentNodeView[], node: AgentNodeView, ancestor: string): boolean {
   const byId = new Map(nodes.map((item) => [item.id, item]));
   for (let at: AgentNodeView | undefined = node; at; at = byId.get(at.parentId ?? "")) {
