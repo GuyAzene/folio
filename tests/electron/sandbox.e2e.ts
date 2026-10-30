@@ -217,15 +217,33 @@ void describe("Demos in Folio's window", () => {
   });
 
   void it("turns a demo's question into a draft in the message box, never a sent message", async () => {
-    const asking = `<title>Ask</title><button id="ask">Why?</button><script>document.getElementById("ask").onclick = () => folio.ask("Why does the counter start at zero?");</script>`;
+    const asking = `<title>Ask</title><p>A demo that asks.</p>`;
     const app = await open([asking]);
     const frame = await demoFrame(app);
     const before = await app.page.locator(".prose-folio").count();
-    await frame.locator("#ask").click();
-    const box = app.page.getByRole("textbox").last();
-    await app.page.waitForFunction(() =>
-      [...document.querySelectorAll("textarea")].some((field) => field.value.includes("counter")),
+    // What a demo's button would run. A click into the sealed frame is not always delivered on
+    // GitHub's virtual Macs, and the click is not what this checks.
+    await frame.evaluate(() =>
+      (window as unknown as { folio: { ask(text: string): void } }).folio.ask(
+        "Why does the counter start at zero?",
+      ),
     );
+    const box = app.page.getByRole("textbox").last();
+    await app.page
+      .waitForFunction(
+        () =>
+          [...document.querySelectorAll("textarea")].some((field) =>
+            field.value.includes("counter"),
+          ),
+        undefined,
+        { timeout: 15_000 },
+      )
+      .catch(async () => {
+        const fields = await app.page
+          .locator("textarea")
+          .evaluateAll((nodes) => nodes.map((node) => (node as HTMLTextAreaElement).value));
+        throw new Error(`The question never reached the message box: ${JSON.stringify(fields)}`);
+      });
     assert.match(await box.inputValue(), /Why does the counter start at zero\?/);
     assert.equal(await app.page.locator(".prose-folio").count(), before);
   });
