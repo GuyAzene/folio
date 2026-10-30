@@ -1,4 +1,11 @@
 /**
+ * How a reply names its pages. Folio lists what the tutor read under the reply, so a closing
+ * "Source:" line only repeats it, and names pages from earlier turns the list does not show.
+ */
+export const CITING_RULE =
+  "Folio lists the pages and sections you read under your reply, so never end a reply with a Source or Sources line. Name a page in your text only where the student should look at it, such as a diagram, a table or a worked example, as (Lecture 2, page 4).";
+
+/**
  * How Folio teaches, in every course and library chat. There are no modes to pick: the student
  * asks in their own words ("quiz me", "one step at a time", "get me ready for lecture 4") and the
  * tutor recognizes the request. A pace or a quiz the student starts holds until they change it.

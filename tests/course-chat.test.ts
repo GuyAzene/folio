@@ -16,7 +16,7 @@ import { randomUUID } from "node:crypto";
 import { createAttach } from "../src/library/attachments.ts";
 import { createRuntimes } from "../src/library/course-tools.ts";
 import { PageReader } from "../src/library/page-reader.ts";
-import { TEACHING_RULES } from "../src/library/tutoring.ts";
+import { CITING_RULE, TEACHING_RULES } from "../src/library/tutoring.ts";
 import { LibraryStore } from "../src/library/store.ts";
 import { createSessionStore, type SessionStore } from "../src/session-store.ts";
 import { modelContextMessages } from "../src/transcript.ts";
@@ -516,6 +516,10 @@ describe("teaching rules", () => {
     const library = await (await runtimes.library(randomUUID())).prompt();
     expect(course).toContain(TEACHING_RULES);
     expect(library).toContain(TEACHING_RULES);
+    // The pages read are listed under each reply, so a closing source line only repeats them.
+    expect(course).toContain(CITING_RULE);
+    expect(library).toContain(CITING_RULE);
+    expect(CITING_RULE).toContain("never end a reply with a Source or Sources line");
   });
 
   it("cover quizzes, getting ready, tracing and connecting, asked for in the student's words", () => {
