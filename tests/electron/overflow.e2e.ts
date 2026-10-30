@@ -64,7 +64,9 @@ after(async () => {
 function audit(): string[] {
   const name = (element: Element) =>
     `<${element.tagName.toLowerCase()}${typeof element.className === "string" && element.className ? ` class="${element.className.slice(0, 60)}"` : ""}> "${(element.textContent ?? "").trim().slice(0, 50)}"`;
-  const skipped = "svg, .katex, .cm-editor, script, style, title, [aria-hidden=true]";
+  // A PDF's text layer is invisible text laid over the page image for selecting; its spans are
+  // scaled to the page's glyphs, so they overhang wherever this Mac's fonts differ from the PDF's.
+  const skipped = "svg, .katex, .cm-editor, .textLayer, script, style, title, [aria-hidden=true]";
   const found: string[] = [];
   const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
