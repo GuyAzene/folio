@@ -117,6 +117,27 @@ function audit(): string[] {
   return found;
 }
 
+/**
+ * Waits for the page to take its new width and finish moving: narrowing the window collapses the
+ * sidebar with a transition, and measured halfway the page is narrower than it will be. A fixed
+ * pause after resizing was not always enough on GitHub's virtual Macs.
+ */
+async function settled(app: Running, width: number): Promise<void> {
+  await app.page.waitForFunction(
+    (width) =>
+      innerWidth === width &&
+      !document
+        .getAnimations()
+        .some(
+          (animation) =>
+            animation.playState === "running" &&
+            animation.effect?.getTiming().iterations !== Infinity,
+        ),
+    width,
+    { timeout: 10_000 },
+  );
+}
+
 void describe("long names", () => {
   void it("are caught when a chip is squeezed, so a clean audit means something", async () => {
     const seeded = await seedLongNames(() => ({ view: "home" }));
@@ -148,10 +169,13 @@ void describe("long names", () => {
       await app.page.waitForTimeout(800);
       const problems: string[] = [];
       for (const width of WIDTHS) {
-        await app.app.evaluate(({ BrowserWindow }, width) => {
-          BrowserWindow.getAllWindows()[0]!.setSize(width, 820);
+        // The width the window took, in case the screen is narrower than asked for.
+        const content = await app.app.evaluate(({ BrowserWindow }, width) => {
+          const window = BrowserWindow.getAllWindows()[0]!;
+          window.setSize(width, 820);
+          return window.getContentSize()[0]!;
         }, width);
-        await app.page.waitForTimeout(400);
+        await settled(app, content);
         problems.push(...(await app.page.evaluate(audit)).map((line) => `${width}px ${line}`));
       }
       await app.close();

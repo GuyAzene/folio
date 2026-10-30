@@ -296,10 +296,13 @@ quarantined, so it opens without Gatekeeper's prompt.
 
 CI (`.github/workflows/ci.yml`) runs the checks and unit tests on Linux, and on macOS the
 real-window checks, then the same checks on the packaged app and the install checks
-(`tests/electron/install.e2e.ts`). After a push to `main` that passes, it builds the app for
-others (`FOLIO_DISTRIBUTE=1`: the inspector flags off), opens it on an empty home and quits it,
+(`tests/electron/install.e2e.ts`). After a push to `main` whose checks, tests and builds pass,
+it builds the app for others (`FOLIO_DISTRIBUTE=1`: the inspector flags off), opens it on an
+empty home and quits it,
 then replaces the disk image on the rolling `nightly` pre-release and moves its tag to that
-commit. The download link never changes, and there are no versioned releases to cut.
+commit. The download link never changes, and there are no versioned releases to cut. The
+real-window job reports on its own and does not hold the nightly back: those checks were written
+on a Mac much faster than GitHub's virtual ones.
 
 A quit signal (SIGTERM, as the installer sends) quits Folio as ⌘Q does: chats settle first.
 

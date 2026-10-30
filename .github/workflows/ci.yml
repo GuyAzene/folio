@@ -79,9 +79,11 @@ jobs:
         env:
           FOLIO_E2E_APP: ${{ github.workspace }}/release/mac-arm64/Folio.app
 
+  # Waits for the checks, tests and builds, not for the real-window job, which reports on its
+  # own: GitHub's virtual Macs are slower than the Macs those checks were written on.
   nightly:
     name: Nightly build
-    needs: [check, app]
+    needs: [check]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: macos-15
     timeout-minutes: 20
