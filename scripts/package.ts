@@ -26,6 +26,9 @@ const SOURCES = [
   "package.json",
 ];
 const developerId = !!(process.env.CSC_NAME || process.env.CSC_LINK);
+// FOLIO_DISTRIBUTE=1 builds the app handed to other people: the inspector flags are off, so
+// nothing can drive it from outside. The real-window checks need them, so they test the default.
+const distribute = process.env.FOLIO_DISTRIBUTE === "1";
 
 /** The renderer and the main process, built from a copy of the current source. */
 async function stage(dir: string): Promise<void> {
@@ -83,9 +86,9 @@ function config(dir: string, icns: string): Configuration {
     electronFuses: {
       runAsNode: false,
       enableNodeOptionsEnvironmentVariable: false,
-      // The real-window tests drive the packaged app through the inspector. A release for others
-      // turns this off.
-      enableNodeCliInspectArguments: true,
+      // The real-window tests drive the packaged app through the inspector; a build for others
+      // turns it off.
+      enableNodeCliInspectArguments: !distribute,
       enableEmbeddedAsarIntegrityValidation: true,
       onlyLoadAppFromAsar: true,
       grantFileProtocolExtraPrivileges: false,
@@ -103,6 +106,16 @@ function config(dir: string, icns: string): Configuration {
     dmg: { title: "Folio" },
   };
 }
+
+// The build replaces release/, so a Folio opened from there would lose its files while it runs.
+if (
+  execFileSync("ps", ["-axo", "command="], { encoding: "utf8" }).includes(
+    `${resolve(ROOT, "release")}/`,
+  )
+)
+  throw new Error(
+    "Folio is running from release/. Quit it before building, since the build replaces that folder.",
+  );
 
 const dir = await mkdtemp(resolve(tmpdir(), "folio-package-"));
 try {

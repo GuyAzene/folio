@@ -40,6 +40,11 @@ export default defineConfig({
       "desktop:start": { command: "node scripts/desktop.ts --built", cache: false },
       // Folio.app and a .dmg in release/, built from a copy of the source.
       "desktop:package": { command: "node scripts/package.ts", cache: false },
+      // Builds Folio.app and puts it in /Applications in place of the copy there.
+      "desktop:install": {
+        command: "node scripts/package.ts && node scripts/install.ts",
+        cache: false,
+      },
       typecheck: { command: "vp check --no-fmt --no-lint", cache: false },
       // Folio in a real Electron window, built into a temporary folder; local only, no model calls.
       "test:electron": { command: "node --test tests/electron/*.e2e.ts", cache: false },

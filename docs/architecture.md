@@ -29,7 +29,7 @@ src/desktop/main.ts           the main process
 | `src/cli.ts` | A terminal client with a small synthetic demo course. |
 | `tests/` | Deterministic test suites; `tests/fixtures/` builds synthetic PDFs and courses; `tests/electron/` checks Folio in a real window (`vp run test:electron`). |
 | `scripts/desktop.ts` | Runs the app from the dev server or from the production build. |
-| `scripts/package.ts`, `resources/` | Builds `Folio.app` and its disk image (`vp run desktop:package`); the app icon. |
+| `scripts/package.ts`, `scripts/install.ts`, `resources/` | Builds `Folio.app` and its disk image (`vp run desktop:package`) and installs it (`vp run desktop:install`); the app icon. |
 
 ## What the window may do
 
@@ -285,6 +285,23 @@ Folio running from the checkout keeps its files, and electron-builder makes
   so the real-window checks can drive the packaged app (`FOLIO_E2E_APP=…/Folio.app`).
 - It is signed ad-hoc with the hardened runtime. `CSC_NAME` or `CSC_LINK` signs it with a
   Developer ID instead, and Apple's notarization credentials in the environment notarize it.
+
+`vp run desktop:install` then puts the app in /Applications (`scripts/install.ts`). It refuses
+to replace an app with another bundle ID, and to run while a copy of Folio runs from anywhere
+else; asks the Folio running from Applications to quit, by a signal to that process alone, and
+waits for it; copies
+the new app beside the old one, checks its signature, and swaps it in by renaming, so there is
+never a half-copied app; a Folio that was open opens again. An app built on the Mac is not
+quarantined, so it opens without Gatekeeper's prompt.
+
+CI (`.github/workflows/ci.yml`) runs the checks and unit tests on Linux, and on macOS the
+real-window checks, then the same checks on the packaged app and the install checks
+(`tests/electron/install.e2e.ts`). After a push to `main` that passes, it builds the app for
+others (`FOLIO_DISTRIBUTE=1`: the inspector flags off), opens it on an empty home and quits it,
+then replaces the disk image on the rolling `nightly` pre-release and moves its tag to that
+commit. The download link never changes, and there are no versioned releases to cut.
+
+A quit signal (SIGTERM, as the installer sends) quits Folio as ⌘Q does: chats settle first.
 
 The packaged app keeps its data where the development build does, in `~/.folio` (or `FOLIO_HOME`).
 One Folio runs on a home at a time: opened while another runs there, Folio quits before it opens

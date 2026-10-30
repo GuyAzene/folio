@@ -29,8 +29,8 @@ lectures into notes you can browse, and it never changes your files.
 - **Diagrams, drawings and demos.** The tutor draws Mermaid diagrams (flowcharts, automata,
   sequences) right in the reply, and shows drawings or interactive demos you can step through.
   Demos run sealed off from Folio and the network.
-- **Study notes.** Folio can study a lecture page by page and publish notes by topic, each
-  section citing the slides it came from.
+- **Study notes.** Folio studies every lecture and recitation you add, page by page, into notes
+  by topic that each cite the slides they came from, and folds later ones into the same topics.
 - **Your own notes.** One notebook for every course, with `#tags`, search, ⌘O, links between
   notes and the notes that mention each one. Markdown with live preview, math, tables, diagrams,
   and Hebrew and English lines side by side. Write beside a lecture with links back to its pages,
@@ -44,6 +44,17 @@ lectures into notes you can browse, and it never changes your files.
 | Add context with + | A course |
 | --- | --- |
 | ![The + menu searching lectures across courses](docs/images/add-context.png) | ![A course page with its materials](docs/images/course.png) |
+
+## Try Folio
+
+Download **[Folio-arm64.dmg](https://github.com/GuyAzene/folio/releases/download/nightly/Folio-arm64.dmg)**
+from the [nightly build](https://github.com/GuyAzene/folio/releases/tag/nightly), open it and
+drag Folio to Applications. It needs a Mac with Apple silicon and a ChatGPT plan, and is rebuilt
+after every change, so the link always gives the newest Folio.
+
+Folio is not signed with an Apple Developer ID, so the first time you open it macOS says it could
+not verify it. Open **System Settings → Privacy & Security**, scroll down to the line about Folio
+and choose **Open Anyway**. A newer download may ask again.
 
 ## Getting started
 
@@ -61,14 +72,18 @@ To run the production build instead, use `vp run desktop:build`, then `vp run de
 ### Installing Folio as an app
 
 ```sh
-vp run desktop:package
+vp run desktop:install
 ```
 
-This builds `Folio.app` and a disk image for Apple silicon, `release/Folio-<version>-arm64.dmg`.
-Open the disk image and drag Folio to Applications. To update, quit Folio, build again and
-replace it. The build runs in a folder of its own, so a Folio running from the checkout keeps
-going. The app keeps your data in `~/.folio`, like the development build; quit a development
-build before opening the app.
+This builds `Folio.app` from the checkout as it is and puts it in Applications, in place of the
+copy there. Run it again whenever you want the newest Folio: a Folio that is open quits first and
+opens again once the new one is in place. An app built on your Mac opens without macOS's warning
+about unverified apps, since it was never downloaded. The build runs in a folder of its own, so a
+Folio running from the checkout keeps going. The app keeps your data in `~/.folio`, like the
+development build; quit a development build before opening the app.
+
+`vp run desktop:package` builds the app and a disk image for Apple silicon,
+`release/Folio-<version>-arm64.dmg`, without installing anything.
 
 The app is signed ad-hoc, so it runs on the Mac that built it. Another Mac may refuse to open it
 until builds are signed with a Developer ID and notarized; `scripts/package.ts` names the
@@ -106,6 +121,7 @@ vp run check:ui     # Svelte checks for the renderer
 vp test             # deterministic tests: no network, no real accounts
 vp run test:electron # Folio in a real window: security rules, diagrams, demos
 vp run desktop:package # Folio.app and its disk image, in release/
+vp run desktop:install # the same, then Folio.app into /Applications
 vp build && vp pack # renderer, CLI and Electron bundles
 vp dev              # the interface alone, in a browser, with synthetic data
 ```

@@ -41,6 +41,7 @@ vp test               # deterministic tests, no network or real accounts
 vp build && vp pack   # renderer, CLI and Electron bundles
 vp node <file>        # run a script with the project's Node
 vp run desktop:package # Folio.app and its disk image, in release/
+vp run desktop:install # the same, then Folio.app into /Applications
 ```
 
 Only `dependencies` ship in the packaged app, so they are the packages the main process loads

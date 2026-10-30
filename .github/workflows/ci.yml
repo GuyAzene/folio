@@ -8,6 +8,11 @@ on:
 permissions:
   contents: read
 
+# A newer push makes an older run moot: it is cancelled, nightly build included.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   check:
     name: Check, test and build
@@ -34,3 +39,94 @@ jobs:
         run: vp build
       - name: Bundle the CLI and the Electron main process
         run: vp pack
+
+  app:
+    name: Real window, packaged app and installing it
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: voidzero-dev/setup-vp@cab1ab9eaff52d4857875f4f2c016e36af8f2c76 # v1.22.0
+        with:
+          node-version-file: .node-version
+          sfw: true
+          cache: true
+          cache-toolchain: true
+          cache-save: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+      - name: Electron
+        run: vp node node_modules/electron/install.js
+      - name: Folio in a real window
+        run: vp run test:electron
+      - name: Package Folio.app
+        run: vp run desktop:package
+      # The same checks on the packaged app, and `desktop:install` into temporary folders.
+      - name: The packaged app in a real window, and installing it
+        run: vp run test:electron
+        env:
+          FOLIO_E2E_APP: ${{ github.workspace }}/release/mac-arm64/Folio.app
+
+  nightly:
+    name: Nightly build
+    needs: [check, app]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: macos-15
+    timeout-minutes: 20
+    permissions:
+      # Moves the nightly tag and replaces the release's disk image.
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: voidzero-dev/setup-vp@cab1ab9eaff52d4857875f4f2c016e36af8f2c76 # v1.22.0
+        with:
+          node-version-file: .node-version
+          sfw: true
+          cache: true
+          cache-toolchain: true
+          cache-save: false
+      - name: Electron
+        run: vp node node_modules/electron/install.js
+      - name: Package Folio for others
+        run: vp run desktop:package
+        env:
+          FOLIO_DISTRIBUTE: "1"
+      # The app for others cannot be driven by the real-window checks, so it is opened on an
+      # empty home and asked to quit, which it must do on its own.
+      - name: Open and quit the packaged app
+        run: |
+          home=$(mktemp -d) connection=$(mktemp -d)
+          FOLIO_HOME="$home" FOLIO_CONNECTION_HOME="$connection" \
+            release/mac-arm64/Folio.app/Contents/MacOS/Folio >/dev/null 2>&1 &
+          pid=$!
+          sleep 10
+          kill -0 "$pid"
+          kill -TERM "$pid"
+          for _ in $(seq 1 60); do kill -0 "$pid" 2>/dev/null || exit 0; sleep 0.5; done
+          echo "Folio did not quit within 30 seconds" && exit 1
+      - name: Publish the nightly build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp release/Folio-*-arm64.dmg Folio-arm64.dmg
+          if gh api "repos/$GITHUB_REPOSITORY/git/refs/tags/nightly" >/dev/null 2>&1; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/nightly" \
+              -f sha="$GITHUB_SHA" -F force=true >/dev/null
+          else
+            gh api "repos/$GITHUB_REPOSITORY/git/refs" \
+              -f ref=refs/tags/nightly -f sha="$GITHUB_SHA" >/dev/null
+          fi
+          cat > notes.md <<EOF
+          The newest Folio, built from [\`${GITHUB_SHA::7}\`](https://github.com/$GITHUB_REPOSITORY/commit/$GITHUB_SHA) on $(date -u '+%Y-%m-%d %H:%M UTC'). It is rebuilt after every change to \`main\`, so this page always has the latest.
+
+          **Install:** download \`Folio-arm64.dmg\` (Apple silicon Macs), open it and drag Folio to Applications.
+
+          **First open:** Folio is not signed with an Apple Developer ID, so macOS says it could not verify it. Open **System Settings → Privacy & Security**, scroll down to the line about Folio, and choose **Open Anyway**. A newer download may ask again.
+
+          Your courses, notes and chats stay in \`~/.folio\` on your Mac. Folio connects to your own ChatGPT account.
+          EOF
+          if gh release view nightly >/dev/null 2>&1; then
+            gh release edit nightly --prerelease --title "Folio nightly" --notes-file notes.md
+          else
+            gh release create nightly --prerelease --verify-tag --title "Folio nightly" \
+              --notes-file notes.md
+          fi
+          gh release upload nightly Folio-arm64.dmg --clobber
