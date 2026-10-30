@@ -115,13 +115,17 @@ void describe("installing the packaged app", { skip }, () => {
     const into = await mkdtemp(resolve(tmpdir(), "folio-install-"));
     assert.equal(install(into).status, 0);
     const app = resolve(into, "Folio.app");
-    // One Folio from the folder being replaced, and one from the build, each on its own home.
+    // Another copy in a folder of its own: other checks run the built app at the same time.
+    const aside = await mkdtemp(resolve(tmpdir(), "folio-install-aside-"));
+    assert.equal(install(aside).status, 0);
+    const other = resolve(aside, "Folio.app");
+    // One Folio from the folder being replaced, and one from elsewhere, each on its own home.
     const env = await environment();
     open(app, env);
-    open(BUILT, await environment());
-    await until(() => running(app).length === 1 && running(BUILT).length === 1, "both to start");
+    open(other, await environment());
+    await until(() => running(app).length === 1 && running(other).length === 1, "both to start");
     const [before] = running(app);
-    const [bystander] = running(BUILT);
+    const [bystander] = running(other);
     await new Promise((done) => setTimeout(done, 3000));
 
     const result = install(into, env);
@@ -132,11 +136,14 @@ void describe("installing the packaged app", { skip }, () => {
     const [reopened] = running(app);
     started.push(reopened!);
     assert.notEqual(reopened, before, "the old Folio quit and a new one opened");
-    assert.deepEqual(running(BUILT), [bystander], "the other Folio kept running");
+    assert.deepEqual(running(other), [bystander], "the other Folio kept running");
 
     // Quitting by signal finishes like ⌘Q: the process leaves.
     process.kill(reopened!, "SIGTERM");
     await until(() => running(app).length === 0, "the reopened Folio to quit");
+    process.kill(bystander!, "SIGTERM");
+    await until(() => running(other).length === 0, "the other Folio to quit");
     await rm(into, { recursive: true, force: true });
+    await rm(aside, { recursive: true, force: true });
   });
 });
