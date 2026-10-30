@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   cp,
@@ -106,12 +106,13 @@ export interface Running {
   close(): Promise<void>;
 }
 
-export async function launch(home: string, env: Record<string, string> = {}): Promise<Running> {
+/** How to start the app under test on `home`, with no ChatGPT connection unless `env` names one. */
+async function command(home: string, env: Record<string, string>) {
   const dir = await buildApp();
   // A packaged app runs its own executable and the code in its archive.
   const packaged = dir.endsWith(".app");
   const connection = await mkdtemp(resolve(tmpdir(), "folio-e2e-connection-"));
-  const app = await _electron.launch({
+  return {
     executablePath: packaged ? resolve(dir, "Contents/MacOS/Folio") : electronPath,
     args: packaged ? [] : [resolve(dir, "dist-desktop/desktop-main.mjs")],
     cwd: packaged ? undefined : dir,
@@ -121,7 +122,11 @@ export async function launch(home: string, env: Record<string, string> = {}): Pr
       FOLIO_CONNECTION_HOME: connection,
       ...env,
     },
-  });
+  };
+}
+
+export async function launch(home: string, env: Record<string, string> = {}): Promise<Running> {
+  const app = await _electron.launch(await command(home, env));
   const logs: string[] = [];
   app
     .process()
@@ -129,6 +134,29 @@ export async function launch(home: string, env: Record<string, string> = {}): Pr
   const page = await app.firstWindow();
   await page.waitForLoadState("domcontentloaded");
   return { app, page, logs, close: () => app.close() };
+}
+
+/**
+ * Opens Folio once more on `home`, as opening the app a second time would, and resolves with its
+ * exit code. There is no window to wait for: a second Folio on a home that is open should leave.
+ */
+export async function launchAgain(
+  home: string,
+  env: Record<string, string> = {},
+): Promise<number | null> {
+  const { executablePath, args, cwd, env: environment } = await command(home, env);
+  const child = spawn(executablePath, args, { cwd, env: environment, stdio: "ignore" });
+  return new Promise((done, fail) => {
+    const stuck = setTimeout(() => {
+      child.kill();
+      fail(new Error("Folio, opened a second time on the same home, did not leave."));
+    }, 20_000);
+    child.once("error", fail);
+    child.once("exit", (code) => {
+      clearTimeout(stuck);
+      done(code);
+    });
+  });
 }
 
 /** Replaces opening a link in the system browser with a list, so a test sees what would open. */

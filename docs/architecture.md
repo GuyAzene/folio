@@ -281,3 +281,5 @@ Folio running from the checkout keeps its files, and electron-builder makes
   Developer ID instead, and Apple's notarization credentials in the environment notarize it.
 
 The packaged app keeps its data where the development build does, in `~/.folio` (or `FOLIO_HOME`).
+One Folio runs on a home at a time: opened while another runs there, Folio quits before it opens
+anything in the home, and the one already open comes forward.

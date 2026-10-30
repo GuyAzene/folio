@@ -70,7 +70,7 @@ import { Removal } from "../library/removal.ts";
 import { Trash, TRASH_DAYS, type TrashEntry } from "../library/trash.ts";
 import { studyNotesView } from "./study-notes.ts";
 import { courseView, documentView, noteView, proposalView } from "./view.ts";
-import { prepareHome } from "../home.ts";
+import { folioHome, prepareHome } from "../home.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const rendererRoot = resolve(here, "..", "build", "renderer");
@@ -83,6 +83,13 @@ const rendererUrl = devUrl ?? "folio://app/index.html";
 const rendererOrigin = originOf(rendererUrl);
 // "log" grants what Electron would and prints each request, to take stock of what the page uses.
 const permissionMode = process.env.FOLIO_PERMISSIONS === "log" ? "log" : "enforce";
+app.setName("Folio");
+// Another home is another instance: its own browser storage and its own single-instance lock.
+if (process.env.FOLIO_HOME) app.setPath("userData", resolve(folioHome(), "electron"));
+// A second Folio on the same home leaves here, before it moves, opens or creates anything in
+// it: app.quit() would let the rest of this module start opening the stores. The first Folio
+// comes forward on "second-instance".
+if (!app.requestSingleInstanceLock()) app.exit(0);
 // Everything Folio owns lives in ~/.folio; an earlier build's folder moves there once.
 const home = prepareHome();
 // A disposable test home may use an existing ChatGPT connection, read in place, never copied.
@@ -96,10 +103,6 @@ protocol.registerSchemesAsPrivileged([
   // The tutor's demos: standard and secure so each is its own origin; never bypassing CSP.
   { scheme: ARTIFACT_SCHEME, privileges: { standard: true, secure: true, corsEnabled: true } },
 ]);
-app.setName("Folio");
-// Another home is another instance: its own browser storage and its own single-instance lock.
-if (process.env.FOLIO_HOME) app.setPath("userData", resolve(home, "electron"));
-if (!app.requestSingleInstanceLock()) app.quit();
 
 let window: BrowserWindow | undefined;
 const emit = (event: DesktopEvent) => window?.webContents.send(CHANNELS.event, event);
@@ -1016,9 +1019,11 @@ app.on("before-quit", (event) => {
     .catch(() => undefined)
     .finally(() => app.quit());
 });
+// Opening Folio again brings its window forward, or opens it again if it was closed.
 app.on("second-instance", () => {
-  if (window?.isMinimized()) window.restore();
-  window?.focus();
+  if (!window) return createWindow();
+  if (window.isMinimized()) window.restore();
+  window.focus();
 });
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
