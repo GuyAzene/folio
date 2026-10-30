@@ -188,7 +188,7 @@
   <div class="flex flex-col">
     {#each text.split("\n") as line, index (index)}
       <span
-        class="min-h-6 break-words whitespace-pre-wrap"
+        class="min-h-6 whitespace-pre-wrap wrap-anywhere"
         dir={writtenDirection(estimateDirection(line)) ?? whole}>{line}</span
       >
     {/each}

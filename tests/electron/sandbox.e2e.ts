@@ -65,6 +65,17 @@ void describe("Demos in Folio's window", () => {
   void it("runs a demo, sized to its content, in a process of its own", async () => {
     const app = await open([COUNTER]);
     const frame = await demoFrame(app);
+    // The frame resizes to its content and the chat scrolls with it; a click while that settles
+    // can land beside the button, so the clicks wait for it.
+    const iframe = app.page.locator(".visual iframe");
+    for (let last = -1, height = 0, tries = 0; tries < 40; tries++) {
+      height = await iframe.evaluate(
+        (node) => node.getBoundingClientRect().top + node.clientHeight,
+      );
+      if (height === last) break;
+      last = height;
+      await app.page.waitForTimeout(150);
+    }
     await frame.locator("#next").click();
     await frame.locator("#next").click();
     assert.equal(await frame.locator("#out").textContent(), "2");
