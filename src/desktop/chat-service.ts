@@ -1,6 +1,6 @@
 import type { StreamFn } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
-import { Conversation, type CourseRuntime } from "../conversation.ts";
+import { Conversation, type CourseRuntime, type Grants } from "../conversation.ts";
 import type { AttachReach, ResolvedAttachment } from "../library/attachments.ts";
 import { MAX_IMAGE_BYTES } from "../library/images.ts";
 import { connectionOf, parseRef, type Connection } from "../model-refs.ts";
@@ -43,12 +43,14 @@ export interface ChatServiceOptions {
    * Builds a library chat's tools. With it, chats started without a course are library chats
    * that work out the course from the question; without it, they are plain chats.
    */
-  libraryRuntime?: (chatId: string) => Promise<CourseRuntime>;
+  libraryRuntime?: (chatId: string, grants?: () => Grants) => Promise<CourseRuntime>;
   /**
    * Checks what the student added to a question against the library and the chat, and prepares
    * it; without it, questions cannot carry attachments.
    */
   attach?: (reach: AttachReach, inputs: AttachmentInput[]) => Promise<ResolvedAttachment[]>;
+  /** Folio's notes for the tutor on a chat's next question, such as changes the student answered. */
+  notes?: (chatId: string) => Promise<string[]>;
 }
 
 /**
@@ -127,8 +129,16 @@ export class ChatService {
     const id = conversation.snapshot.id;
     // A course chat's question carries the page in view, so the tutor's prompt stays the same.
     const extras = conversation.kind === "course" ? { focus: focus ?? null } : {};
+    const notes = existing ? ((await this.#options.notes?.(id)) ?? []) : [];
     conversation
-      .send(text, submissionId, { attachments: added, thinking, fast, webSearch, ...extras })
+      .send(text, submissionId, {
+        attachments: added,
+        thinking,
+        fast,
+        webSearch,
+        ...extras,
+        ...(notes.length ? { notes } : {}),
+      })
       .then(
         () => this.#settled(conversation),
         (error: unknown) => {
@@ -349,7 +359,7 @@ function validAttachments(value: unknown): AttachmentInput[] {
   if (!Array.isArray(value) || value.length > MAX_ATTACHMENTS)
     throw new Error(`Add at most ${MAX_ATTACHMENTS} things to one question.`);
   const inputs = value.map((item): AttachmentInput => {
-    const { kind, documentId, page, courseId, name, data } = (item ?? {}) as Record<
+    const { kind, documentId, page, courseId, name, data, path } = (item ?? {}) as Record<
       string,
       unknown
     >;
@@ -370,6 +380,11 @@ function validAttachments(value: unknown): AttachmentInput[] {
       // A file name, shown with the image and told to the tutor: printable characters only.
       const label = typeof name === "string" ? name.replace(/\p{Cc}/gu, "").slice(0, 120) : "";
       return { kind, name: label, data };
+    }
+    if (kind === "file") {
+      if (typeof path !== "string" || !path || path.includes("\0"))
+        throw new Error("Choose a file to add.");
+      return { kind, path };
     }
     throw new Error("Folio can't add that to a question.");
   });

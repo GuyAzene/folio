@@ -11,7 +11,12 @@ import {
 import type { JobStore, NodeInput } from "../jobs/store.ts";
 import type { Knowledge } from "../kb/knowledge.ts";
 import { topicInventory } from "../kb/topics.ts";
-import type { CourseRecord, DocumentRecord, LibraryStore } from "../library/store.ts";
+import {
+  studied,
+  type CourseRecord,
+  type DocumentRecord,
+  type LibraryStore,
+} from "../library/store.ts";
 import type { SessionInfo } from "./draft.ts";
 import {
   jsonCall,
@@ -335,8 +340,7 @@ export class IngestRunner {
       if (
         !document ||
         document.courseId !== courseId ||
-        (document.role !== "lecture" && document.role !== "recitation") ||
-        document.kind !== "pdf" ||
+        !studied(document) ||
         declined.has(id) ||
         store.jobs().some((job) => job.documentIds.includes(id) && job.status !== "done")
       )
@@ -509,14 +513,14 @@ export class IngestRunner {
       // The topics the course has as this job starts: every document of the job sees the same.
       const known = (await this.#options.knowledge?.(course.id).catch(() => null)) ?? null;
       // Sessions are numbered and paired across the whole course, not only this job's files.
-      const studied = (await library.listDocuments({ courseId: course.id }))
+      const taught = (await library.listDocuments({ courseId: course.id }))
         .filter((document) => document.role === "lecture" || document.role === "recitation")
         .sort((a, b) => a.importedAt.localeCompare(b.importedAt) || a.id.localeCompare(b.id));
       // Documents are independent: one that fails does not stop the others, and whatever
       // finished is added to the course. Resume redoes only what did not finish.
       const results = await Promise.allSettled(
         documents.map((document) =>
-          this.#document(jobId, root.id, course, document, studied, known, signal),
+          this.#document(jobId, root.id, course, document, taught, known, signal),
         ),
       );
       signal.throwIfAborted();
@@ -600,10 +604,10 @@ export class IngestRunner {
           ? `Merged “${merged[0]!.from}” into “${merged[0]!.into}”${merged.length > 1 ? `, and ${merged.length - 1} more` : ""}`
           : "No topic was a duplicate",
       });
-      const studied = (await this.#options.knowledge?.(job.courseId))?.sessions ?? [];
+      const sessions = (await this.#options.knowledge?.(job.courseId))?.sessions ?? [];
       await this.queue(
         job.courseId,
-        studied.map((session) => session.documentId),
+        sessions.map((session) => session.documentId),
         "restudy",
       );
       store.setNode(rootId, { status: "done", note: null });
@@ -662,7 +666,7 @@ export class IngestRunner {
       this.#emit(jobId);
       signal.throwIfAborted();
 
-      const session = sessionInfo(course, document, courseDocuments);
+      const session = sessionInfo(course, document, courseDocuments, known?.prefix);
       const regions: DocumentDraft["regions"] = {};
       const done = new Map(
         inventory.pages.map((page) => [page.page, Promise.withResolvers<void>()]),
@@ -2573,17 +2577,18 @@ function pageState(ledger: LedgerEntry[], page: number): PageCoverageView["state
 }
 
 /**
- * Course prefix and session slug, such as "alg" and "alg-L01". A document is numbered by the
- * number in its title, or else by its place among the course's lectures (or recitations) in the
- * order they were added; no two documents of a course share a slug, and a lecture and a
- * recitation with the same number are paired.
+ * Course prefix and session slug, such as "alg" and "alg-L01". A document is numbered by its
+ * own number, or for one from before numbers by the number in its title, or else by its place
+ * among the course's lectures (or recitations) in the order they were added; no two documents of a course share a slug, and a lecture and a
+ * recitation with the same number are paired. A course with study notes keeps their prefix, so a
+ * renamed course's topics stay shared.
  */
 export function sessionInfo(
   course: CourseRecord,
   document: DocumentRecord,
   courseDocuments: DocumentRecord[],
+  prefix = coursePrefix(course.name),
 ): SessionInfo {
-  const prefix = coursePrefix(course.name);
   const type = document.role === "recitation" ? "recitation" : "lecture";
   const letter = (other: DocumentRecord) => (other.role === "recitation" ? "R" : "L");
   const all = courseDocuments.some((other) => other.id === document.id)
@@ -2596,7 +2601,10 @@ export function sessionInfo(
     all
       .filter((other) => letter(other) === kind)
       .forEach((other, index) => {
-        const number = (/(\d+)/.exec(other.title)?.[1] ?? String(index + 1)).padStart(2, "0");
+        const number = String(other.number ?? /(\d+)/.exec(other.title)?.[1] ?? index + 1).padStart(
+          2,
+          "0",
+        );
         let slug = `${prefix}-${kind}${number}`;
         for (let copy = 2; taken.has(slug); copy++) slug = `${prefix}-${kind}${number}-${copy}`;
         taken.add(slug);

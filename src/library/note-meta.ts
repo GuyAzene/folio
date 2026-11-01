@@ -92,6 +92,22 @@ export function noteCitations(content: string): { documentId: string; pages: num
   }));
 }
 
+/**
+ * A page citation's label as it reads today, for one Folio wrote ("Lecture 3 · p. 12"), so a
+ * renamed file shows its new name; the note's text is not changed. A label the student wrote
+ * themself, or a file Folio no longer has, reads as written (null).
+ */
+export function citationLabel(
+  target: string,
+  shown: string,
+  title: (documentId: string) => string | null,
+): string | null {
+  const cited = pageCitation(target);
+  if (!cited || !new RegExp(`·\\s*p\\.\\s*${cited.page}\\s*$`).test(shown)) return null;
+  const name = title(cited.documentId);
+  return name ? `${name} · p. ${cited.page}` : null;
+}
+
 /** The text of a page citation, written where the student chose "Add to note". */
 export function citationLink(documentId: string, page: number, shown: string): string {
   return `[[page:${documentId}#${page}|${shown

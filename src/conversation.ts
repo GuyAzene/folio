@@ -95,7 +95,7 @@ export interface OpenConversationOptions {
     grants: () => Grants,
   ) => Promise<CourseRuntime>;
   /** Builds a library chat's tools and prompt; required to open library chats. */
-  libraryRuntime?: (chatId: string) => Promise<CourseRuntime>;
+  libraryRuntime?: (chatId: string, grants?: () => Grants) => Promise<CourseRuntime>;
   /** Pi's provider for a new chat's model: the ChatGPT plan (`openai`) unless given. */
   provider?: ProviderId;
   modelId?: string;
@@ -113,12 +113,22 @@ export type Attachment =
   /** The student's own image; `thumbnail` is a small base64 JPEG for the chat. */
   | { kind: "image"; name: string; thumbnail: string }
   | { kind: "document"; documentId: string }
-  | { kind: "course"; courseId: string };
+  | { kind: "course"; courseId: string }
+  /** A PDF or Markdown file of their own, kept in Folio by its hash and read in this chat. */
+  | {
+      kind: "file";
+      fileId: string;
+      name: string;
+      fileKind: "pdf" | "markdown";
+      pages: number | null;
+    };
 
-/** Courses and documents the student added to a chat, which it may read from then on. */
+/** Courses, documents and files the student added to a chat, which it may read from then on. */
 export interface Grants {
   courses: string[];
   documents: string[];
+  /** Files of their own, which the tutor may read and, when asked, add to a course. */
+  files?: Extract<Attachment, { kind: "file" }>[];
 }
 
 /** Past this share of the model's context, earlier tool results reach it as short notes. */
@@ -165,20 +175,28 @@ export interface SendExtras {
   fast?: boolean;
   /** False when the student turned web search off; the tutor may search otherwise. */
   webSearch?: boolean;
+  /** Folio's own notes for the tutor, such as how the student answered a change it proposed. */
+  notes?: string[];
 }
 
 /** Every course and document the student added in a chat, read from their own messages only. */
 export function grantsOf(messages: readonly unknown[]): Grants {
   const courses = new Set<string>();
   const documents = new Set<string>();
+  const files = new Map<string, Extract<Attachment, { kind: "file" }>>();
   for (const message of messages as SubmittedMessage[]) {
     if (message.role !== "user") continue;
     for (const attachment of message.folioAttachments ?? []) {
       if (attachment.kind === "course") courses.add(attachment.courseId);
       else if (attachment.kind === "document") documents.add(attachment.documentId);
+      else if (attachment.kind === "file") files.set(attachment.fileId, attachment);
     }
   }
-  return { courses: [...courses], documents: [...documents] };
+  return {
+    courses: [...courses],
+    documents: [...documents],
+    ...(files.size ? { files: [...files.values()] } : {}),
+  };
 }
 
 /** The text the student typed, whatever else went with it. */
@@ -315,7 +333,9 @@ export class Conversation {
           await runtime.checkFocus(record.focus).catch(() => (record!.focus = null));
       } else if (kind === "library") {
         if (!options.libraryRuntime) throw new Error(WRONG_KIND.library);
-        runtime = await options.libraryRuntime(record.id);
+        runtime = await options.libraryRuntime(record.id, () =>
+          conversation ? conversation.grants() : grantsOf(opened.messages),
+        );
       }
       validateTranscript(record.messages);
       conversation = new Conversation(options, record, lease, resumed, runtime);
@@ -474,20 +494,27 @@ export class Conversation {
 
   async #send(text: string, submissionId: string, extras: SendExtras): Promise<void> {
     const added = extras.attachments ?? [];
+    const notes = extras.notes ?? [];
     const focus = await this.#focusSnapshot(extras.focus);
     // The typed text stays first, so the chat shows only what the student wrote.
     const input: SubmittedMessage = {
       role: "user",
-      content: added.length
-        ? [
-            { type: "text", text },
-            {
-              type: "text",
-              text: `[Added by the student: ${added.map((item) => item.note).join("; ")}]`,
-            },
-            ...added.flatMap((item) => (item.image ? [item.image] : [])),
-          ]
-        : text,
+      content:
+        added.length || notes.length
+          ? [
+              { type: "text", text },
+              ...(added.length
+                ? [
+                    {
+                      type: "text" as const,
+                      text: `[Added by the student: ${added.map((item) => item.note).join("; ")}]`,
+                    },
+                  ]
+                : []),
+              ...notes.map((note) => ({ type: "text" as const, text: `[Folio: ${note}]` })),
+              ...added.flatMap((item) => (item.image ? [item.image] : [])),
+            ]
+          : text,
       timestamp: Date.now(),
       folioSubmissionId: submissionId,
       ...(added.length ? { folioAttachments: added.map((item) => item.attachment) } : {}),

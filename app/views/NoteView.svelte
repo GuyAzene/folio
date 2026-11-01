@@ -6,7 +6,11 @@
   import CourseTile from "../components/CourseTile.svelte";
   import IconButton from "../components/IconButton.svelte";
   import NoteBacklinks from "../components/NoteBacklinks.svelte";
-  import { noteHeadings, pageCitation } from "../../src/library/note-meta.ts";
+  import {
+    citationLabel,
+    noteHeadings,
+    pageCitation,
+  } from "../../src/library/note-meta.ts";
   import { NOTE_TEMPLATES, onlyTitle, type NoteTemplate } from "../lib/note-templates.ts";
   import {
     createNoteEditor,
@@ -15,6 +19,7 @@
   import { formatDate } from "../lib/labels.ts";
   import { mountDemos } from "../lib/demo-slots.ts";
   import { linkedMarkdown, wikilinkTarget } from "../lib/editor/wikilinks.ts";
+  import { shortTitle } from "../lib/titles.ts";
   import { renderMarkdown } from "../lib/markdown.ts";
   import { folio } from "../lib/state.svelte.ts";
 
@@ -44,6 +49,16 @@
         detail: "Study notes",
       })),
     ];
+  }
+
+  /** A page citation Folio wrote reads with the file's current name. */
+  function linkLabel(target: string, shown: string): string | null {
+    return citationLabel(target, shown, (documentId) => {
+      const document = folio.document(documentId);
+      return document
+        ? shortTitle(document.title, folio.course(document.courseId)?.name)
+        : null;
+    });
   }
 
   /** Opens a link's note, topic, cited page or chat; a title no note has yet says so. */
@@ -206,7 +221,7 @@
         onBlur: () => void save(),
         onSave: () => void save(),
         onRead: () => (mode = "read"),
-        links: { targets: linkTargets, open: openLink },
+        links: { targets: linkTargets, open: openLink, label: linkLabel },
         inFlow: true,
       });
       return () => {
@@ -469,7 +484,7 @@
           >
             <!-- Sanitized by DOMPurify in renderMarkdown. -->
             <!-- eslint-disable-next-line svelte/no-at-html-tags -->
-            {@html renderMarkdown(linkedMarkdown(content || "Nothing here yet."), {
+            {@html renderMarkdown(linkedMarkdown(content || "Nothing here yet.", linkLabel), {
               note: true,
             })}
           </article>

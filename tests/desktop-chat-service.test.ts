@@ -87,6 +87,7 @@ async function setup(
     libraryRuntime?: ConstructorParameters<typeof ChatService>[0]["libraryRuntime"];
     courseRuntime?: ConstructorParameters<typeof ChatService>[0]["courseRuntime"];
     attach?: ConstructorParameters<typeof ChatService>[0]["attach"];
+    notes?: ConstructorParameters<typeof ChatService>[0]["notes"];
   } = {},
 ): Promise<{ service: ChatService; store: SessionStore; events: DesktopEvent[] }> {
   const home = await mkdtemp(resolve(tmpdir(), "folio-desktop-test-"));
@@ -102,6 +103,7 @@ async function setup(
     libraryRuntime: options.libraryRuntime,
     courseRuntime: options.courseRuntime,
     attach: options.attach,
+    notes: options.notes,
     connected: async (connection) =>
       Array.isArray(options.connected)
         ? options.connected.includes(connection.id)
@@ -155,6 +157,40 @@ describe("desktop chat service", () => {
     expect(events.some((event) => event.type === "chats" && event.chats[0]?.id === chatId)).toBe(
       true,
     );
+  });
+
+  it("tells the tutor on the next question how the student answered its proposals", async () => {
+    const seen: unknown[] = [];
+    const told: string[] = [];
+    const { service, store, events } = await setup({
+      streamFn: (model, context, options) => {
+        seen.push(structuredClone(context.messages.at(-1)));
+        return streaming(model, context, options);
+      },
+      notes: async (chatId) => {
+        told.push(chatId);
+        return ['The student applied "Move 6 files to the Trash".'];
+      },
+    });
+    const { chatId } = await service.send({ chatId: null, text: "Hi", submissionId: randomUUID() });
+    await settled(events);
+    // A new chat has nothing to be told yet.
+    expect(told).toEqual([]);
+    events.length = 0;
+    await service.send({ chatId, text: "Thanks", submissionId: randomUUID() });
+    await settled(events);
+    expect(told).toEqual([chatId]);
+    expect(seen.at(-1)).toMatchObject({
+      role: "user",
+      content: [
+        { type: "text", text: "Thanks" },
+        { type: "text", text: '[Folio: The student applied "Move 6 files to the Trash".]' },
+      ],
+    });
+    // The chat shows only what the student typed.
+    const view = await service.openChat(chatId);
+    expect(view.messages.at(-2)).toMatchObject({ role: "user", text: "Thanks" });
+    void store;
   });
 
   it("lists only plain chats and refuses to open a course tutoring chat", async () => {
@@ -335,7 +371,18 @@ describe("desktop chat service", () => {
                   note: "their image",
                   image: { type: "image", data: "SU1BR0U=", mimeType: "image/jpeg" },
                 }
-              : { attachment: input, note: input.kind },
+              : input.kind === "file"
+                ? {
+                    attachment: {
+                      kind: "file",
+                      fileId: "0".repeat(64),
+                      name: "R01.pdf",
+                      fileKind: "pdf",
+                      pages: 3,
+                    },
+                    note: "their file",
+                  }
+                : { attachment: input, note: input.kind },
         );
       },
     });
@@ -438,8 +485,13 @@ describe("desktop chat service", () => {
       service.send({ ...base, attachments: [image, image, image, image, image] }),
     ).rejects.toThrow("at most 4 images");
     await expect(
-      service.send({ ...base, attachments: [{ kind: "file", path: "/etc/passwd" }] as never }),
+      service.send({ ...base, attachments: [{ kind: "folder", path: "/etc" }] as never }),
     ).rejects.toThrow("can't add that");
+    // A file goes to the main process's checks, which refuse what isn't the student's PDF or
+    // Markdown (tests/app-tools.test.ts covers them); here the stand-in refuses everything.
+    await expect(
+      service.send({ ...base, attachments: [{ kind: "file", path: "/etc/passwd" }] }),
+    ).rejects.toThrow("not part of this chat");
     await expect(
       service.send({ ...base, attachments: [{ kind: "image", name: "a", data: "AAAA" }] as never }),
     ).rejects.toThrow("Invalid image");

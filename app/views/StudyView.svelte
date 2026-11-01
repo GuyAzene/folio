@@ -97,6 +97,13 @@
     return notes?.sessions.find((session) => session.slug === slug);
   }
 
+  /** The student's name for the kind of file a session studied, such as "Tirgul". */
+  function sessionKind(session: { documentId: string; type: string }): string {
+    const document = folio.document(session.documentId);
+    if (document) return folio.categoryOf(document).name;
+    return session.type === "recitation" ? "Recitation" : "Lecture";
+  }
+
   /** "Lecture 1" from "Lecture 1 Graph traversal"; the full title when it has no number. */
   function documentLabel(documentId: string): string {
     const title = folio.document(documentId)?.title;
@@ -397,7 +404,7 @@
           class="prose-folio prose-reading mx-auto max-w-[784px] px-8 pt-10 pb-24 font-serif text-[17px] leading-7 max-sm:px-4"
         >
           <p class="font-sans !text-[12px] !leading-4 text-text-3" dir="auto">
-            {session.type === "recitation" ? "Recitation" : "Lecture"} ·
+            {sessionKind(session)} ·
             {folio.document(session.documentId)?.title ?? session.title}
           </p>
           <h1 class="!mt-2 font-sans" dir="auto">{session.title}</h1>
@@ -445,9 +452,7 @@
 
           {#if session.onlyHere.length && notes && notes.sessions.length > 1}
             {@render heading(
-              session.type === "recitation"
-                ? "Only in this recitation"
-                : "Only in this lecture",
+              `Only in this ${sessionKind(session).toLowerCase()}`,
             )}
             <div class="flex flex-wrap gap-1.5">
               {#each session.onlyHere as slug (slug)}

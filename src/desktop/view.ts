@@ -6,6 +6,7 @@ import type { CourseRecord, DocumentRecord } from "../library/store.ts";
 import { refOf } from "../model-refs.ts";
 import type { SessionRecord, SessionSummary } from "../session-store.ts";
 import type {
+  ActionView,
   AttachmentView,
   ChatKind,
   ChatMessageView,
@@ -83,8 +84,28 @@ function runningLabel(name: string, args: unknown): string {
   if (name === "create_note") return "Writing a note";
   if (name === "edit_note") return "Editing your note";
   if (name === "rename_note") return "Renaming your note";
-  return name;
+  return APP_STEPS[name]?.[0] ?? name;
 }
+
+/** The tools that change Folio: what each says while it runs, and once it has. */
+const APP_STEPS: Record<string, readonly [string, string, string]> = {
+  edit_course: ["Changing a course", "Changed a course", "Couldn't change the course"],
+  edit_files: ["Changing files", "Changed files", "Couldn't change the files"],
+  add_file: ["Adding your file", "Added your file", "Couldn't add your file"],
+  trash_files: ["Moving files to the Trash", "Moved files to the Trash", "Couldn't move the files"],
+  trash_course: [
+    "Moving a course to the Trash",
+    "Moved a course to the Trash",
+    "Couldn't move the course",
+  ],
+  edit_categories: [
+    "Changing your categories",
+    "Changed your categories",
+    "Couldn't change your categories",
+  ],
+  set_model: ["Choosing a model", "Chose a model", "Couldn't choose that model"],
+  study: ["Studying", "Started studying", "Couldn't start studying"],
+};
 
 function finishedLabel(name: string, details: unknown, failed: boolean, fallback: string): string {
   if (name === "list_documents")
@@ -124,6 +145,14 @@ function finishedLabel(name: string, details: unknown, failed: boolean, fallback
   if (name === "edit_note") return failed ? "Couldn't edit your note" : `Edited your note${title}`;
   if (name === "rename_note")
     return failed ? "Couldn't rename your note" : `Renamed your note to${title}`;
+  const app = APP_STEPS[name];
+  if (app) {
+    if (failed) return app[2];
+    // A change waiting for the student's Apply hasn't happened yet.
+    return (details as { pending?: unknown } | undefined)?.pending
+      ? "Proposed a change for you to apply"
+      : app[1];
+  }
   return fallback;
 }
 
@@ -198,6 +227,8 @@ export function chatView(record: SessionRecord, streaming?: string): ChatView {
         !message.isError &&
         message.toolName === "read_page" &&
         reading?.documentId &&
+        // A file the student added to the chat is in no course, so it has no source to open.
+        !/^[0-9a-f]{64}$/.test(reading.documentId) &&
         reading.title &&
         reading.page &&
         !turn.sources.some((s) => s.documentId === reading.documentId && s.page === reading.page)
@@ -237,6 +268,17 @@ export function chatView(record: SessionRecord, streaming?: string): ChatView {
               url: source.url,
               title: typeof source.title === "string" ? source.title : source.url,
             });
+      const changed = (message.details as { action?: Partial<ActionView> } | undefined)?.action;
+      if (!message.isError && changed && typeof changed.summary === "string")
+        (turn.actions ??= []).push({
+          summary: changed.summary,
+          undo: changed.undo ?? null,
+          courseId: typeof changed.courseId === "string" ? changed.courseId : null,
+          documentId: typeof changed.documentId === "string" ? changed.documentId : null,
+        });
+      const waiting = (message.details as { pending?: { id?: unknown } } | undefined)?.pending;
+      if (!message.isError && typeof waiting?.id === "string")
+        (turn.pending ??= []).push(waiting.id);
       const edit = (message.details as { noteEdit?: NoteEditView & { v?: number } } | undefined)
         ?.noteEdit;
       if (!message.isError && edit && typeof edit.noteId === "string")
@@ -318,15 +360,17 @@ function attachmentViews(message: object): AttachmentView[] {
     folioPage?: { documentId: string; page: number };
   };
   if (folioAttachments)
-    return folioAttachments.map((attachment) =>
-      attachment.kind === "image"
-        ? {
-            kind: "image",
-            name: attachment.name,
-            thumbnail: `data:image/jpeg;base64,${attachment.thumbnail}`,
-          }
-        : { ...attachment },
-    );
+    return folioAttachments.map((attachment): AttachmentView => {
+      if (attachment.kind === "image")
+        return {
+          kind: "image",
+          name: attachment.name,
+          thumbnail: `data:image/jpeg;base64,${attachment.thumbnail}`,
+        };
+      if (attachment.kind === "file")
+        return { kind: "file", name: attachment.name, pages: attachment.pages };
+      return { ...attachment };
+    });
   return folioPage
     ? [{ kind: "page", documentId: folioPage.documentId, page: folioPage.page }]
     : [];
@@ -358,7 +402,21 @@ export function courseView(course: CourseRecord, documents: number): CourseView 
 
 export function documentView(document: DocumentRecord): DocumentView {
   const { id, courseId, title, role, kind, pages, size, dueAt, importedAt, revision } = document;
-  return { id, courseId, title, role, kind, pages, size, dueAt, importedAt, revision };
+  return {
+    id,
+    courseId,
+    title,
+    role,
+    kind,
+    pages,
+    size,
+    dueAt,
+    category: document.category ?? null,
+    number: document.number ?? null,
+    named: document.named ?? "own",
+    importedAt,
+    revision,
+  };
 }
 
 export function noteView(note: CourseNote): NoteView {

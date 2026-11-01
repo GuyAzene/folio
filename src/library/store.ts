@@ -11,6 +11,10 @@ import {
   type AssignmentPatch,
   type AssignmentRecord,
 } from "./assignments.ts";
+import { DEFAULT_CATEGORIES, guessCategory } from "./categories.ts";
+import { titleFromName } from "./naming.ts";
+export { studied } from "./categories.ts";
+export { titleFromName } from "./naming.ts";
 import { pdfPageCount } from "./pdf.ts";
 import { folioHome } from "../home.ts";
 
@@ -56,19 +60,31 @@ export interface DocumentRecord {
   pages: number | null;
   /** Assignments only: an ISO date the student set. */
   dueAt: string | null;
+  /**
+   * The student's category for it, by id. Optional so that older builds still read the file:
+   * they ignore it and go by the role, which always holds the category's kind.
+   */
+  category?: string;
+  /** Whatever orders it in its category: its week, or its place among the lectures. */
+  number?: number;
+  /** Whether its title follows its category's naming pattern, or is its own. Own when absent. */
+  named?: "pattern" | "own";
   importedAt: string;
   updatedAt: string;
   revision: number;
 }
 
 export type CourseInput = Partial<Pick<CourseRecord, "name" | "code" | "term" | "color">>;
-export type DocumentPatch = Partial<Pick<DocumentRecord, "title" | "role" | "courseId" | "dueAt">>;
+export type DocumentPatch = Partial<
+  Pick<DocumentRecord, "title" | "role" | "courseId" | "dueAt" | "category" | "number" | "named">
+>;
 
 export class LibraryError extends Error {}
 export class LibraryConflictError extends Error {}
 export class LibraryIntegrityError extends Error {}
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const CATEGORY_ID = /^[a-z0-9][a-z0-9-]{0,39}$/;
 const MAX_IMPORT_BYTES = 300 * 1024 * 1024;
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -125,6 +141,13 @@ function validDocument(value: unknown): value is DocumentRecord {
       ? Number.isInteger(value.pages) && Number(value.pages) >= 1
       : value.pages === null) &&
     (value.dueAt === null || isoDate(value.dueAt)) &&
+    (value.category === undefined ||
+      (typeof value.category === "string" && CATEGORY_ID.test(value.category))) &&
+    (value.number === undefined ||
+      (Number.isInteger(value.number) &&
+        Number(value.number) >= 0 &&
+        Number(value.number) <= 9999)) &&
+    (value.named === undefined || value.named === "pattern" || value.named === "own") &&
     isoDate(value.importedAt) &&
     isoDate(value.updatedAt) &&
     Number.isInteger(value.revision) &&
@@ -132,27 +155,9 @@ function validDocument(value: unknown): value is DocumentRecord {
   );
 }
 
-/** A readable title from a file name: "lec05_graph-traversal.pdf" → "lec05 graph traversal". */
-export function titleFromName(name: string): string {
-  const title = basename(name, extname(name))
-    .replace(/[_]+/g, " ")
-    .replace(/\s*-\s*/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 160);
-  return title || "Untitled";
-}
-
-/** A first guess from the file name; the student can always change the role. */
+/** A first guess from the file name with today's categories; the student can always change it. */
 export function guessRole(name: string, kind: DocumentKind): DocumentRole {
-  const n = name.toLowerCase().replace(/[_.-]+/g, " ");
-  if (/\b(syllabus|syllabi|course outline)\b|סילבוס/.test(n)) return "asset";
-  if (/\b(solutions?|sol)\b|_sol\b|pitron|פתרון/.test(n)) return "solution";
-  if (/\b(hw|homework|assignments?|problem ?set|ps)\s*\d*\b|\bex\d|מטלה/.test(n))
-    return "assignment";
-  if (/\b(recitation|rec|tirgul|tutorial)\s*\d*\b|\brec\d|תרגול/.test(n)) return "recitation";
-  if (/\b(lecture|lec)\s*\d*\b|\blec\d|הרצאה/.test(n)) return "lecture";
-  return kind === "pdf" ? "lecture" : "asset";
+  return guessCategory(name, kind, DEFAULT_CATEGORIES).kind;
 }
 
 /**
@@ -469,7 +474,16 @@ export class LibraryStore {
   async importFile(
     courseId: string,
     source: string,
-    options: { role?: DocumentRole } = {},
+    options: {
+      role?: DocumentRole;
+      category?: string;
+      /** Its title when not the file's own name, such as one from a naming pattern. */
+      title?: string;
+      /** The file's own name when the path doesn't carry it. */
+      name?: string;
+      number?: number;
+      named?: "pattern" | "own";
+    } = {},
   ): Promise<{ document: DocumentRecord; duplicate: boolean }> {
     await this.course(courseId);
     const info = await lstat(source).catch(() => undefined);
@@ -510,10 +524,13 @@ export class LibraryStore {
       version: 1,
       id: randomUUID(),
       courseId,
-      title: titleFromName(source),
+      title: options.title?.trim().slice(0, 160) || titleFromName(options.name ?? source),
       role: options.role ?? guessRole(basename(source), kind),
+      ...(options.category ? { category: options.category } : {}),
+      ...(options.number !== undefined ? { number: options.number } : {}),
+      ...(options.named ? { named: options.named } : {}),
       kind,
-      originalName: basename(source),
+      originalName: options.name ?? basename(source),
       sha256: hash,
       size: data.byteLength,
       pages,
@@ -551,7 +568,10 @@ export class LibraryStore {
     if (patch.courseId !== undefined) await this.course(patch.courseId);
     const file = resolve(this.#documents, id, "document.json");
     return this.#update(file, validDocument, expectedRevision, (current) => {
-      const next = { ...current, ...pick(patch, ["title", "role", "courseId", "dueAt"]) };
+      const next = {
+        ...current,
+        ...pick(patch, ["title", "role", "courseId", "dueAt", "category", "number", "named"]),
+      };
       if (typeof next.title === "string") next.title = next.title.trim();
       if (!validDocument({ ...next, updatedAt: current.updatedAt }))
         throw new LibraryError("That change is not valid for this document.");

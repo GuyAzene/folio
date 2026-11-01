@@ -25,6 +25,7 @@ import type {
   NoteView,
   SourceView,
   ProposalAction,
+  PendingView,
   ProposalView,
   StudyNotesView,
   Thinking,
@@ -32,13 +33,16 @@ import type {
 } from "../../src/desktop/api.ts";
 import { DEFAULT_THINKING, STUDY_ROLES, THINKING_LEVELS } from "../../src/desktop/api.ts";
 import { chatTitle } from "../../src/chat-title.ts";
+import { categoryOf, DEFAULT_CATEGORIES, type Category } from "../../src/library/categories.ts";
+import type { AppAction } from "../../src/library/app-actions.ts";
+import type { ImportItem, NamingScope } from "../../src/library/naming.ts";
 import { citationLink } from "../../src/library/note-meta.ts";
 import { courseTab, type CourseTab } from "./course-tabs.ts";
 import { shortTitle } from "./titles.ts";
 
 export type { CourseTab };
 export type ThemePreference = "system" | "light" | "dark";
-export type SettingsSection = "general" | "connections" | "models";
+export type SettingsSection = "general" | "connections" | "models" | "categories";
 /** Folio beside a document, Folio full screen over it, or reading alone. */
 export type PanelMode = "docked" | "full" | "closed";
 
@@ -134,6 +138,8 @@ class FolioState {
     roles: {} as ModelsView["roles"],
     problems: [],
     openrouter: [],
+    categories: [],
+    naming: null,
   });
   /** How long the tutor thinks, for every chat, from the next question on. */
   thinking = $state<Thinking>(DEFAULT_THINKING);
@@ -176,6 +182,9 @@ class FolioState {
   proposals = $state<ProposalView[]>([]);
   /** Edits Folio suggested that wait for the student. */
   needsYou = $derived(this.proposals.filter((proposal) => proposal.state === "pending"));
+  /** Changes the tutor proposed to Folio: waiting for the student's Apply, or answered. */
+  proposedChanges = $state<PendingView[]>([]);
+  waitingChanges = $derived(this.proposedChanges.filter((change) => change.state === "pending"));
   chats = $state<ChatSummary[]>([]);
   unavailableChats = $state(0);
   /** Loaded chats by ID. */
@@ -254,6 +263,104 @@ class FolioState {
   }
   document(id: string | null | undefined): DocumentView | undefined {
     return id ? this.documents.find((document) => document.id === id) : undefined;
+  }
+  /** The student's kinds of course file, in their order; today's five until config.json is read. */
+  get categories(): Category[] {
+    return this.models.categories.length ? this.models.categories : [...DEFAULT_CATEGORIES];
+  }
+  /** The category a file shows under. */
+  categoryOf(document: Pick<DocumentView, "role" | "category">): Category {
+    return categoryOf(document, this.categories);
+  }
+  proposedChange(id: string): PendingView | undefined {
+    return this.proposedChanges.find((change) => change.id === id);
+  }
+
+  /** Applies or cancels a change the tutor proposed; applying checks it again first. */
+  async answerChange(id: string, apply: boolean): Promise<void> {
+    try {
+      const answered = await this.#api!.resolvePending(id, apply);
+      this.proposedChanges = this.proposedChanges.map((change) =>
+        change.id === id ? answered : change,
+      );
+      if (answered.state === "failed")
+        this.error = answered.note ?? "That change couldn't be applied.";
+    } catch (error) {
+      this.error = message(error);
+    }
+    await this.refreshLibrary();
+  }
+
+  /** Undoes a change the tutor made; refused when what it changed has changed since. */
+  async undoChange(undo: AppAction): Promise<boolean> {
+    try {
+      const summary = await this.#api!.undoAction(undo);
+      this.noticeAction = null;
+      this.notice = summary;
+      await this.refreshLibrary();
+      return true;
+    } catch (error) {
+      this.error = message(error);
+      return false;
+    }
+  }
+
+  /** The pattern that names a category's files, or null when they keep their own names. */
+  pattern(category: Category): string | null {
+    return category.naming ?? this.models.naming;
+  }
+
+  /** Sets the library's naming pattern in config.json; files named by it follow. */
+  async setNaming(pattern: string | null): Promise<boolean> {
+    try {
+      await this.#api!.setNaming(pattern);
+      await this.refreshLibrary();
+      return true;
+    } catch (error) {
+      this.error = message(error);
+      return false;
+    }
+  }
+
+  /** Names files by their category's pattern from now on, with Undo. */
+  async applyNaming(scope: NamingScope): Promise<void> {
+    try {
+      const renamed = await this.#api!.applyNaming(scope);
+      await this.refreshLibrary();
+      // Files whose name already matched now follow the pattern too, but nothing changed there.
+      const changed = renamed.filter((rename) => rename.next !== rename.title);
+      if (!changed.length) {
+        this.noticeAction = null;
+        this.notice = "Every name already follows the pattern";
+        return;
+      }
+      this.notice =
+        changed.length === 1
+          ? `Renamed “${changed[0]!.title}” to “${changed[0]!.next}”`
+          : `Renamed ${changed.length} files to match`;
+      this.noticeAction = {
+        label: "Undo",
+        run: () =>
+          void this.#api!
+            .undoNaming(renamed)
+            .then(() => this.refreshLibrary())
+            .catch((error: unknown) => (this.error = message(error))),
+      };
+    } catch (error) {
+      this.error = message(error);
+    }
+  }
+
+  /** Saves the categories in config.json; Settings and the course pages follow. */
+  async setCategories(categories: Category[]): Promise<boolean> {
+    try {
+      await this.#api!.setCategories(categories);
+      await this.refreshLibrary();
+      return true;
+    } catch (error) {
+      this.error = message(error);
+      return false;
+    }
   }
   note(id: string | null | undefined): NoteView | undefined {
     return id ? this.notes.find((note) => note.id === id) : undefined;
@@ -616,16 +723,18 @@ class FolioState {
   // ── Library ─────────────────────────────────────────────────────────────
 
   async refreshLibrary(): Promise<void> {
-    const [courses, documents, notes, proposals, assignments] = await Promise.all([
+    const [courses, documents, notes, proposals, changes, assignments] = await Promise.all([
       this.#api!.listCourses(),
       this.#api!.listDocuments(),
       this.#api!.listNotes(),
       this.#api!.listProposals(),
+      this.#api!.listPending(),
       this.#api!.listAssignments(),
     ]);
     this.courses = courses;
     this.documents = documents;
     this.assignments = assignments;
+    this.proposedChanges = changes;
     const knowledge = await Promise.all(
       courses.map(async (course) => [course.id, await this.#api!.knowledge(course.id)] as const),
     );
@@ -656,7 +765,7 @@ class FolioState {
 
   async importFiles(
     courseId: string,
-    paths: string[] | "choose",
+    paths: ImportItem[] | "choose",
     role?: DocumentView["role"],
   ): Promise<void> {
     try {

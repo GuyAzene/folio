@@ -1,11 +1,12 @@
 <script lang="ts">
-  import { Cpu, KeyRound, SlidersHorizontal, X } from "@lucide/svelte";
+  import { Cpu, KeyRound, SlidersHorizontal, Tags, X } from "@lucide/svelte";
   import { Dialog, ToggleGroup } from "bits-ui";
   import {
     folio,
     type SettingsSection,
     type ThemePreference,
   } from "../lib/state.svelte.ts";
+  import CategorySettings from "./CategorySettings.svelte";
   import ConnectionSettings from "./ConnectionSettings.svelte";
   import ModelSettings from "./ModelSettings.svelte";
 
@@ -23,6 +24,7 @@
     { value: "general", label: "General", icon: SlidersHorizontal },
     { value: "connections", label: "Connections", icon: KeyRound },
     { value: "models", label: "Models", icon: Cpu },
+    { value: "categories", label: "Categories", icon: Tags },
   ];
 
   const toggle =
@@ -57,7 +59,8 @@
           </Dialog.Close>
         </div>
         <Dialog.Description class="sr-only"
-          >Appearance, connections and which model does what.</Dialog.Description
+          >Appearance, connections, which model does what, and your categories of
+          course files.</Dialog.Description
         >
 
         <div class="flex min-h-0 flex-1 max-sm:flex-col">
@@ -90,6 +93,8 @@
               <ConnectionSettings />
             {:else if folio.settingsSection === "models"}
               <ModelSettings />
+            {:else if folio.settingsSection === "categories"}
+              <CategorySettings />
             {:else}
               <section class="flex items-center justify-between gap-4 pb-4">
                 <div class="flex flex-col gap-0.5">

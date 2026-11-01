@@ -1,5 +1,6 @@
 import type { Grants, SendExtras } from "../conversation.ts";
 import type { AttachmentInput } from "../desktop/api.ts";
+import type { ChatFiles } from "./chat-files.ts";
 import { prepareImage, type PreparedImage } from "./images.ts";
 import { jpeg, type PageReader } from "./page-reader.ts";
 import { LibraryError, type DocumentRecord, type LibraryStore } from "./store.ts";
@@ -17,6 +18,8 @@ export interface AttachOptions {
   prepare?: (bytes: Uint8Array) => Promise<PreparedImage>;
   /** Whether Folio has studied a course, so the tutor knows how to read one that was added. */
   studied?: (courseId: string) => boolean;
+  /** Keeps files the student adds; without it, a question can't take files. */
+  files?: ChatFiles;
 }
 
 /**
@@ -28,7 +31,7 @@ export interface AttachOptions {
 export function createAttach(
   library: LibraryStore,
   pages: PageReader,
-  { prepare = prepareImage, studied = () => false }: AttachOptions = {},
+  { prepare = prepareImage, studied = () => false, files }: AttachOptions = {},
 ): (reach: AttachReach, inputs: AttachmentInput[]) => Promise<ResolvedAttachment[]> {
   async function documentOf(id: string): Promise<DocumentRecord> {
     return library.document(id).catch(() => {
@@ -82,6 +85,19 @@ export function createAttach(
           attachment: { kind: "page", documentId: document.id, page: input.page },
           note: `page ${input.page} of "${document.title}" (${await courseName(document.courseId)}), shown below as an image`,
           image: jpeg(await pages.image(document, input.page)),
+        });
+      } else if (input.kind === "file") {
+        if (!files) throw new LibraryError("This chat can't take files.");
+        const file = await files.add(input.path);
+        resolved.push({
+          attachment: {
+            kind: "file",
+            fileId: file.fileId,
+            name: file.name,
+            fileKind: file.kind,
+            pages: file.pages,
+          },
+          note: `a file of their own, "${file.name}"${file.pages ? `, ${file.pages} pages` : ""}, fileId ${file.fileId} (read it with read_page; it is not in any course unless they ask you to add it with add_file)`,
         });
       } else {
         const prepared = await prepare(input.data);

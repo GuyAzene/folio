@@ -14,9 +14,17 @@
     Pencil,
     SyllabusDraft,
   } from "../../src/desktop/api.ts";
-  import { PENCIL, PENCILS, ROLE_DOT, ROLE_LABEL } from "../lib/labels.ts";
+  import {
+    applyPattern,
+    nextNumber,
+    numberFromName,
+    titleFromName,
+    uniqueTitle,
+  } from "../../src/library/naming.ts";
+  import { PENCIL, PENCILS, ROLE_DOT } from "../lib/labels.ts";
   import { folio } from "../lib/state.svelte.ts";
   import FolioMark from "./FolioMark.svelte";
+  import Select from "./Select.svelte";
 
   type Start = "syllabus" | "folder" | "empty";
 
@@ -35,18 +43,23 @@
   let folder = $state<FolderScanView | null>(null);
   /** Files the student unticked in the scanned folder. */
   let skipped = $state<Record<string, boolean>>({});
+  /** Categories the student picked for scanned files, by path. */
+  let picked = $state<Record<string, string>>({});
   let busy = $state<"reading" | "scanning" | "saving" | null>(null);
   let dragging = $state(false);
 
   const files = $derived(
     folder?.files.filter((file) => !skipped[file.path]) ?? [],
   );
-  const roleCounts = $derived.by(() => {
-    const counts = new Map<DocumentRole, number>();
-    for (const file of files)
-      counts.set(file.role, (counts.get(file.role) ?? 0) + 1);
-    return [...counts];
-  });
+  /** How many files of each category, in the student's order of categories. */
+  const categoryCounts = $derived(
+    folio.categories.flatMap((category) => {
+      const count = planned.filter(
+        (plan) => !skipped[plan.file.path] && plan.category.id === category.id,
+      ).length;
+      return count ? [{ category, count }] : [];
+    }),
+  );
   const summary = $derived(
     [
       name.trim() || "New course",
@@ -158,6 +171,50 @@
     }
   }
 
+  /**
+   * Each scanned file as it will come in: its category, its number (from its name, or the next
+   * in its category) and the name its category's pattern gives it, as Folio will import it.
+   */
+  const planned = $derived.by(() => {
+    const titles: string[] = [];
+    const taken = new Map<string, number[]>();
+    return (folder?.files ?? []).map((file) => {
+      const category =
+        folio.categories.find((each) => each.id === picked[file.path]) ??
+        folio.categoryOf(file);
+      const numbers = taken.get(category.id) ?? [];
+      const own = skipped[file.path]
+        ? null
+        : numberFromName(file.name.split("/").at(-1)!, code);
+      const number = own ?? nextNumber(numbers);
+      if (!skipped[file.path]) taken.set(category.id, [...numbers, number]);
+      const pattern = folio.pattern(category);
+      const title = pattern
+        ? uniqueTitle(
+            applyPattern(pattern, {
+              category: category.name,
+              course: name.trim(),
+              code: code.trim(),
+              term: term.trim(),
+              number,
+              name: titleFromName(file.name),
+            }),
+            titles,
+          )
+        : file.title;
+      if (!skipped[file.path]) titles.push(title);
+      return { file, category, number, title };
+    });
+  });
+
+  const categoryOptions = $derived(
+    folio.categories.map((category) => ({
+      value: category.id,
+      label: category.name,
+      dot: ROLE_DOT[category.kind],
+    })),
+  );
+
   async function create(event: SubmitEvent): Promise<void> {
     event.preventDefault();
     if (!name.trim() || busy) return;
@@ -170,7 +227,13 @@
     if (start === "folder" && files.length)
       void folio.importFiles(
         course.id,
-        files.map((file) => file.path),
+        planned
+          .filter(({ file }) => !skipped[file.path])
+          .map(({ file, category, number }) => ({
+            path: file.path,
+            category: category.id,
+            number,
+          })),
       );
     else if (start === "syllabus" && syllabus)
       void folio.importFiles(course.id, [syllabus.path], "asset");
@@ -498,46 +561,57 @@
                   </div>
                   {#if folder.files.length}
                     <div class="flex flex-wrap gap-1.5">
-                      {#each roleCounts as [role, count] (role)}
+                      {#each categoryCounts as { category, count } (category.id)}
                         <span
                           class="inline-flex h-6 items-center gap-1.5 rounded-full border border-line-subtle bg-surface px-2 text-[12px] text-text-2 dark:bg-raised"
+                          dir="auto"
                         >
                           <span
                             class="size-1.5 rounded-[2px]"
-                            style="background:{ROLE_DOT[role]}"
+                            style="background:{ROLE_DOT[category.kind]}"
                           ></span>
                           {count}
-                          {ROLE_LABEL[role].toLowerCase()}{count === 1 ||
-                          role === "asset"
-                            ? ""
-                            : "s"}
+                          {count === 1 ? category.name : category.plural}
                         </span>
                       {/each}
                     </div>
                     <div
-                      class="scroll-quiet -mx-1.5 flex max-h-[148px] flex-col overflow-y-auto"
+                      class="scroll-quiet -mx-1.5 flex max-h-[196px] flex-col overflow-y-auto"
                     >
-                      {#each folder.files as file (file.path)}
-                        <label
-                          class="flex h-8 shrink-0 cursor-default items-center gap-2.5 rounded-md px-1.5 hover:bg-hover"
+                      {#each planned as { file, category, title } (file.path)}
+                        <div
+                          class="flex h-8 shrink-0 items-center gap-2.5 rounded-md px-1.5 hover:bg-hover {skipped[
+                            file.path
+                          ]
+                            ? 'opacity-50'
+                            : ''}"
                         >
                           <input
                             type="checkbox"
                             checked={!skipped[file.path]}
+                            aria-label="Import {file.name}"
                             onchange={(event) =>
                               (skipped[file.path] =
                                 !event.currentTarget.checked)}
                             class="size-3.5 shrink-0 accent-[var(--ink)]"
                           />
                           <span
-                            class="min-w-0 flex-1 truncate text-[13px] text-text"
+                            class="min-w-0 flex-1 truncate text-[13px] text-text-3"
                             dir="auto">{file.name}</span
                           >
                           <span
-                            class="shrink-0 text-[12px] whitespace-nowrap text-text-3"
-                            >{ROLE_LABEL[file.role]}</span
+                            class="min-w-0 flex-1 truncate text-[13px] text-text"
+                            dir="auto"
+                            title="Its name in Folio">{title}</span
                           >
-                        </label>
+                          <Select
+                            variant="chip"
+                            label="Category of {file.name}"
+                            value={category.id}
+                            options={categoryOptions}
+                            onchange={(id) => (picked[file.path] = id)}
+                          />
+                        </div>
                       {/each}
                     </div>
                     <span class="text-[12px] text-text-3">

@@ -24,6 +24,8 @@
   import FolioMark from "./FolioMark.svelte";
   import ProposalCard from "./ProposalCard.svelte";
   import NoteEditCard from "./NoteEditCard.svelte";
+  import ActionCard from "./ActionCard.svelte";
+  import PendingCard from "./PendingCard.svelte";
   import SourceList from "./SourceList.svelte";
   import VisualCard from "./VisualCard.svelte";
 
@@ -276,6 +278,14 @@
                 : "A removed document"}</span
             >
           </button>
+        {:else if attachment.kind === "file"}
+          <span class={chip} title="A file you added to this chat">
+            <FileText size={12} strokeWidth={1.75} class="shrink-0" />
+            <span class="min-w-0 truncate" dir="auto">{attachment.name}</span>
+            {#if attachment.pages}<span class="shrink-0 text-text-4"
+                >{attachment.pages} pages</span
+              >{/if}
+          </span>
         {:else}
           {@const course = folio.course(attachment.courseId)}
           <button
@@ -391,6 +401,12 @@
     {/each}
     {#each message.noteEdits ?? [] as edit, index (`${index}:${edit.noteId}:${edit.after}`)}
       <NoteEditCard {edit} />
+    {/each}
+    {#each message.actions ?? [] as action, index (`${index}:${action.summary}`)}
+      <ActionCard {action} />
+    {/each}
+    {#each message.pending ?? [] as id (id)}
+      <PendingCard {id} />
     {/each}
     {#if message.state === "interrupted"}
       <span class="text-[12px] text-text-3">Stopped</span>

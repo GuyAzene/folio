@@ -10,6 +10,7 @@ import {
   Decoration,
   EditorView,
   ViewPlugin,
+  WidgetType,
   type DecorationSet,
   type ViewUpdate,
 } from "@codemirror/view";
@@ -27,6 +28,8 @@ export interface LinkTargets {
   /** What `[[` offers: each link target with how it is shown. */
   targets(): { target: string; label: string; detail?: string }[];
   open(target: string, newTab: boolean): void;
+  /** How a link reads now in place of its written text, or null to read as written. */
+  label?(target: string, shown: string): string | null;
 }
 
 /** The link under a position of a line, if any. */
@@ -42,17 +45,17 @@ export function linkAt(text: string, offset: number): { target: string } | null 
  * The read view's Markdown with each link turned into an in-page link Folio intercepts. Code
  * blocks and inline code are left as written.
  */
-export function linkedMarkdown(text: string): string {
+export function linkedMarkdown(text: string, label?: LinkTargets["label"]): string {
   return text
     .split(/(^```[\s\S]*?^```|`[^`\n]*`)/m)
     .map((part, index) =>
       index % 2
         ? part
-        : part.replace(
-            WIKILINK,
-            (_match, target: string, shown?: string) =>
-              `[${(shown ?? target.replace(/^topic:/, "")).trim()}](#wikilink:${encodeURIComponent(target.trim())})`,
-          ),
+        : part.replace(WIKILINK, (_match, target: string, shown?: string) => {
+            const written = (shown ?? target.replace(/^topic:/, "")).trim();
+            const text = label?.(target.trim(), written) ?? written;
+            return `[${text}](#wikilink:${encodeURIComponent(target.trim())})`;
+          }),
     )
     .join("");
 }
@@ -66,6 +69,29 @@ const link = Decoration.mark({ class: "cm-wikilink" });
 const citation = Decoration.mark({ class: "cm-wikilink cm-citation" });
 const tagMark = Decoration.mark({ class: "cm-tag" });
 const hidden = Decoration.replace({});
+
+/** A page citation that reads differently now than written, such as after a file was renamed. */
+class CitationWidget extends WidgetType {
+  readonly text: string;
+  constructor(text: string) {
+    super();
+    this.text = text;
+  }
+  override eq(other: CitationWidget): boolean {
+    return other.text === this.text;
+  }
+  toDOM(): HTMLElement {
+    const chip = document.createElement("span");
+    chip.className = "cm-wikilink cm-citation";
+    chip.dir = "auto";
+    chip.textContent = this.text;
+    return chip;
+  }
+  // Clicks reach the editor, which opens the cited page.
+  override ignoreEvent(): boolean {
+    return false;
+  }
+}
 
 /** A #tag, as note-meta reads them: after a space or the line start, not "# Heading". */
 const TAG = /(^|[\s(])(#[\p{L}\p{N}_/-]*[\p{L}_/-][\p{L}\p{N}_/-]*)/gu;
@@ -86,7 +112,7 @@ function literal(state: EditorState, at: number): boolean {
  * text, as in Obsidian: `[[Graph search]]` reads "Graph search", `[[topic:bfs|BFS]]` reads "BFS",
  * and a page citation reads as a chip. At the cursor, and in source mode, the brackets show.
  */
-function decorate(view: EditorView): DecorationSet {
+function decorate(view: EditorView, links: LinkTargets): DecorationSet {
   const { state } = view;
   const ranges: Range<Decoration>[] = [];
   for (const { from, to } of view.visibleRanges) {
@@ -111,6 +137,13 @@ function decorate(view: EditorView): DecorationSet {
         ranges.push(mark.range(start, end));
         continue;
       }
+      const now =
+        mark === citation &&
+        links.label?.(target.trim(), state.sliceDoc(shownFrom, shownTo).trim());
+      if (now && now !== state.sliceDoc(shownFrom, shownTo).trim()) {
+        ranges.push(Decoration.replace({ widget: new CitationWidget(now) }).range(start, end));
+        continue;
+      }
       ranges.push(
         hidden.range(start, shownFrom),
         mark.range(shownFrom, shownTo),
@@ -125,26 +158,27 @@ function decorate(view: EditorView): DecorationSet {
   return Decoration.set(ranges, true);
 }
 
-const styled = ViewPlugin.fromClass(
-  class {
-    decorations: DecorationSet;
-    constructor(view: EditorView) {
-      this.decorations = decorate(view);
-    }
-    update(update: ViewUpdate) {
-      if (
-        update.docChanged ||
-        update.viewportChanged ||
-        update.selectionSet ||
-        update.focusChanged ||
-        syntaxTree(update.state) !== syntaxTree(update.startState) ||
-        update.transactions.some((transaction) => transaction.reconfigured)
-      )
-        this.decorations = decorate(update.view);
-    }
-  },
-  { decorations: (plugin) => plugin.decorations },
-);
+const styled = (links: LinkTargets) =>
+  ViewPlugin.fromClass(
+    class {
+      decorations: DecorationSet;
+      constructor(view: EditorView) {
+        this.decorations = decorate(view, links);
+      }
+      update(update: ViewUpdate) {
+        if (
+          update.docChanged ||
+          update.viewportChanged ||
+          update.selectionSet ||
+          update.focusChanged ||
+          syntaxTree(update.state) !== syntaxTree(update.startState) ||
+          update.transactions.some((transaction) => transaction.reconfigured)
+        )
+          this.decorations = decorate(update.view, links);
+      }
+    },
+    { decorations: (plugin) => plugin.decorations },
+  );
 
 function completions(links: LinkTargets) {
   return (context: CompletionContext): CompletionResult | null => {
@@ -169,7 +203,7 @@ function completions(links: LinkTargets) {
 
 export function wikilinks(links: LinkTargets): Extension {
   return [
-    styled,
+    styled(links),
     autocompletion({ override: [completions(links)], icons: false }),
     EditorView.domEventHandlers({
       mousedown(event, view) {

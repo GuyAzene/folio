@@ -9,7 +9,7 @@ import { seedLongNames } from "./seed.ts";
 
 /**
  * Typing a due date in a real window: a year typed digit by digit saves once, as the whole year,
- * and keeps the day and month; a role change made right after it is saved too.
+ * and keeps the day and month; a category change made right after it is saved too.
  * Run with `vp run test:electron`; nothing here talks to a model.
  */
 
@@ -25,7 +25,7 @@ async function stored(home: string, id: string): Promise<{ dueAt: string; role: 
 }
 
 void describe("due dates", () => {
-  void it("save the whole year typed, keeping the day and month, and a role change after it", async () => {
+  void it("save the whole year typed, keeping the day and month, and a category change after it", async () => {
     // The course's Materials list the assignment file with its card's due date.
     const seeded = await seedLongNames((ids) => ({
       view: "course",
@@ -41,9 +41,9 @@ void describe("due dates", () => {
     await year.click();
     for (const key of ["2", "0", "3", "1"]) await page.keyboard.press(key);
     await page.keyboard.press("Tab");
-    // Right away, before the date has finished saving, the role changes too.
-    // Lectures, recitations, then assignments: the assignment's role menu is the last one.
-    await page.getByRole("combobox", { name: "Role" }).last().click();
+    // Right away, before the date has finished saving, the category changes too.
+    // Lectures, recitations, then assignments: the assignment's category menu is the last one.
+    await page.getByRole("combobox", { name: "Category" }).last().click();
     await page.getByRole("option", { name: "Official solution" }).click();
     await page.waitForTimeout(800);
     const after = await stored(seeded.home, seeded.assignmentId);

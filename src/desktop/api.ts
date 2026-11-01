@@ -1,4 +1,27 @@
 import type { AssignmentPatch, AssignmentRecord } from "../library/assignments.ts";
+import type { Category } from "../library/categories.ts";
+import type { ImportItem, NamingScope, Rename } from "../library/naming.ts";
+import type { AppAction } from "../library/app-actions.ts";
+
+/** A change the tutor proposed, as its card shows it. */
+export interface PendingView {
+  id: string;
+  chatId: string;
+  summary: string;
+  state: "pending" | "applied" | "cancelled" | "failed";
+  note: string | null;
+  createdAt: string;
+  /** What undoes it, once applied. */
+  undo: AppAction | null;
+}
+
+/** A change the tutor made, as its card in the reply shows it. */
+export interface ActionView {
+  summary: string;
+  undo: AppAction | null;
+  courseId: string | null;
+  documentId: string | null;
+}
 import type { SessionStatus } from "../session-store.ts";
 
 /** The IPC contract between Folio's Electron main process and its renderer. */
@@ -38,6 +61,10 @@ export interface ChatMessageView {
   proposals?: string[];
   /** Notes the tutor created, changed or renamed in this turn. */
   noteEdits?: NoteEditView[];
+  /** Changes the tutor made to Folio in this turn, each with its Undo. */
+  actions?: ActionView[];
+  /** Changes the tutor proposed in this turn that wait for the student, by ID. */
+  pending?: string[];
   /** Pages the tutor's web searches found in this turn, listed apart from course sources. */
   webSources?: { url: string; title: string }[];
   /** What the student added to a question with the composer's +. */
@@ -92,14 +119,17 @@ export type AttachmentView =
   /** `thumbnail` is a data URL of a small JPEG. */
   | { kind: "image"; name: string; thumbnail: string }
   | { kind: "document"; documentId: string }
-  | { kind: "course"; courseId: string };
+  | { kind: "course"; courseId: string }
+  | { kind: "file"; name: string; pages: number | null };
 
 /** Something the student adds to a question: a page, their own image, a lecture or a course. */
 export type AttachmentInput =
   | { kind: "page"; documentId: string; page: number }
   | { kind: "image"; name: string; data: Uint8Array }
   | { kind: "document"; documentId: string }
-  | { kind: "course"; courseId: string };
+  | { kind: "course"; courseId: string }
+  /** A PDF or Markdown file of their own, by its path on this Mac. */
+  | { kind: "file"; path: string };
 
 /** Plain (no sources), library (any of the student's courses) or course (one course). */
 export type ChatKind = "chat" | "library" | "course";
@@ -148,6 +178,12 @@ export interface DocumentView {
   pages: number | null;
   size: number;
   dueAt: string | null;
+  /** The student's category for it; null for files from before categories, shown by role. */
+  category: string | null;
+  /** Whatever orders it in its category, such as its week; null until Folio has numbered it. */
+  number: number | null;
+  /** Whether its title follows its category's naming pattern, or is its own. */
+  named: "pattern" | "own";
   importedAt: string;
   revision: number;
 }
@@ -218,6 +254,8 @@ export interface ScannedFileView {
   name: string;
   title: string;
   role: DocumentRole;
+  /** The category its name points to, by id. */
+  category: string;
   kind: "pdf" | "markdown";
   size: number;
 }
@@ -453,6 +491,11 @@ export interface CourseInput {
 export interface DocumentPatch {
   title?: string;
   role?: DocumentRole;
+  /** A category brings its kind as the role. */
+  category?: string;
+  number?: number;
+  /** "pattern" names it by its category's pattern again; a title given by hand makes it "own". */
+  named?: "pattern" | "own";
   courseId?: string;
   dueAt?: string | null;
 }
@@ -545,6 +588,10 @@ export interface ModelsView {
   problems: string[];
   /** The OpenRouter models the composer offers. */
   openrouter: string[];
+  /** The student's kinds of course file, in their order, from config.json. */
+  categories: Category[];
+  /** How files are named when their category has no pattern of its own; null keeps names. */
+  naming: string | null;
 }
 
 export interface DesktopBootstrap {
@@ -614,6 +661,25 @@ export interface FolioApi {
   setRoleModel(role: ModelRole, ref: string): Promise<void>;
   /** Sets which OpenRouter models the composer offers, in config.json. */
   setOpenRouterModels(ids: string[]): Promise<void>;
+  /**
+   * Saves the student's categories in config.json. Refused when a category some file uses would
+   * go, or change its kind.
+   */
+  setCategories(categories: Category[]): Promise<void>;
+  /** Sets the library's naming pattern in config.json; null keeps files' own names. */
+  setNaming(pattern: string | null): Promise<void>;
+  /** The files a pattern would rename in a course, a category or both, and to what. */
+  renames(scope: NamingScope): Promise<Rename[]>;
+  /** Names those files by their pattern from now on; returns what they were called, for Undo. */
+  applyNaming(scope: NamingScope): Promise<Rename[]>;
+  /** Puts back names a pattern rename replaced; returns how many it could. */
+  undoNaming(renames: Rename[]): Promise<number>;
+  /** Changes the tutor proposed, waiting for the student or answered. */
+  listPending(): Promise<PendingView[]>;
+  /** Applies or cancels a proposed change; applying checks it again first. */
+  resolvePending(id: string, apply: boolean): Promise<PendingView>;
+  /** Undoes a change the tutor made, refused when what it changed has changed since. */
+  undoAction(undo: AppAction): Promise<string>;
   /** Every OpenRouter model Folio can use, for picking the composer's. */
   openrouterCatalog(): Promise<ModelView[]>;
   /** Shows config.json in Finder, writing today's choices to it first if it doesn't exist. */
@@ -624,9 +690,14 @@ export interface FolioApi {
   listDocuments(courseId?: string): Promise<DocumentView[]>;
   /**
    * Copies files into the course; each result says whether it was imported, reused or refused.
-   * Without a role, each file's role is guessed from its name.
+   * Without a role or a category, each file's category is guessed from its name.
    */
-  importFiles(courseId: string, paths: string[], role?: DocumentRole): Promise<ImportResult[]>;
+  importFiles(
+    courseId: string,
+    files: ImportItem[],
+    role?: DocumentRole,
+    category?: string,
+  ): Promise<ImportResult[]>;
   /** Opens the system file picker, then imports what was chosen. */
   chooseFiles(courseId: string): Promise<ImportResult[]>;
   updateDocument(id: string, patch: DocumentPatch, revision: number): Promise<DocumentView>;

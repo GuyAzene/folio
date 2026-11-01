@@ -8,6 +8,14 @@ import { DEFAULT_OPENROUTER, modelFor, modelName, offered } from "./model-choice
 import { formatRef, parseRef, studyModel } from "./model-refs.ts";
 import { DEFAULT_MODEL } from "./agents.ts";
 import { DEFAULT_ROLES as STUDY_DEFAULTS, type RoleModels } from "./ingest/pipeline.ts";
+import {
+  categoriesProblem,
+  namingProblem,
+  readCategories,
+  readNaming,
+  writeCategories,
+  type Category,
+} from "./library/categories.ts";
 
 /**
  * Which model does what, from `config.json` in Folio's home: the student's file, edited in
@@ -79,6 +87,10 @@ const WORK: Record<ModelRole, string> = {
 export interface ConfigState {
   roles: Record<ModelRole, string>;
   openrouter: string[];
+  /** The student's kinds of course file. */
+  categories: Category[];
+  /** How files are named when their category has no pattern of its own; null keeps their names. */
+  naming: string | null;
   /** Entries Folio could not use, each with where it is and why. */
   problems: string[];
 }
@@ -115,17 +127,29 @@ export function roleProblem(
 export function readConfig(catalog: Models, raw: unknown): ConfigState {
   const roles = { ...DEFAULT_ROLES };
   const problems: string[] = [];
-  if (raw === undefined) return { roles, openrouter: [...DEFAULT_OPENROUTER], problems };
+  const defaults = readCategories(undefined).categories;
+  if (raw === undefined)
+    return {
+      roles,
+      openrouter: [...DEFAULT_OPENROUTER],
+      categories: defaults,
+      naming: null,
+      problems,
+    };
   if (!isRecord(raw))
     return {
       roles,
       openrouter: [...DEFAULT_OPENROUTER],
+      categories: defaults,
+      naming: null,
       problems: ["config.json isn't a JSON object, so Folio uses its defaults until it's fixed."],
     };
   if (raw.version !== 1)
     return {
       roles,
       openrouter: [...DEFAULT_OPENROUTER],
+      categories: defaults,
+      naming: null,
       problems: [
         `config.json is version ${JSON.stringify(raw.version)}, which this Folio can't read; it uses its defaults.`,
       ],
@@ -161,7 +185,16 @@ export function readConfig(catalog: Models, raw: unknown): ConfigState {
     if (problem) problems.push(`${group}.${key}: ${problem}.`);
     else roles[role] = value as string;
   }
-  return { roles, openrouter, problems: [...new Set(problems)] };
+  const library = readCategories(raw.library);
+  const naming = readNaming(raw.library);
+  problems.push(...library.problems, ...naming.problems);
+  return {
+    roles,
+    openrouter,
+    categories: library.categories,
+    naming: naming.naming,
+    problems: [...new Set(problems)],
+  };
 }
 
 const CHANGED = "config.json changed outside Folio. Settings now shows it; try again.";
@@ -196,6 +229,12 @@ export class FolioConfig {
   }
   get problems(): string[] {
     return [...this.#state.problems];
+  }
+  get categories(): Category[] {
+    return structuredClone(this.#state.categories);
+  }
+  get naming(): string | null {
+    return this.#state.naming;
   }
 
   async #read(): Promise<string | null> {
@@ -262,6 +301,30 @@ export class FolioConfig {
     });
   }
 
+  /** Saves the student's categories, in their order. */
+  setCategories(categories: unknown): Promise<void> {
+    const problem = categoriesProblem(categories);
+    if (problem) return Promise.reject(new Error(problem));
+    const list = readCategories({ categories }).categories;
+    return this.#update((raw) => {
+      raw.library = {
+        ...(isRecord(raw.library) ? raw.library : {}),
+        categories: writeCategories(list),
+      };
+    });
+  }
+
+  /** Sets how files are named when their category has no pattern; null keeps their names. */
+  setNaming(pattern: unknown): Promise<void> {
+    const clean = typeof pattern === "string" ? pattern.trim() || null : pattern;
+    const problem = namingProblem(clean);
+    if (problem)
+      return Promise.reject(new Error(`${problem.charAt(0).toUpperCase()}${problem.slice(1)}.`));
+    return this.#update((raw) => {
+      raw.library = { ...(isRecord(raw.library) ? raw.library : {}), naming: clean };
+    });
+  }
+
   /** Writes today's choices when there is no file yet, so there is one to open and edit. */
   async ensure(): Promise<void> {
     if ((await this.#read()) !== null) return;
@@ -272,6 +335,7 @@ export class FolioConfig {
         raw[group] = { ...(isRecord(raw[group]) ? raw[group] : {}), [key]: state.roles[role] };
       }
       raw.openrouter = { models: state.openrouter };
+      raw.library = { categories: writeCategories(state.categories) };
     });
   }
 

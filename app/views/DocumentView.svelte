@@ -19,10 +19,11 @@
   import CourseTile from "../components/CourseTile.svelte";
   import FolioMark from "../components/FolioMark.svelte";
   import IconButton from "../components/IconButton.svelte";
+  import InlineName from "../components/InlineName.svelte";
   import PdfReader from "../components/PdfReader.svelte";
   import { picked } from "../lib/attachments.ts";
   import { renderMarkdown } from "../lib/markdown.ts";
-  import { ROLE_DOT, ROLE_LABEL } from "../lib/labels.ts";
+  import { ROLE_DOT } from "../lib/labels.ts";
   import { folio, type Location } from "../lib/state.svelte.ts";
   import NoteView from "./NoteView.svelte";
 
@@ -42,6 +43,7 @@
   let sideNote = $state<NoteView>();
   let reader = $state<PdfReader>();
   let markdown = $state("");
+  let renaming = $state(false);
   let focusTimer: ReturnType<typeof setTimeout> | undefined;
 
   const document = $derived(folio.document(location.documentId));
@@ -244,16 +246,29 @@
           class="flex h-11 shrink-0 items-center gap-2 border-b border-line-subtle px-4"
         >
           {#if course}<CourseTile {course} size={16} />{/if}
-          <span class="min-w-0 truncate font-medium text-text"
-            >{document.title}</span
-          >
+          {#if renaming}
+            <InlineName
+              value={document.title}
+              bind:editing={renaming}
+              label="Rename {document.title}"
+              class="max-w-[360px] font-medium text-text"
+              onsave={(title) => folio.updateDocument(document, { title })}
+            />
+          {:else}
+            <button
+              class="-mx-1 min-w-0 truncate rounded-md px-1 font-medium text-text hover:bg-hover"
+              dir="auto"
+              title="Rename"
+              onclick={() => (renaming = true)}>{document.title}</button
+            >
+          {/if}
           <span
             class="inline-flex h-5 shrink-0 items-center gap-1.5 rounded-[4px] bg-sunken px-1.5 text-[11px] font-medium text-text-2 dark:bg-raised"
           >
             <span
               class="size-1.5 rounded-[2px]"
               style="background:{ROLE_DOT[document.role]}"
-            ></span>{ROLE_LABEL[document.role]}
+            ></span>{folio.categoryOf(document).name}
           </span>
           <span
             class="inline-flex size-5 shrink-0 items-center justify-center text-text-4"

@@ -24,10 +24,23 @@ export class PageReader {
 
   /** The page as a JPEG (about 100–200 KB). */
   image(document: DocumentRecord, page: number): Promise<Uint8Array> {
-    const key = `${document.sha256}:${page}`;
+    return this.#image(document.sha256, page, () => this.#document(document));
+  }
+
+  /** A page of a PDF the student added to a chat, which `load` reads and verifies. */
+  async fileText(fileId: string, page: number, load: () => Promise<Uint8Array>): Promise<string> {
+    return pdfPageText(await this.#source(`file:${fileId}`, load), page);
+  }
+
+  fileImage(fileId: string, page: number, load: () => Promise<Uint8Array>): Promise<Uint8Array> {
+    return this.#image(fileId, page, () => this.#source(`file:${fileId}`, load));
+  }
+
+  #image(hash: string, page: number, open: () => Promise<SourceDocument>): Promise<Uint8Array> {
+    const key = `${hash}:${page}`;
     let image = this.#images.get(key);
     if (!image) {
-      image = this.#document(document).then((doc) => renderPageJpeg(doc, page));
+      image = open().then((doc) => renderPageJpeg(doc, page));
       image.catch(() => this.#images.delete(key));
       this.#images.set(key, image);
       if (this.#images.size > 24) this.#images.delete(this.#images.keys().next().value!);
@@ -43,10 +56,16 @@ export class PageReader {
   }
 
   #document(document: DocumentRecord): Promise<SourceDocument> {
-    const key = `${document.id}:${document.sha256}`;
+    return this.#source(
+      `${document.id}:${document.sha256}`,
+      async () => (await this.#library.readOriginal(document.id)).data,
+    );
+  }
+
+  #source(key: string, load: () => Promise<Uint8Array>): Promise<SourceDocument> {
     let opening = this.#open.get(key);
     if (!opening) {
-      opening = this.#library.readOriginal(document.id).then(({ data }) => openSource(data));
+      opening = load().then((data) => openSource(data));
       opening.catch(() => this.#open.delete(key));
       this.#open.set(key, opening);
       // Keep a few documents open; release the oldest.

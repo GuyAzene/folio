@@ -1,6 +1,7 @@
 <script lang="ts">
   import {
     BookOpen,
+    Hand,
     Highlighter,
     House,
     ListChecks,
@@ -9,8 +10,8 @@
     Plus,
     Search,
     Settings,
-    Trash2,
     SquarePen,
+    Trash2,
   } from "@lucide/svelte";
   import type { Component } from "svelte";
   import { PENCIL } from "../lib/labels.ts";
@@ -167,7 +168,7 @@
       </button>
     {/each}
 
-    {#if folio.needsYou.length}
+    {#if folio.needsYou.length || folio.waitingChanges.length}
       <div class="mt-5 flex h-6 items-center px-2">
         <span
           class="flex-1 text-[11px] font-medium tracking-[0.06em] text-text-3 uppercase"
@@ -200,6 +201,33 @@
           <span class="min-w-0 flex-1 truncate text-left"
             >{proposal.noteId ? "Review edit to" : "Review new note"}
             <bdi>{proposal.noteTitle}</bdi></span
+          >
+        </button>
+      {/each}
+      {#each folio.waitingChanges as change (change.id)}
+        <button
+          class="flex h-8 w-full items-center gap-2.5 rounded-md px-2 text-text-2 transition-colors hover:bg-hover hover:text-text"
+          title={change.summary}
+          onclick={(event) =>
+            go(
+              {
+                view: "chat",
+                chatId: change.chatId,
+                courseId:
+                  folio.chats.find((chat) => chat.id === change.chatId)
+                    ?.courseId ?? null,
+              },
+              event,
+            )}
+        >
+          <span class="relative shrink-0">
+            <Hand size={15} strokeWidth={1.75} />
+            <span
+              class="absolute -top-0.5 -right-0.5 size-1.5 rounded-full bg-highlight ring-2 ring-bg"
+            ></span>
+          </span>
+          <span class="min-w-0 flex-1 truncate text-left" dir="auto"
+            >{change.summary}</span
           >
         </button>
       {/each}

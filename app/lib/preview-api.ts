@@ -24,6 +24,21 @@ import type {
 } from "../../src/desktop/api.ts";
 import { chatTitle } from "../../src/chat-title.ts";
 import { patchAssignment } from "../../src/library/assignments.ts";
+import {
+  categoriesInUse,
+  categoriesProblem,
+  categoryFor,
+  categoryOf,
+  DEFAULT_CATEGORIES,
+  guessCategory,
+  type Category,
+} from "../../src/library/categories.ts";
+import {
+  applyPattern,
+  uniqueTitle,
+  type NamingScope,
+  type Rename,
+} from "../../src/library/naming.ts";
 import { linkFirstMention, matchNote, mentionsOf, noteFacts } from "../../src/library/note-meta.ts";
 import { SYNTHETIC_LECTURE, syntheticPdf } from "../../tests/fixtures/synthetic-pdf.ts";
 
@@ -74,6 +89,9 @@ const documents: DocumentView[] = [
     pages: 3,
     size: 2048,
     dueAt: null,
+    category: null,
+    number: 1,
+    named: "own",
     importedAt: ago(30),
     revision: 1,
   },
@@ -86,6 +104,9 @@ const documents: DocumentView[] = [
     pages: 3,
     size: 2048,
     dueAt: null,
+    category: null,
+    number: 1,
+    named: "own",
     importedAt: ago(28),
     revision: 1,
   },
@@ -98,6 +119,9 @@ const documents: DocumentView[] = [
     pages: 3,
     size: 2048,
     dueAt: ago(-60),
+    category: null,
+    number: 1,
+    named: "own",
     importedAt: ago(20),
     revision: 1,
   },
@@ -110,6 +134,9 @@ const documents: DocumentView[] = [
     pages: 3,
     size: 2048,
     dueAt: null,
+    category: null,
+    number: 1,
+    named: "own",
     importedAt: ago(10),
     revision: 1,
   },
@@ -122,6 +149,9 @@ const documents: DocumentView[] = [
     pages: 3,
     size: 2048,
     dueAt: null,
+    category: null,
+    number: 2,
+    named: "own",
     importedAt: ago(8),
     revision: 1,
   },
@@ -1674,6 +1704,63 @@ const PREVIEW_GROUPS: {
   { connection: "openrouter", name: "OpenRouter", kind: "key", models: [] },
 ];
 
+let previewCategories: Category[] = structuredClone([...DEFAULT_CATEGORIES]);
+let previewNaming: string | null = null;
+
+/** The preview's pattern renames: what the main process works out, without its library. */
+function previewRenames(scope: NamingScope): Rename[] {
+  const renames: Rename[] = [];
+  for (const document of documents) {
+    const category = categoryOf(document, previewCategories);
+    const pattern = category.naming ?? previewNaming;
+    const course = courses.find((each) => each.id === document.courseId);
+    if (
+      !pattern ||
+      !course ||
+      (scope.courseId && document.courseId !== scope.courseId) ||
+      (scope.categoryId && category.id !== scope.categoryId) ||
+      (scope.documentIds && !scope.documentIds.includes(document.id))
+    )
+      continue;
+    const taken = documents
+      .filter((other) => other.courseId === document.courseId && other.id !== document.id)
+      .map(
+        (other) => renames.find((rename) => rename.documentId === other.id)?.next ?? other.title,
+      );
+    const next = uniqueTitle(
+      applyPattern(pattern, {
+        category: category.name,
+        course: course.name,
+        code: course.code,
+        term: course.term,
+        number: document.number,
+        name: document.title,
+      }),
+      taken,
+    );
+    if (next !== document.title || document.named !== "pattern")
+      renames.push({
+        documentId: document.id,
+        courseId: document.courseId,
+        title: document.title,
+        named: document.named,
+        next,
+      });
+  }
+  return renames;
+}
+
+function previewFollow(): void {
+  for (const rename of previewRenames({}))
+    if (rename.named === "pattern")
+      Object.assign(
+        documents.find((document) => document.id === rename.documentId)!,
+        {
+          title: rename.next,
+        },
+      );
+}
+
 function previewModels(): ModelsView {
   return {
     connections: PREVIEW_GROUPS.map((group) => ({
@@ -1697,6 +1784,8 @@ function previewModels(): ModelsView {
     roles: { ...previewRoles },
     problems: [],
     openrouter: [...previewOpenRouter],
+    categories: structuredClone(previewCategories),
+    naming: previewNaming,
   };
 }
 
@@ -1729,15 +1818,17 @@ export const previewApi: FolioApi = {
       reads: { courses: [], documents: [] },
     };
     chat.status = "running";
-    const views: AttachmentView[] = attachments.map((input) =>
-      input.kind === "image"
-        ? {
-            kind: "image",
-            name: input.name,
-            thumbnail: URL.createObjectURL(new Blob([input.data.slice()])),
-          }
-        : { ...input },
-    );
+    const views: AttachmentView[] = attachments.map((input): AttachmentView => {
+      if (input.kind === "image")
+        return {
+          kind: "image",
+          name: input.name,
+          thumbnail: URL.createObjectURL(new Blob([input.data.slice()])),
+        };
+      if (input.kind === "file")
+        return { kind: "file", name: input.path.split("/").at(-1)!, pages: null };
+      return { ...input };
+    });
     if (chat.kind === "course")
       for (const input of attachments) {
         if (input.kind === "course" && !chat.reads.courses.includes(input.courseId))
@@ -1857,6 +1948,57 @@ export const previewApi: FolioApi = {
     previewOpenRouter = [...new Set(ids)];
     emit({ type: "models", models: previewModels() });
   },
+  async setCategories(categories) {
+    const problem =
+      categoriesProblem(categories) ?? categoriesInUse(previewCategories, categories, documents);
+    if (problem) throw new Error(problem);
+    previewCategories = structuredClone(categories);
+    previewFollow();
+    emit({ type: "models", models: previewModels() });
+    emit({ type: "library" });
+  },
+  async setNaming(pattern) {
+    previewNaming = pattern?.trim() || null;
+    previewFollow();
+    emit({ type: "models", models: previewModels() });
+    emit({ type: "library" });
+  },
+  async renames(scope) {
+    return previewRenames(scope);
+  },
+  async applyNaming(scope) {
+    const renames = previewRenames(scope);
+    for (const rename of renames)
+      Object.assign(
+        documents.find((document) => document.id === rename.documentId)!,
+        {
+          title: rename.next,
+          named: "pattern",
+        },
+      );
+    emit({ type: "library" });
+    return renames;
+  },
+  async listPending() {
+    return [];
+  },
+  async resolvePending() {
+    throw new Error("The preview has no tutor to propose changes.");
+  },
+  async undoAction() {
+    throw new Error("The preview has no tutor changes to undo.");
+  },
+  async undoNaming(renames) {
+    let restored = 0;
+    for (const rename of renames) {
+      const document = documents.find((each) => each.id === rename.documentId);
+      if (document?.title !== rename.next) continue;
+      Object.assign(document, { title: rename.title, named: rename.named });
+      restored++;
+    }
+    emit({ type: "library" });
+    return restored;
+  },
   async openrouterCatalog() {
     return structuredClone(OPENROUTER_CATALOG);
   },
@@ -1895,7 +2037,17 @@ export const previewApi: FolioApi = {
   },
   async updateDocument(documentId, patch) {
     const document = documents.find((candidate) => candidate.id === documentId)!;
-    Object.assign(document, patch, { revision: document.revision + 1 });
+    const category = patch.category
+      ? previewCategories.find((each) => each.id === patch.category)
+      : patch.role && categoryFor(patch.role, previewCategories);
+    Object.assign(
+      document,
+      patch,
+      category && { role: category.kind, category: category.id },
+      patch.title !== undefined && patch.named === undefined && { named: "own" },
+      { revision: document.revision + 1 },
+    );
+    if (document.named === "pattern") previewFollow();
     return document;
   },
   async readDocument() {
@@ -2007,16 +2159,8 @@ export const previewApi: FolioApi = {
       "hw1_solution.pdf",
       "syllabus.pdf",
     ];
-    const role = (name: string) =>
-      /solution/.test(name)
-        ? "solution"
-        : /syllabus/.test(name)
-          ? "asset"
-          : /hw/.test(name)
-            ? "assignment"
-            : /rec/.test(name)
-              ? "recitation"
-              : "lecture";
+    const category = (name: string) =>
+      guessCategory(name.split("/").at(-1)!, "pdf", previewCategories);
     return {
       path: "/synthetic/Computational Models",
       folderName: "Computational Models",
@@ -2027,7 +2171,8 @@ export const previewApi: FolioApi = {
           .split("/")
           .at(-1)!
           .replace(/\.pdf$/, ""),
-        role: role(name) as DocumentView["role"],
+        role: category(name).kind,
+        category: category(name).id,
         kind: "pdf" as const,
         size: 2048,
       })),

@@ -1,17 +1,22 @@
 <script lang="ts">
-  import { Ellipsis, FileText, Lock, RotateCw, Trash2 } from "@lucide/svelte";
-  import { DropdownMenu } from "bits-ui";
-  import type { DocumentRole, DocumentView } from "../../src/desktop/api.ts";
   import {
-    formatDate,
-    ROLE_DOT,
-    ROLE_LABEL,
-    ROLES,
-  } from "../lib/labels.ts";
+    Ellipsis,
+    FileText,
+    Lock,
+    PencilLine,
+    RotateCw,
+    Trash2,
+    WandSparkles,
+  } from "@lucide/svelte";
+  import { DropdownMenu } from "bits-ui";
+  import type { DocumentView } from "../../src/desktop/api.ts";
+  import { studied } from "../../src/library/categories.ts";
+  import { formatDate, ROLE_DOT } from "../lib/labels.ts";
   import { folio } from "../lib/state.svelte.ts";
   import CourseTile from "./CourseTile.svelte";
   import { assignmentBadges } from "../../src/library/assignments.ts";
   import DatePicker from "./DatePicker.svelte";
+  import InlineName from "./InlineName.svelte";
   import Select from "./Select.svelte";
 
   let {
@@ -20,6 +25,7 @@
     showCourse = false,
     showDue = false,
     showStudy = false,
+    showNumber = false,
     empty = "Nothing here yet.",
   }: {
     documents: DocumentView[];
@@ -29,17 +35,34 @@
     showDue?: boolean;
     /** Lectures and recitations show whether Folio has studied them or is studying them. */
     showStudy?: boolean;
+    /** Each file's number in its category, which a naming pattern uses; it can be edited. */
+    showNumber?: boolean;
     empty?: string;
   } = $props();
 
   const menuItem =
     "flex h-8 cursor-default items-center gap-2.5 rounded-md px-2.5 text-[13px] text-text outline-none select-none data-[highlighted]:bg-hover data-[disabled]:opacity-50";
 
-  const ROLE_OPTIONS = ROLES.map((role) => ({
-    value: role,
-    label: ROLE_LABEL[role],
-    dot: ROLE_DOT[role],
-  }));
+  /** The file whose name, or number, is being edited in place. */
+  let renaming = $state<string | null>(null);
+  let numbering = $state<string | null>(null);
+
+  function renumber(document: DocumentView, value: string): void {
+    const number = Number(value);
+    if (!Number.isInteger(number) || number < 0 || number > 9999) {
+      folio.error = "Write a whole number, such as 3.";
+      return;
+    }
+    if (number !== document.number) void folio.updateDocument(document, { number });
+  }
+
+  const categoryOptions = $derived(
+    folio.categories.map((category) => ({
+      value: category.id,
+      label: category.name,
+      dot: ROLE_DOT[category.kind],
+    })),
+  );
 </script>
 
 {#if documents.length}
@@ -59,7 +82,8 @@
       {#if showCourse}<span class="w-[160px] shrink-0 max-md:hidden"
           >Course</span
         >{/if}
-      <span class="w-[150px] shrink-0">Role</span>
+      <span class="w-[150px] shrink-0">Category</span>
+      {#if showNumber}<span class="w-[44px] shrink-0">No.</span>{/if}
       {#if showDue}<span class="w-[166px] shrink-0">Due</span>{:else}<span
           class="w-[60px] shrink-0 max-sm:hidden">Pages</span
         ><span class="w-[90px] shrink-0 max-md:hidden">Added</span>{/if}
@@ -72,24 +96,34 @@
         tabindex="0"
         class="group flex h-11 cursor-default items-center gap-4 border-b border-line-subtle px-4 transition-colors last:border-b-0 hover:bg-hover"
         onclick={(event) =>
+          renaming !== document.id &&
           folio.openDocument(document.id, 1, {
             newTab: event.metaKey || event.ctrlKey,
           })}
-        onkeydown={(event) =>
-          event.key === "Enter" && folio.openDocument(document.id)}
+        onkeydown={(event) => {
+          if (event.key === "Enter") folio.openDocument(document.id);
+          else if (event.key === "F2") renaming = document.id;
+        }}
       >
         <div class="flex min-w-0 flex-1 items-center gap-2.5">
           <FileText size={15} strokeWidth={1.75} class="shrink-0 text-text-3" />
-          <span class="truncate font-medium text-text" dir="auto"
-            >{document.title}</span
-          >
+          <InlineName
+            value={document.title}
+            bind:editing={
+              () => renaming === document.id,
+              (editing) => (renaming = editing ? document.id : null)
+            }
+            label="Rename {document.title}"
+            class="font-medium text-text"
+            onsave={(title) => folio.updateDocument(document, { title })}
+          />
           <Lock
             size={11}
             strokeWidth={2}
             class="shrink-0 text-text-4 opacity-0 group-hover:opacity-100"
             aria-label="Original, read-only"
           />
-          {#if showStudy && (document.role === "lecture" || document.role === "recitation")}
+          {#if showStudy && studied(document)}
             {#if folio.studying(document.id)}
               <span
                 class="inline-flex shrink-0 items-center gap-1.5 text-[11px] text-text-3"
@@ -115,13 +149,40 @@
         >
           <Select
             variant="chip"
-            label="Role"
-            value={document.role}
-            options={ROLE_OPTIONS}
-            onchange={(role) =>
-              folio.updateDocument(document, { role: role as DocumentRole })}
+            label="Category"
+            value={folio.categoryOf(document).id}
+            options={categoryOptions}
+            onchange={(category) => folio.updateDocument(document, { category })}
           />
         </div>
+        {#if showNumber}
+          <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+          <div
+            class="flex w-[44px] shrink-0"
+            onclick={(event) => event.stopPropagation()}
+          >
+            {#if numbering === document.id}
+              <InlineName
+                value={String(document.number ?? "")}
+                bind:editing={
+                  () => numbering === document.id,
+                  (editing) => (numbering = editing ? document.id : null)
+                }
+                max={4}
+                label="Number of {document.title}"
+                class="w-[44px] flex-none tabular-nums"
+                onsave={(value) => renumber(document, value)}
+              />
+            {:else}
+              <button
+                class="-mx-1 h-6 rounded-md px-1 text-text-2 tabular-nums hover:bg-press"
+                title="Change its number"
+                onclick={() => (numbering = document.id)}
+                >{document.number ?? "—"}</button
+              >
+            {/if}
+          </div>
+        {/if}
         {#if showDue}
           <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
           <div
@@ -161,9 +222,33 @@
                 side="bottom"
                 align="end"
                 sideOffset={4}
+                onCloseAutoFocus={(event) =>
+                  (renaming === document.id || numbering === document.id) &&
+                  event.preventDefault()}
                 class="z-50 min-w-[200px] animate-[folio-scale_140ms_var(--ease-out-quint)] rounded-xl border border-line-subtle bg-raised p-1.5 shadow-3 outline-none"
               >
-                {#if (document.role === "lecture" || document.role === "recitation") && document.kind === "pdf"}
+                <DropdownMenu.Item
+                  class={menuItem}
+                  onSelect={() => (renaming = document.id)}
+                >
+                  <PencilLine size={14} strokeWidth={1.75} class="text-text-3" />
+                  Rename
+                </DropdownMenu.Item>
+                {#if document.named === "own" && folio.pattern(folio.categoryOf(document))}
+                  <DropdownMenu.Item
+                    class={menuItem}
+                    onSelect={() =>
+                      folio.applyNaming({ documentIds: [document.id] })}
+                  >
+                    <WandSparkles
+                      size={14}
+                      strokeWidth={1.75}
+                      class="text-text-3"
+                    />
+                    Name by pattern
+                  </DropdownMenu.Item>
+                {/if}
+                {#if studied(document)}
                   <DropdownMenu.Item
                     class={menuItem}
                     disabled={folio.studying(document.id)}

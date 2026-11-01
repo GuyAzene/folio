@@ -3,19 +3,21 @@
     Ellipsis,
     History,
     NotebookPen,
+    PencilLine,
     Plus,
     Trash2,
     Upload,
   } from "@lucide/svelte";
   import { DropdownMenu } from "bits-ui";
   import ChatList from "../components/ChatList.svelte";
+  import CourseDetailsDialog from "../components/CourseDetailsDialog.svelte";
   import CourseOverview from "../components/CourseOverview.svelte";
   import Composer from "../components/Composer.svelte";
   import CourseTile from "../components/CourseTile.svelte";
   import DocumentTable from "../components/DocumentTable.svelte";
   import NoteRow from "../components/NoteRow.svelte";
   import StudyNotesList from "../components/StudyNotesList.svelte";
-  import { COURSE_TABS, MATERIAL_SECTIONS } from "../lib/course-tabs.ts";
+  import { COURSE_TABS, materialSections } from "../lib/course-tabs.ts";
   import { formatDate } from "../lib/labels.ts";
   import { folio, type CourseTab } from "../lib/state.svelte.ts";
 
@@ -26,19 +28,13 @@
   }: { tabId: string; courseId: string; tab: CourseTab } = $props();
   let dragging = $state(0);
   let composer = $state<Composer>();
+  let editing = $state(false);
 
   const course = $derived(folio.course(courseId));
   const documents = $derived(
     folio.documents.filter((document) => document.courseId === courseId),
   );
-  const sections = $derived(
-    MATERIAL_SECTIONS.map((section) => ({
-      ...section,
-      documents: documents.filter((document) =>
-        section.roles.includes(document.role),
-      ),
-    })).filter((section) => section.documents.length),
-  );
+  const sections = $derived(materialSections(documents, folio.categories));
   const knowledge = $derived(folio.knowledge[courseId] ?? null);
   const notes = $derived(
     folio.notes.filter((note) => note.courseId === courseId),
@@ -141,6 +137,14 @@
                 sideOffset={6}
                 class="z-50 min-w-[240px] animate-[folio-scale_140ms_var(--ease-out-quint)] rounded-xl border border-line-subtle bg-raised p-1.5 shadow-3 outline-none"
               >
+                <DropdownMenu.Item
+                  class="flex h-8 cursor-default items-center gap-2.5 rounded-md px-2.5 text-[13px] text-text outline-none select-none data-[highlighted]:bg-hover"
+                  onSelect={() => (editing = true)}
+                >
+                  <PencilLine size={14} strokeWidth={1.75} class="text-text-3" />
+                  Edit course
+                </DropdownMenu.Item>
+                <DropdownMenu.Separator class="my-1.5 h-px bg-line-subtle" />
                 {#if knowledge?.canRollBack}
                   <DropdownMenu.Item
                     class="flex h-8 cursor-default items-center gap-2.5 rounded-md px-2.5 text-[13px] text-text outline-none select-none data-[highlighted]:bg-hover"
@@ -238,13 +242,14 @@
           />
         {:else if sections.length}
           <div class="flex flex-col gap-4">
-            {#each sections as section (section.title)}
+            {#each sections as section (section.category.id)}
               <DocumentTable
-                title={section.title}
+                title={section.category.plural}
                 documents={section.documents}
-                showStudy={section.roles.includes("lecture") ||
-                  section.roles.includes("recitation")}
-                showDue={section.roles.includes("assignment")}
+                showStudy={section.category.kind === "lecture" ||
+                  section.category.kind === "recitation"}
+                showDue={section.category.kind === "assignment"}
+                showNumber
               />
             {/each}
           </div>
@@ -276,4 +281,5 @@
       </div>
     {/if}
   </div>
+  <CourseDetailsDialog {course} bind:open={editing} />
 {/if}

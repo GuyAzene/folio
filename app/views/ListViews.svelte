@@ -1,10 +1,9 @@
 <script lang="ts">
   import { Search, SquarePen, Upload } from "@lucide/svelte";
-  import type { DocumentRole } from "../../src/desktop/api.ts";
   import ChatList from "../components/ChatList.svelte";
   import DocumentTable from "../components/DocumentTable.svelte";
   import Select from "../components/Select.svelte";
-  import { PENCIL, ROLE_DOT, ROLE_LABEL, ROLES } from "../lib/labels.ts";
+  import { PENCIL, ROLE_DOT } from "../lib/labels.ts";
   import { folio } from "../lib/state.svelte.ts";
 
   /** Library and Chats: the list-shaped places in the sidebar. */
@@ -13,14 +12,15 @@
   /** The filters' "everything" choice. */
   const ALL = "all";
   let courseFilter = $state("");
-  let roleFilter = $state<DocumentRole | "">("");
+  let categoryFilter = $state("");
   let query = $state("");
 
   const library = $derived(
     folio.documents.filter(
       (document) =>
         (!courseFilter || document.courseId === courseFilter) &&
-        (!roleFilter || document.role === roleFilter) &&
+        (!categoryFilter ||
+          folio.categoryOf(document).id === categoryFilter) &&
         (!query.trim() ||
           document.title.toLowerCase().includes(query.trim().toLowerCase())),
     ),
@@ -97,18 +97,17 @@
         />
         {#if view === "library"}
           <Select
-            label="Role"
-            value={roleFilter || ALL}
+            label="Category"
+            value={categoryFilter || ALL}
             options={[
-              { value: ALL, label: "All roles" },
-              ...ROLES.map((role) => ({
-                value: role,
-                label: ROLE_LABEL[role],
-                dot: ROLE_DOT[role],
+              { value: ALL, label: "All categories" },
+              ...folio.categories.map((category) => ({
+                value: category.id,
+                label: category.plural,
+                dot: ROLE_DOT[category.kind],
               })),
             ]}
-            onchange={(value) =>
-              (roleFilter = value === ALL ? "" : (value as DocumentRole))}
+            onchange={(value) => (categoryFilter = value === ALL ? "" : value)}
           />
         {/if}
       </div>

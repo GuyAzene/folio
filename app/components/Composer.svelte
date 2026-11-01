@@ -9,6 +9,8 @@
   } from "@lucide/svelte";
   import type { Focus } from "../../src/desktop/api.ts";
   import {
+    fileAttachment,
+    FILE_TYPES,
     imageAttachment,
     MAX_IMAGES,
     picked,
@@ -164,12 +166,32 @@
   }
 
   function ondrop(event: DragEvent): void {
-    // Images join the question; anything else falls through, so a course page still imports PDFs.
-    const files = images(event.dataTransfer?.files);
-    if (!files.length || !canAttach) return;
+    // Images, PDFs and Markdown dropped on the question join it; anything dropped elsewhere on a
+    // course page is still imported there.
+    const dropped = [...(event.dataTransfer?.files ?? [])];
+    const pictures = images(event.dataTransfer?.files);
+    const documents = dropped.filter((file) => FILE_TYPES.test(file.name));
+    if ((!pictures.length && !documents.length) || !canAttach) return;
     event.preventDefault();
     event.stopPropagation();
-    void addImages(files);
+    if (pictures.length) void addImages(pictures);
+    if (documents.length) addFiles(documents);
+  }
+
+  /** Adds PDF and Markdown files of the student's own, which the tutor reads in this chat. */
+  function addFiles(files: File[]): void {
+    if (!canAttach) return;
+    for (const file of files)
+      try {
+        const path = folio.api.pathForFile(file);
+        if (!path) throw new Error("Folio couldn't find that file on this Mac.");
+        const item = fileAttachment(file.name, path);
+        if (!attachments.some((existing) => existing.key === item.key))
+          attachments = [...attachments, item];
+      } catch (error) {
+        folio.error = error instanceof Error ? error.message : String(error);
+      }
+    field?.focus();
   }
 
   $effect(() => {
@@ -318,6 +340,9 @@
                 ? shortTitle(document.title, folio.course(document.courseId)?.name)
                 : "Document"}</span
             >
+          {:else if view.kind === "file"}
+            <FileText size={14} strokeWidth={1.75} class="ml-0.5 shrink-0" />
+            <span class="min-w-0 truncate" dir="auto">{view.name}</span>
           {:else}
             {@const added = folio.course(view.courseId)}
             {#if added}<CourseTile course={added} size={16} />{/if}
@@ -365,6 +390,7 @@
         added={attachments.map((item) => item.key)}
         onpick={add}
         onimages={(files) => void addImages(files)}
+        onfiles={addFiles}
       />
     {/if}
     {#if !collapsed}

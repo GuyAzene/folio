@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import type { DocumentRole } from "../src/desktop/api.ts";
-import { COURSE_TABS, courseTab, MATERIAL_SECTIONS } from "../app/lib/course-tabs.ts";
+import { COURSE_TABS, courseTab, materialSections } from "../app/lib/course-tabs.ts";
+import { DEFAULT_CATEGORIES } from "../src/library/categories.ts";
 import { searchScore, shortTitle } from "../app/lib/titles.ts";
 
 describe("course tabs", () => {
@@ -18,10 +19,38 @@ describe("course tabs", () => {
       expect(courseTab(value)).toBe("overview");
   });
 
-  it("files every document role in exactly one Materials section", () => {
-    const roles: DocumentRole[] = ["lecture", "recitation", "assignment", "solution", "asset"];
-    for (const role of roles)
-      expect(MATERIAL_SECTIONS.filter((section) => section.roles.includes(role))).toHaveLength(1);
+  it("sort a section's files by number, then by name", () => {
+    const [section] = materialSections(
+      [
+        { role: "lecture" as const, title: "Lecture 10", number: 10 },
+        { role: "lecture" as const, title: "Graphs", number: null },
+        { role: "lecture" as const, title: "Lecture 2", number: 2 },
+      ],
+      DEFAULT_CATEGORIES,
+    );
+    expect(section!.documents.map((document) => document.title)).toEqual([
+      "Lecture 2",
+      "Lecture 10",
+      "Graphs",
+    ]);
+  });
+
+  it("files every document in exactly one Materials section, in the order of categories", () => {
+    const roles: DocumentRole[] = ["asset", "solution", "assignment", "recitation", "lecture"];
+    const documents = roles.map((role) => ({ role, category: null, title: role }));
+    const lab = { ...DEFAULT_CATEGORIES[2]!, id: "lab", name: "Lab", plural: "Labs" };
+    const sections = materialSections(
+      [...documents, { role: "assignment" as const, category: "lab", title: "Lab 1" }],
+      [...DEFAULT_CATEGORIES, lab],
+    );
+    expect(sections.map((section) => [section.category.plural, section.documents.length])).toEqual([
+      ["Lectures", 1],
+      ["Recitations", 1],
+      ["Assignments", 1],
+      ["Solutions", 1],
+      ["Other files", 1],
+      ["Labs", 1],
+    ]);
   });
 });
 

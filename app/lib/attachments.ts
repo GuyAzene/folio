@@ -16,11 +16,26 @@ export function attachmentKey(input: AttachmentInput): string {
       return `course:${input.courseId}`;
     case "image":
       return `image:${crypto.randomUUID()}`;
+    case "file":
+      return `file:${input.path}`;
   }
 }
 
-/** What the + menu picks: a page, lecture or course (images come from files). */
-export type Picked = Exclude<AttachmentInput, { kind: "image" }>;
+/** What the + menu picks: a page, lecture or course (images and files come from the disk). */
+export type Picked = Exclude<AttachmentInput, { kind: "image" } | { kind: "file" }>;
+
+/** Files the tutor can read in a chat and, when asked, add to a course. */
+export const FILE_TYPES = /\.(pdf|md|markdown)$/i;
+
+/**
+ * A PDF or Markdown file the student dropped or chose, by its path on this Mac; the main process
+ * copies it into Folio when the question is sent.
+ */
+export function fileAttachment(name: string, path: string): Added {
+  if (!FILE_TYPES.test(name)) throw new Error("Folio can add PDF and Markdown files to a chat.");
+  const input: AttachmentInput = { kind: "file", path };
+  return { key: attachmentKey(input), input, view: { kind: "file", name, pages: null } };
+}
 
 /** A page, lecture or course picked from the + menu. */
 export function picked(input: Picked): Added {

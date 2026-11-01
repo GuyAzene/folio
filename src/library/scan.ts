@@ -1,6 +1,7 @@
 import { lstat, readdir } from "node:fs/promises";
 import { basename, extname, join, relative } from "node:path";
-import { guessRole, LibraryError, titleFromName, type DocumentRole } from "./store.ts";
+import { DEFAULT_CATEGORIES, guessCategory, type Category } from "./categories.ts";
+import { LibraryError, titleFromName, type DocumentRole } from "./store.ts";
 
 export interface ScannedFile {
   path: string;
@@ -8,6 +9,8 @@ export interface ScannedFile {
   name: string;
   title: string;
   role: DocumentRole;
+  /** The category its name points to, by id. */
+  category: string;
   kind: "pdf" | "markdown";
   size: number;
 }
@@ -28,10 +31,13 @@ const MAX_BYTES = 300 * 1024 * 1024;
 
 /**
  * Lists the PDFs and Markdown files in a folder the student chose, with a first guess at each
- * one's role. It only reads names and sizes; nothing is copied until the student creates the
+ * one's category. It only reads names and sizes; nothing is copied until the student creates the
  * course. Hidden entries and symbolic links are skipped.
  */
-export async function scanFolder(root: string): Promise<FolderScan> {
+export async function scanFolder(
+  root: string,
+  categories: readonly Category[] = DEFAULT_CATEGORIES,
+): Promise<FolderScan> {
   const info = await lstat(root).catch(() => undefined);
   if (!info?.isDirectory() || info.isSymbolicLink())
     throw new LibraryError("Choose a regular folder.");
@@ -73,11 +79,16 @@ export async function scanFolder(root: string): Promise<FolderScan> {
         path,
         name: relative(root, path),
         title: titleFromName(entry.name),
-        role: guessRole(entry.name, kind),
+        ...guessed(entry.name, kind),
         kind,
         size,
       });
     }
+  }
+
+  function guessed(name: string, kind: "pdf" | "markdown") {
+    const category = guessCategory(name, kind, categories);
+    return { role: category.kind, category: category.id };
   }
 
   await walk(root, 1);

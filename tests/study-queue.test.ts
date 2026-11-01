@@ -198,6 +198,27 @@ describe("sessions across a course", () => {
     ]);
   });
 
+  it("number by the file's own number before its title, and pair by it", () => {
+    const lecture = { ...document("a", "CS 201 Lecture 3"), number: 3 } as DocumentRecord;
+    const recitation = {
+      ...document("b", "Tirgul", "recitation"),
+      number: 3,
+    } as DocumentRecord;
+    const all = [lecture, recitation];
+    expect(sessionInfo(course, lecture, all).slug).toBe("alg-L03");
+    expect(sessionInfo(course, recitation, all)).toMatchObject({
+      slug: "alg-R03",
+      pairedWith: ["alg-L03"],
+    });
+  });
+
+  it("keep the prefix of the course's study notes after the course is renamed", () => {
+    const renamed = { name: "Design of Algorithms" } as Parameters<typeof sessionInfo>[0];
+    const lecture = document("a", "Lecture 3");
+    expect(sessionInfo(renamed, lecture, [lecture]).slug).toBe("doa-L03");
+    expect(sessionInfo(renamed, lecture, [lecture], "alg").slug).toBe("alg-L03");
+  });
+
   it("replace a document's own session under a new slug, and never another's", () => {
     const empty = emptyKnowledge("course", "alg");
     const first = mergeDraft(empty, bundle("course", "doc-a", "alg-L01"));

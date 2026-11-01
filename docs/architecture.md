@@ -23,7 +23,7 @@ src/desktop/main.ts           the main process
 | `src/desktop/` | The Electron main process, the preload bridge, the IPC contract (`api.ts`) and the chat service. |
 | `src/conversation.ts`, `src/session-store.ts`, `src/transcript.ts`, `src/agents.ts` | Conversations on Pi: saving and resuming, cancellation, leases, and what history the model sees. |
 | `src/auth.ts`, `src/connections.ts`, `src/model-refs.ts`, `src/model-choices.ts`, `src/config.ts` | Connections and models: the ChatGPT sign-in and API keys, the models each connection offers, and which model does what (`config.json`). |
-| `src/library/` | Courses and documents, PDF pages and page images, notes with their history, the Trash, the tutor's tools and teaching rules, and attachments. |
+| `src/library/` | Courses and documents with their categories, numbers and names, the operations that change them, PDF pages and page images, notes with their history, the Trash, the tutor's tools and teaching rules, and attachments. |
 | `src/ingest/` | Studying a lecture: page inventory, reading, drafting, reconciling and publishing study notes. |
 | `src/kb/` | Each course's knowledge base: immutable published versions, a search index and the tutor's study-note tools. |
 | `src/jobs/` | Background study jobs and the saved output of every finished step. |
@@ -113,6 +113,11 @@ composer's **+** is recorded on the student's own message, and the tools work ou
 reach from those messages on every call. The model never writes user messages, so it cannot add
 to them. The student's own notes stay with their course even when that course is added
 elsewhere.
+
+A PDF or Markdown file the student drops in a chat, or adds with **+**, is copied into `files/`
+under its hash, read-only, and recorded on their message like anything else they add. The tutor
+reads it with `read_page` in that chat only; reading it never adds it to a course. `add_file`
+adds it when the student asks, through the same import as Materials.
 
 `read_page` returns the page's text and the page itself as an image, so diagrams count. Every
 request resends the conversation, so at most the six most recent messages with images keep them,
@@ -242,7 +247,7 @@ never shown to the student as a warning. Every region ends up cited, or omitted 
 with a reason (page numbers, repeated headers, build steps, duplicates); the student never sees this
 accounting, which is a record for diagnosis. The result is published as a new, immutable version of
 the course's knowledge, with a SQLite FTS5 search index. Each document is a session numbered across
-its course (by the number in its title, or its place among the course's lectures), and a re-studied
+its course (by the file's number), keeping the course's prefix when the course is renamed, and a re-studied
 document replaces its own session. Each step's output is saved, so a job interrupted by a quit or a
 plan limit resumes where it stopped instead of starting over; after a quit, interrupted studies go
 back in the queue on their own.
@@ -317,6 +322,51 @@ first beside it. A tutor's reply is saved to a note only when the student choose
 with a line linking the chat (`[[chat:<id>|title]]`) and the pages it cited; Undo takes it back
 out while the note is still as that save left it.
 
+### Changing Folio from a chat
+
+The tutor can do what Folio's own controls do: create and edit courses, rename files and change
+their numbers or categories, add a file from the chat, move files or a course to the Trash, edit
+categories and naming patterns, choose a step's model, and start or stop studying. Its tools call
+the same operations as the window (`src/library/operations.ts`), so neither can skip a step such
+as studying a new lecture or taking a file's study notes out when it stops being one. Each change
+is plain data (`src/library/app-actions.ts`), checked again whenever it runs.
+
+How far the tutor may go is decided in its tools' code, not the prompt:
+
+- **Done, with Undo.** One reversible change where nothing is lost, such as a rename, a number, a
+  category of the same kind, a new course, an added file or up to five files to the Trash. A card
+  under the reply says what changed; Undo refuses if what it changed has changed since.
+- **Asks first.** More than five files at once, anything that drops study notes, a move to
+  another course, a course to the Trash, removing a category, and a step's model. Nothing happens
+  until the student presses Apply in the card (also listed under Needs you), which checks the
+  change again; the tutor is told the answer with the student's next question.
+- **Refused.** Deleting for good, emptying a course or more than one course per reply, and keys,
+  sign-in and connections, which no tool reaches.
+
+A course chat changes only its own course, moves files only to courses it can read, and adds only
+files the student added to it; a library chat may change any course. Reopening a chat never runs
+a change again.
+
+## Categories, numbers and names
+
+What a degree calls its course files is the student's: one list of categories for the whole
+library, in `config.json` under `library.categories`, edited in Settings or by hand. Each has a
+stable ID, a name and a plural, the words that place a new file in it (`R` before a number puts
+R01 among recitations), an optional naming pattern, and a kind, one of Folio's five roles, which
+is what Folio does with its files: study them, pair them with lectures as practice, put them on
+the board, keep them as solutions, or keep them as files. Today's five categories are the
+default. A file records its category beside its role, so older builds still read it by role; a
+category with files in it can be renamed or reordered but not removed or given another kind.
+
+Every file has a number: what orders it in its category, from the first number in its name (past
+the course code's digits and years) or the next free one. Studying numbers and pairs sessions by
+it. A pattern such as `{category} {n}` names new files from their category, course and number;
+`library.naming` is the default and a category's own pattern overrides it. Names that follow a
+pattern follow its changes, a renamed course or a new number, until the student renames the file
+by hand. Files that came in earlier keep their names until the student renames them to match,
+which can be undone. Renaming never studies a file again: study notes, sources and chats find a
+file by its ID, and page links in notes show its current name.
+
 ## Assignments
 
 An assignment is a record of its own, not only a PDF with a due date: any coursework (a problem
@@ -338,8 +388,10 @@ Everything lives in `~/.folio/` (or `FOLIO_HOME`), with directories `0700` and f
 | --- | --- |
 | `connection.json` | The ChatGPT connection and installation ID |
 | `keys.json` | API keys, each checked with its provider before it was kept |
-| `config.json` | Which model does what, and the OpenRouter models the composer offers; never a key |
+| `config.json` | Which model does what, the OpenRouter models the composer offers, and the student's categories and naming patterns; never a key |
 | `sessions/<id>.json` | Each conversation |
+| `files/<hash>.pdf\|md` | Files the student added to chats, read-only |
+| `pending/<id>.json` | Changes the tutor proposed, waiting for the student or answered |
 | `library/` | Courses, read-only originals with their hashes, notes with their history, and suggested edits |
 | `library/assignments/<id>/` | Each assignment's record and the files handed in or back |
 | `library/courses/<id>/kb/generations/<n>/` | Each published version of a course's study notes |

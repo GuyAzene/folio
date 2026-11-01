@@ -1,9 +1,8 @@
 <script lang="ts">
-  import { FileText, ImagePlus, Plus, ScanText } from "@lucide/svelte";
+  import { FilePlus, FileText, ImagePlus, Plus, ScanText } from "@lucide/svelte";
   import { Command, Popover } from "bits-ui";
   import type { DocumentView, Focus } from "../../src/desktop/api.ts";
   import type { Picked } from "../lib/attachments.ts";
-  import { MATERIAL_SECTIONS } from "../lib/course-tabs.ts";
   import { searchScore, shortTitle } from "../lib/titles.ts";
   import { folio } from "../lib/state.svelte.ts";
   import CourseTile from "./CourseTile.svelte";
@@ -19,6 +18,7 @@
     added,
     onpick,
     onimages,
+    onfiles,
   }: {
     /** The chat's course; null for a chat that reads the whole library. */
     courseId: string | null;
@@ -27,11 +27,14 @@
     added: string[];
     onpick: (input: Picked) => void;
     onimages: (files: File[]) => void;
+    /** PDF and Markdown files of the student's own, which the tutor can read and add to a course. */
+    onfiles: (files: File[]) => void;
   } = $props();
 
   let open = $state(false);
   let query = $state("");
   let picker = $state<HTMLInputElement>();
+  let filePicker = $state<HTMLInputElement>();
 
   const reading = $derived(
     focus ? folio.document(focus.documentId) : undefined,
@@ -41,9 +44,9 @@
   );
   const searching = $derived(query.trim().length > 0);
   const order = (document: DocumentView) =>
-    (document.courseId === courseId ? 0 : 10) +
-    MATERIAL_SECTIONS.findIndex((section) =>
-      section.roles.includes(document.role),
+    (document.courseId === courseId ? 0 : 100) +
+    folio.categories.findIndex(
+      (category) => category.id === folio.categoryOf(document).id,
     );
   const documents = $derived(
     folio.documents
@@ -169,6 +172,24 @@
                     >or paste ⌘V</span
                   >
                 </Command.Item>
+                <Command.Item
+                  value="file pdf markdown document upload"
+                  onSelect={() => {
+                    open = false;
+                    filePicker?.click();
+                  }}
+                  class={item}
+                >
+                  <FilePlus
+                    size={15}
+                    strokeWidth={1.75}
+                    class="shrink-0 text-text-3"
+                  />
+                  <span class="min-w-0 flex-1 truncate">File…</span>
+                  <span class="shrink-0 text-[12px] whitespace-nowrap text-text-3"
+                    >PDF or Markdown</span
+                  >
+                </Command.Item>
               </Command.GroupItems>
             </Command.Group>
 
@@ -233,5 +254,18 @@
     const files = [...(input.files ?? [])];
     input.value = "";
     if (files.length) onimages(files);
+  }}
+/>
+<input
+  bind:this={filePicker}
+  type="file"
+  accept=".pdf,.md,.markdown,application/pdf,text/markdown"
+  multiple
+  class="hidden"
+  onchange={(event) => {
+    const input = event.currentTarget;
+    const files = [...(input.files ?? [])];
+    input.value = "";
+    if (files.length) onfiles(files);
   }}
 />

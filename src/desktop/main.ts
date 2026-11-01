@@ -22,11 +22,21 @@ import { IngestRunner, trialRoles } from "../ingest/pipeline.ts";
 import { piComplete } from "../ingest/pi-complete.ts";
 import { prepareSource } from "../ingest/source.ts";
 import { JobStore } from "../jobs/store.ts";
-import { withoutDocuments } from "../kb/knowledge.ts";
 import { KnowledgeStore } from "../kb/store.ts";
 import { TOPIC_POLICY, topicModel } from "../kb/topics.ts";
 import { createAttach } from "../library/attachments.ts";
 import { createRuntimes } from "../library/course-tools.ts";
+import {
+  checkAction,
+  perform,
+  PendingActions,
+  type AppControls,
+  type PendingAction,
+} from "../library/app-actions.ts";
+import type { Category } from "../library/categories.ts";
+import { ChatFiles } from "../library/chat-files.ts";
+import type { ImportItem, NamingScope, Rename } from "../library/naming.ts";
+import { LibraryOperations } from "../library/operations.ts";
 import { hostedSearch, type SearchFn } from "../library/web-search.ts";
 import {
   ASSIGNMENT_KINDS,
@@ -41,6 +51,7 @@ import {
   DOCUMENT_ROLES,
   LibraryError,
   LibraryStore,
+  studied,
   type DocumentRole,
 } from "../library/store.ts";
 import { folioModel } from "../model-catalog.ts";
@@ -76,6 +87,7 @@ import {
   STUDY_ROLES,
   type ModelRole,
   type ModelsView,
+  type PendingView,
   type TrashEntryView,
   type ProposalAction,
   type SyllabusDraft,
@@ -173,6 +185,8 @@ async function modelsView(): Promise<ModelsView> {
     roles: settings.roles,
     problems: settings.problems,
     openrouter: settings.openrouter,
+    categories: settings.categories,
+    naming: settings.naming,
   };
 }
 
@@ -272,20 +286,17 @@ function studySoon(courseId: string, documentIds: string[], origin: JobOrigin): 
   }, STUDY_DELAY).unref();
 }
 
-const teaching = (document: { role: string; kind: string }) =>
-  (document.role === "lecture" || document.role === "recitation") && document.kind === "pdf";
-
 /** Every lecture and recitation in the library that was never studied, queued once at start. */
 setTimeout(() => {
   void Promise.all([library, knowledgeStore])
     .then(async ([courses, knowledge]) => {
-      const documents = (await courses.listDocuments()).filter(teaching);
+      const documents = (await courses.listDocuments()).filter(studied);
       const byCourse = new Map<string, string[]>();
       for (const document of documents) {
-        const studied = (await knowledge.knowledge(document.courseId))?.sessions.some(
+        const known = (await knowledge.knowledge(document.courseId))?.sessions.some(
           (session) => session.documentId === document.id,
         );
-        if (!studied)
+        if (!known)
           byCourse.set(document.courseId, [
             ...(byCourse.get(document.courseId) ?? []),
             document.id,
@@ -308,6 +319,48 @@ setTimeout(() => {
     })
     .catch((error: unknown) => console.error("Folio could not queue unstudied lectures:", error));
 }, BACKLOG_DELAY).unref();
+/** Every change to courses and files goes through here, from the window or from the tutor. */
+const operations = Promise.all([library, knowledgeStore, config]).then(
+  ([store, knowledge, settings]) =>
+    new LibraryOperations({
+      library: store,
+      categories: () => settings.categories,
+      async saveCategories(categories) {
+        try {
+          await settings.setCategories(categories);
+        } finally {
+          await modelsChanged();
+        }
+      },
+      naming: () => settings.naming,
+      async saveNaming(pattern) {
+        try {
+          await settings.setNaming(pattern);
+        } finally {
+          await modelsChanged();
+        }
+      },
+      knowledge,
+      async withdraw(id) {
+        await (await jobs).runner.withdraw((job) => job.documentIds.includes(id));
+      },
+      studySoon: (courseId, documentIds) => studySoon(courseId, documentIds, "upload"),
+      syncAssignments,
+      changed: () => emit({ type: "library" }),
+    }),
+);
+// Files from before numbers get theirs once, from their names or the order they came in.
+void operations
+  .then((all) => all.numberAll())
+  .catch((error: unknown) => console.error("Folio could not number files:", error));
+
+/** The tutor's controls, once the chat service has made them; Apply and Undo use them too. */
+const appControls = Promise.withResolvers<AppControls>();
+
+// Files the student adds to chats, and changes the tutor proposed that wait for the student.
+const chatFiles = new ChatFiles(home);
+const pendingActions = new PendingActions(home, () => emit({ type: "library" }));
+
 const sessionStore = createSessionStore({ home });
 const service = Promise.all([
   sessionStore,
@@ -316,8 +369,53 @@ const service = Promise.all([
   knowledgeStore,
   pageReader,
   config,
-]).then(([store, courses, courseNotes, knowledge, pages, settings]) => {
+  operations,
+]).then(([store, courses, courseNotes, knowledge, pages, settings, changes]) => {
+  // What the tutor can do in Folio: the same code the window's controls run.
+  const controls: AppControls = {
+    library: courses,
+    operations: changes,
+    categories: () => settings.categories,
+    naming: () => settings.naming,
+    async trashDocument(id) {
+      const entry = await (await removal).removeDocument(id);
+      await trashChanged();
+      return entry.id;
+    },
+    async trashCourse(id) {
+      const entry = await (await removal).removeCourse(id);
+      await trashChanged();
+      return entry.id;
+    },
+    async restore(entryId) {
+      await (await removal).restore(entryId);
+      await trashChanged();
+    },
+    roles: () => settings.roles,
+    async setModel(step, ref) {
+      try {
+        await settings.setRole(step, ref);
+      } finally {
+        await modelsChanged();
+      }
+    },
+    async study(courseId, documentIds) {
+      const missing = await studyMissing();
+      if (missing) throw new LibraryError(`Connect ${missing} in Settings to study documents.`);
+      await (await jobs).runner.start(courseId, documentIds);
+    },
+    async stopStudying(documentIds) {
+      await (
+        await jobs
+      ).runner.withdraw((job) => job.documentIds.some((id) => documentIds.includes(id)));
+    },
+    chatFile: (file) => chatFiles.path({ fileId: file.fileId, kind: file.fileKind }),
+  };
+  appControls.resolve(controls);
   const runtimes = createRuntimes(courses, {
+    categories: () => settings.categories,
+    files: chatFiles,
+    app: { controls, pending: pendingActions },
     notes: courseNotes,
     changed: () => emit({ type: "library" }),
     knowledge,
@@ -335,8 +433,21 @@ const service = Promise.all([
     emit,
     courseRuntime: runtimes.course,
     libraryRuntime: runtimes.library,
-    // Pages, images, lectures and courses the student adds, checked against the chat.
-    attach: createAttach(courses, pages, { studied: (id) => !!knowledge.current(id) }),
+    // Pages, images, files, lectures and courses the student adds, checked against the chat.
+    attach: createAttach(courses, pages, {
+      studied: (id) => !!knowledge.current(id),
+      files: chatFiles,
+    }),
+    // How the student answered the tutor's proposals since its last reply.
+    async notes(chatId) {
+      return (await pendingActions.untold(chatId)).map((record) =>
+        record.state === "applied"
+          ? `The student applied "${record.summary}".`
+          : record.state === "cancelled"
+            ? `The student cancelled "${record.summary}".`
+            : `"${record.summary}" could not be applied: ${record.note ?? "it failed"}.`,
+      );
+    },
   });
 });
 
@@ -538,34 +649,72 @@ function syncAssignments(): void {
 }
 syncAssignments();
 
+/** A change the tutor proposed, for its card. */
+function pendingView(record: PendingAction): PendingView {
+  return {
+    id: record.id,
+    chatId: record.chatId,
+    summary: record.summary,
+    state: record.state,
+    note: record.note ?? null,
+    createdAt: record.createdAt,
+    undo: record.undo ?? null,
+  };
+}
+
+/** Which files a pattern rename covers, as the window sends it. */
+function namingScope(value: unknown): NamingScope {
+  const { courseId, categoryId, documentIds } = (value ?? {}) as Record<string, unknown>;
+  if (courseId !== undefined) checkId(courseId);
+  if (categoryId !== undefined && typeof categoryId !== "string")
+    throw new Error("Unknown category.");
+  if (
+    documentIds !== undefined &&
+    (!Array.isArray(documentIds) || !documentIds.every((id) => typeof id === "string"))
+  )
+    throw new Error("Choose files to rename.");
+  return {
+    courseId: courseId as string | undefined,
+    categoryId: categoryId as string | undefined,
+    documentIds: documentIds as string[] | undefined,
+  };
+}
+
+/** A file to import as the window sends it: a path, or a path with what the student chose. */
+function importItem(value: unknown): ImportItem | null {
+  if (typeof value === "string") return value;
+  if (typeof value !== "object" || value === null) return null;
+  const { path, category, number, title } = value as Record<string, unknown>;
+  if (typeof path !== "string") return null;
+  if (category !== undefined && typeof category !== "string") return null;
+  if (number !== undefined && (!Number.isInteger(number) || Number(number) < 0)) return null;
+  if (title !== undefined && typeof title !== "string") return null;
+  return { path, category, number: number as number | undefined, title };
+}
+
 async function importPaths(
   courseId: unknown,
   paths: unknown,
   role?: unknown,
+  category?: unknown,
 ): Promise<ImportResult[]> {
   checkId(courseId);
-  if (!Array.isArray(paths) || paths.some((path) => typeof path !== "string"))
+  const items = Array.isArray(paths) ? paths.map(importItem) : [];
+  if (!Array.isArray(paths) || items.some((item) => item === null))
     throw new Error("Choose files to import.");
   if (role !== undefined && role !== null && !DOCUMENT_ROLES.includes(role as DocumentRole))
     throw new Error("Unknown role.");
-  const store = await library;
-  const results: ImportResult[] = [];
-  const added: string[] = [];
-  for (const path of paths as string[]) {
-    try {
-      const { document, duplicate } = await store.importFile(courseId, path, {
-        role: (role as DocumentRole | null | undefined) ?? undefined,
-      });
-      results.push({ name: basename(path), document: documentView(document), duplicate });
-      if (!duplicate && teaching(document)) added.push(document.id);
-    } catch (error) {
-      results.push({ name: basename(path), error: errorMessage(error) });
-    }
-  }
-  emit({ type: "library" });
-  studySoon(courseId, added, "upload");
-  syncAssignments();
-  return results;
+  if (category !== undefined && category !== null && typeof category !== "string")
+    throw new Error("Unknown category.");
+  const results = await (
+    await operations
+  ).importFiles(courseId, items as ImportItem[], {
+    role: (role as DocumentRole | null) ?? undefined,
+    category: (category as string | null) ?? undefined,
+  });
+  return results.map((result) =>
+    "error" in result ? result : { ...result, document: documentView(result.document) },
+  );
 }
 
 const handlers: Record<InvokeMethod, (...args: unknown[]) => Promise<unknown>> = {
@@ -623,6 +772,38 @@ const handlers: Record<InvokeMethod, (...args: unknown[]) => Promise<unknown>> =
       await modelsChanged();
     }
   },
+  setCategories: async (categories) => (await operations).setCategories(categories as Category[]),
+  setNaming: async (pattern) =>
+    (await operations).setNaming(typeof pattern === "string" ? pattern : null),
+  renames: async (scope) => (await operations).renames(namingScope(scope)),
+  applyNaming: async (scope) => (await operations).applyNaming(namingScope(scope)),
+  async listPending() {
+    return (await pendingActions.list()).map(pendingView);
+  },
+  async resolvePending(id, apply) {
+    checkId(id);
+    const controls = await appControls.promise;
+    const record = await pendingActions.resolve(id as string, async (record) => {
+      if (apply !== true) return { state: "cancelled" };
+      try {
+        const done = await perform(record.action, controls);
+        return { state: "applied", note: done.summary, ...(done.undo ? { undo: done.undo } : {}) };
+      } catch (error) {
+        return { state: "failed", note: errorMessage(error) };
+      }
+    });
+    emit({ type: "library" });
+    return pendingView(record);
+  },
+  async undoAction(undo) {
+    const done = await perform(checkAction(undo), await appControls.promise);
+    emit({ type: "library" });
+    return done.summary;
+  },
+  async undoNaming(renames) {
+    if (!Array.isArray(renames)) throw new Error("Nothing to undo.");
+    return (await operations).undoNaming(renames as Rename[]);
+  },
   openrouterCatalog: async () => openrouterCatalog(catalog),
   async revealConfig() {
     const settings = await config;
@@ -631,14 +812,12 @@ const handlers: Record<InvokeMethod, (...args: unknown[]) => Promise<unknown>> =
   },
   listCourses: courses,
   async createCourse(input) {
-    const course = await (await library).createCourse((input ?? {}) as CourseInput);
-    emit({ type: "library" });
+    const course = await (await operations).createCourse((input ?? {}) as CourseInput);
     return courseView(course, 0);
   },
   async updateCourse(id, patch, revision) {
     checkId(id);
-    await (await library).updateCourse(id, (patch ?? {}) as CourseInput, Number(revision));
-    emit({ type: "library" });
+    await (await operations).updateCourse(id, (patch ?? {}) as CourseInput, Number(revision));
     return (await courses()).find((course) => course.id === id);
   },
   async listDocuments(courseId) {
@@ -666,33 +845,9 @@ const handlers: Record<InvokeMethod, (...args: unknown[]) => Promise<unknown>> =
   },
   async updateDocument(id, patch, revision) {
     checkId(id);
-    const store = await library;
-    const before = await store.document(id);
-    const change = (patch ?? {}) as DocumentPatch;
-    const moved = change.courseId !== undefined && change.courseId !== before.courseId;
-    const after = { ...before, ...change };
-    // A lecture that stops being one, or leaves its course, stops being studied first, so
-    // nothing reads it or publishes notes from it while it changes.
-    const leaving = teaching(before) && (!teaching(after) || moved);
-    if (leaving)
-      await (await jobs).runner.withdraw((job) => job.documentIds.includes(id as string));
-    const document = await store.updateDocument(id, change, Number(revision));
-    if (leaving) {
-      const knowledge = await knowledgeStore;
-      const studied = (await knowledge.knowledge(before.courseId))?.sessions.some(
-        (session) => session.documentId === id,
-      );
-      if (studied)
-        await knowledge.revise(
-          before.courseId,
-          (current) => withoutDocuments(current, [id as string]),
-          `${before.title} is no longer studied`,
-        );
-    }
-    if (teaching(document) && (!teaching(before) || moved))
-      studySoon(document.courseId, [document.id], "upload");
-    if (document.role === "assignment" && before.role !== "assignment") syncAssignments();
-    emit({ type: "library" });
+    const document = await (
+      await operations
+    ).updateDocument(id, (patch ?? {}) as DocumentPatch, Number(revision));
     return documentView(document);
   },
   async readDocument(id) {
@@ -797,7 +952,7 @@ const handlers: Record<InvokeMethod, (...args: unknown[]) => Promise<unknown>> =
             buttonLabel: "Scan",
             properties: ["openDirectory"],
           });
-    return folder ? scanFolder(folder) : null;
+    return folder ? scanFolder(folder, (await config).categories) : null;
   },
   async readSyllabus(path) {
     const file =
