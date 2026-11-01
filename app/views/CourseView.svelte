@@ -22,10 +22,10 @@
   import { folio, type CourseTab } from "../lib/state.svelte.ts";
 
   let {
-    tabId,
+    paneId,
     courseId,
     tab,
-  }: { tabId: string; courseId: string; tab: CourseTab } = $props();
+  }: { paneId: string; courseId: string; tab: CourseTab } = $props();
   let dragging = $state(0);
   let composer = $state<Composer>();
   let editing = $state(false);
@@ -180,7 +180,7 @@
             class="flex shrink-0 items-center gap-1.5 border-b-2 pb-2.5 font-medium transition-colors {active
               ? 'border-ink text-text'
               : 'border-transparent text-text-3 hover:text-text-2'}"
-            onclick={() => folio.update({ tab: candidate.tab })}
+            onclick={() => folio.update({ tab: candidate.tab }, paneId)}
           >
             {candidate.label}
             {#if candidate.tab !== "overview"}
@@ -196,12 +196,12 @@
         {#if tab === "overview"}
           <CourseOverview
             {courseId}
-            ontab={(next) => folio.update({ tab: next })}
+            ontab={(next) => folio.update({ tab: next }, paneId)}
           >
             {#snippet ask()}
               <Composer
                 bind:this={composer}
-                {tabId}
+                {paneId}
                 chatId={null}
                 {courseId}
                 slim

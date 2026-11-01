@@ -202,10 +202,7 @@
             <button
               class="-mx-2 flex h-8 items-center gap-2.5 rounded-md px-2 text-left text-text-2 transition-colors hover:bg-hover hover:text-text"
               onclick={(event) =>
-                folio.navigate(
-                  { view: "chat", chatId: chat.id, courseId },
-                  { newTab: event.metaKey || event.ctrlKey },
-                )}
+                folio.openChat(chat.id, { newTab: event.metaKey || event.ctrlKey })}
             >
               <MessageSquare size={14} strokeWidth={1.75} class="shrink-0 text-text-3" />
               <span class="min-w-0 flex-1 truncate" dir="auto">{chat.title}</span>

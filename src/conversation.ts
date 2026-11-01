@@ -528,8 +528,9 @@ export class Conversation {
       extras.fast && OPENAI_PROVIDERS.includes(this.#record.provider) ? priorityTier : undefined;
     this.#runtime?.beforeSend?.({ webSearch: extras.webSearch !== false });
     const summarize = this.#trim(input);
-    if (focus !== undefined)
-      this.#record.focus = focus ? { documentId: focus.documentId, page: focus.page } : null;
+    // The chat remembers the document it was last beside. A question asked away from it says
+    // so itself (no page), and leaves that memory alone, so the chat still reopens beside it.
+    if (focus) this.#record.focus = { documentId: focus.documentId, page: focus.page };
     if (!this.#record.messages.some((message) => message.role === "user"))
       this.#record.title = chatTitle(text);
     this.#record.status = "running";

@@ -181,6 +181,10 @@ const chats = new Map<string, ChatView>([
             { label: "Drafted a note edit for you to review", state: "done" },
           ],
           sources: [{ documentId: id(11), title: "Lecture 1 Graph traversal", page: 2 }],
+          webSources: [
+            { url: "https://example.org/bfs", title: "Breadth-first search, explained" },
+            { url: "https://example.com/queues", title: "Queues and visited sets" },
+          ],
           proposals: [id(41)],
         },
       ],
@@ -1575,13 +1579,14 @@ for (const job of jobs) {
 
 const summaries = (): ChatSummary[] =>
   [...chats.values()]
-    .map(({ id, kind, title, updatedAt, status, courseId }) => ({
+    .map(({ id, kind, title, updatedAt, status, courseId, focus }) => ({
       id,
       kind,
       title,
       updatedAt,
       status,
       courseId,
+      focus,
     }))
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 
@@ -1818,6 +1823,8 @@ export const previewApi: FolioApi = {
       reads: { courses: [], documents: [] },
     };
     chat.status = "running";
+    // As in Folio, a course chat remembers the page it was asked from, and keeps it otherwise.
+    if (chat.kind === "course" && focus) chat.focus = focus;
     const views: AttachmentView[] = attachments.map((input): AttachmentView => {
       if (input.kind === "image")
         return {
@@ -1924,7 +1931,12 @@ export const previewApi: FolioApi = {
     return { chatId: key };
   },
   async cancel() {},
-  async setFocus() {},
+  async setFocus(chatId, focus) {
+    const chat = chats.get(chatId);
+    if (chat?.kind !== "course") return;
+    chat.focus = focus;
+    emit({ type: "chats", chats: summaries() });
+  },
   async signIn() {},
   async cancelSignIn() {},
   async signOut() {},

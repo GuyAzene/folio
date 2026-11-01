@@ -15,8 +15,9 @@ lectures into notes you can browse, and it never changes your files.
 ## What it does
 
 - **Courses and a reader.** Add a course from its syllabus, from a folder of PDFs, or empty.
-  Files are copied in and never modified. The reader shows a lecture with the tutor docked beside
-  it.
+  Files are copied in and never modified. The reader shows a lecture with the tutor beside it,
+  and a tab can hold up to three panes side by side: a lecture, its homework, a note, a chat. A
+  chat reopens beside the lecture it was about.
 - **A tutor grounded in your course.** A course chat reads only that course and cites the pages
   it used; a chat from Home works out which course you mean. The tutor sees each page as an
   image, so diagrams and drawn automata count.
@@ -118,7 +119,8 @@ appear in the composer by lab. Leave the file alone and everything runs on ChatG
 | Enter / Shift+Enter | Send / new line |
 | Esc | Stop a reply |
 | ⌘K | Search everything |
-| ⌘N / ⌘T / ⌘W | New chat / new tab / close tab |
+| ⌘N / ⌘T / ⌘W | New chat / new tab / close the pane, or the tab |
+| ⌥-click | Open beside, in a new pane |
 | ⌘1–9, ⌘[ ⌘] | Switch tabs, go back and forward |
 | ⌘J | Show or hide the tutor beside a document |
 | ⌘\\ | Show or hide the sidebar |

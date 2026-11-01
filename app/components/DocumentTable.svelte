@@ -1,5 +1,6 @@
 <script lang="ts">
   import {
+    Columns2,
     Ellipsis,
     FileText,
     Lock,
@@ -99,6 +100,7 @@
           renaming !== document.id &&
           folio.openDocument(document.id, 1, {
             newTab: event.metaKey || event.ctrlKey,
+            beside: event.altKey,
           })}
         onkeydown={(event) => {
           if (event.key === "Enter") folio.openDocument(document.id);
@@ -227,6 +229,14 @@
                   event.preventDefault()}
                 class="z-50 min-w-[200px] animate-[folio-scale_140ms_var(--ease-out-quint)] rounded-xl border border-line-subtle bg-raised p-1.5 shadow-3 outline-none"
               >
+                <DropdownMenu.Item
+                  class={menuItem}
+                  onSelect={() => folio.openDocument(document.id, 1, { beside: true })}
+                >
+                  <Columns2 size={14} strokeWidth={1.75} class="text-text-3" />
+                  Open beside
+                  <span class="ml-auto pl-3 text-[11px] text-text-4">⌥-click</span>
+                </DropdownMenu.Item>
                 <DropdownMenu.Item
                   class={menuItem}
                   onSelect={() => (renaming = document.id)}

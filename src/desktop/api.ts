@@ -157,6 +157,8 @@ export interface ChatSummary {
   updatedAt: string;
   status: SessionStatus;
   courseId: string | null;
+  /** The document a course chat was last beside, at its page; it reopens there. */
+  focus: Focus | null;
 }
 
 export interface CourseView {

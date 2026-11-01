@@ -33,7 +33,7 @@
     folio.paletteOpen = false;
     folio.newChat(null);
     await folio.send(text, {
-      tabId: folio.activeTabId,
+      paneId: folio.activePane.id,
       chatId: null,
       courseId: null,
       focus: null,
@@ -228,13 +228,7 @@
                     <Command.Item
                       value={`chat ${chat.title} ${chat.id}`}
                       onSelect={() =>
-                        run(() =>
-                          folio.navigate({
-                            view: "chat",
-                            chatId: chat.id,
-                            courseId: chat.courseId,
-                          }),
-                        )}
+                        run(() => folio.openChat(chat.id))}
                       class={item}
                     >
                       <MessageSquare

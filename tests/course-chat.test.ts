@@ -200,6 +200,42 @@ describe("course chats", () => {
       "belongs to a course",
     );
   });
+
+  it("remembers the document it was beside through a question asked away from it", async () => {
+    const { store, algorithms, lecture, open } = await setup();
+    const requests: TranscriptContext[] = [];
+    const chat = await open(readThenAnswer({ documentId: lecture.id, page: 1 }, requests), {
+      newSession: true,
+      kind: "course",
+      courseId: algorithms.id,
+    });
+    await chat.send("What is on this page?", randomUUID(), {
+      focus: { documentId: lecture.id, page: 3 },
+    });
+    await chat.send("A question from the chat alone.", randomUUID(), { focus: null });
+    const questions = chat.snapshot.messages.filter((message) => message.role === "user");
+    expect(questions.at(-1)).toMatchObject({ folioFocus: null });
+    expect((await store.load(chat.snapshot.id)).focus).toEqual({
+      documentId: lecture.id,
+      page: 3,
+    });
+  });
+
+  it("forgets the document on reopen once it has left the course", async () => {
+    const { store, library, algorithms, other, lecture, open } = await setup();
+    const chat = await open(readThenAnswer({}, []), {
+      newSession: true,
+      kind: "course",
+      courseId: algorithms.id,
+    });
+    await chat.setCourseFocus({ documentId: lecture.id, page: 2 });
+    const id = chat.snapshot.id;
+    await chat.close();
+    await library.updateDocument(lecture.id, { courseId: other.id }, lecture.revision);
+    const reopened = await open(readThenAnswer({}, []), { id, allowedKinds: ["chat", "course"] });
+    expect(reopened.snapshot.focus).toBeNull();
+    expect((await store.load(id)).focus).toBeNull();
+  });
 });
 
 describe("library chats", () => {
@@ -469,7 +505,8 @@ describe("a prompt the provider can reuse", () => {
       undefined,
       "The student is not reading a document now.",
     ]);
-    expect(chat.snapshot.focus).toBeNull();
+    // The question says nothing is open; the chat still remembers where it was held.
+    expect(chat.snapshot.focus).toEqual({ documentId: lecture.id, page: 2 });
   });
 
   it("keeps what an earlier question said when the document is renamed later", async () => {

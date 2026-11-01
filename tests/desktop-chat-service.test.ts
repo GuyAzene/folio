@@ -206,6 +206,23 @@ describe("desktop chat service", () => {
     await expect(service.openChat("../../etc/passwd")).rejects.toThrow("Unknown chat");
   });
 
+  it("lists the document a course chat was last beside, so it can reopen there", async () => {
+    const { service, store } = await setup();
+    const documentId = randomUUID();
+    const beside = await store.create({
+      modelId: model.id,
+      scope: { courseId: randomUUID(), library: 1 },
+      focus: { documentId, page: 4 },
+    });
+    const alone = await store.create({ modelId: model.id, scope: { courseId: null }, focus: null });
+    const { chats } = await service.chats();
+    expect(chats.find((summary) => summary.id === beside.id)?.focus).toEqual({
+      documentId,
+      page: 4,
+    });
+    expect(chats.find((summary) => summary.id === alone.id)?.focus).toBeNull();
+  });
+
   it("does not accept a message while ChatGPT is disconnected or the input is invalid", async () => {
     const request = vi.fn(streaming);
     const offline = await setup({ connected: false, streamFn: request });

@@ -38,51 +38,34 @@ import type { AppAction } from "../../src/library/app-actions.ts";
 import type { ImportItem, NamingScope } from "../../src/library/naming.ts";
 import { citationLink } from "../../src/library/note-meta.ts";
 import { courseTab, type CourseTab } from "./course-tabs.ts";
+import { moveDraft, putDraft, readDrafts, type Draft } from "./drafts.ts";
+import {
+  activate,
+  activePane as activeIn,
+  closePane,
+  lastUsed,
+  mapPanes,
+  openBeside,
+  readWorkspace,
+  single,
+  withLocation,
+  withoutPanes,
+  type Layout,
+  type Location,
+  type Pane,
+  type Tab,
+} from "./layout.ts";
 import { shortTitle } from "./titles.ts";
 
-export type { CourseTab };
+export type { CourseTab, Layout, Location, Pane, Tab };
 export type ThemePreference = "system" | "light" | "dark";
 export type SettingsSection = "general" | "connections" | "models" | "categories";
-/** Folio beside a document, Folio full screen over it, or reading alone. */
-export type PanelMode = "docked" | "full" | "closed";
-
-export type Location =
-  | { view: "home" }
-  | { view: "library" }
-  | { view: "chats" }
-  | { view: "assignments" }
-  | { view: "jobs" }
-  | { view: "trash" }
-  | { view: "course"; courseId: string; tab: CourseTab }
-  | {
-      view: "document";
-      documentId: string;
-      page: number;
-      panel: PanelMode;
-      chatId: string | null;
-      /** What the panel beside the document shows: Folio's chat (the default) or a note. */
-      side?: "chat" | "note";
-      /** The note open beside the document; none picked yet when null. */
-      noteId?: string | null;
-    }
-  /** The notebook: every note, or one course's, with one open beside the list. */
-  | { view: "notes"; noteId: string | null; courseId: string | null }
-  /** A course's study notes, open at "topic:<slug>", "session:<slug>", or the first session. */
-  | { view: "study"; courseId: string; item: string | null }
-  | { view: "chat"; chatId: string | null; courseId: string | null };
-
 /** A question asked before something hard to undo, answered in a dialog. */
 export interface Confirmation {
   title: string;
   body: string;
   action: string;
   run: () => Promise<void>;
-}
-
-export interface Tab {
-  id: string;
-  history: Location[];
-  index: number;
 }
 
 /** The last place a citation asked the reader to go; the nonce makes repeats count. */
@@ -189,14 +172,22 @@ class FolioState {
   unavailableChats = $state(0);
   /** Loaded chats by ID. */
   chatViews = $state<Record<string, ChatView>>({});
-  /** A new chat's optimistic view, by tab, until Folio assigns its ID. */
+  /** A new chat's optimistic view, by pane, until Folio assigns its ID. */
   pending = $state<Record<string, ChatView>>({});
+  /** What the student is writing to each chat, until sent; see drafts.ts. */
+  drafts = $state<Record<string, Draft>>(this.#savedDrafts());
+  /** Pages, files and images added to a draft: kept while Folio is open, never saved. */
+  draftAdded = $state.raw<Record<string, Added[]>>({});
   jump = $state<Jump | null>(null);
 
-  tabs = $state<Tab[]>([{ id: newId(), history: [HOME], index: 0 }]);
+  tabs = $state<Tab[]>([{ id: newId(), history: [single(HOME, newId())], index: 0 }]);
   activeTabId = $state("");
   activeTab = $derived(this.tabs.find((tab) => tab.id === this.activeTabId) ?? this.tabs[0]!);
-  location = $derived(this.activeTab.history[this.activeTab.index] ?? HOME);
+  /** The active tab's panes as they are now. */
+  layout = $derived(this.activeTab.history[this.activeTab.index]!);
+  activePane = $derived(activeIn(this.layout));
+  /** The active pane's place. */
+  location = $derived(this.activePane.location);
 
   #api: FolioApi | null = null;
   #awaiting: string[] = [];
@@ -205,6 +196,7 @@ class FolioState {
   /** Each document's latest pending save, resolving to the revision it left. */
   #documentSaves = new Map<string, Promise<number>>();
   #saveTimer: ReturnType<typeof setTimeout> | undefined;
+  #draftTimer: ReturnType<typeof setTimeout> | undefined;
   #libraryTimer: ReturnType<typeof setTimeout> | undefined;
   #nonce = 0;
 
@@ -216,6 +208,8 @@ class FolioState {
     const api = plainCalls(bridge);
     this.#api = api;
     this.activeTabId = this.tabs[0]!.id;
+    // The last words typed before quitting are saved too.
+    addEventListener("pagehide", () => this.#writeDrafts());
     this.#loadTheme();
     api.onEvent((event) => this.#onEvent(event));
     try {
@@ -407,37 +401,115 @@ class FolioState {
     this.settingsSection = section;
     this.settingsOpen = true;
   }
-  chatFor(chatId: string | null, tabId: string): ChatView | null {
-    return chatId ? (this.chatViews[chatId] ?? null) : (this.pending[tabId] ?? null);
+  chatFor(chatId: string | null, paneId: string): ChatView | null {
+    return chatId ? (this.chatViews[chatId] ?? null) : (this.pending[paneId] ?? null);
   }
   running(chat: ChatView | null): boolean {
     return chat?.messages.at(-1)?.state === "streaming";
   }
 
-  // ── Navigation ──────────────────────────────────────────────────────────
+  // ── Tabs and panes ──────────────────────────────────────────────────────
 
-  navigate(location: Location, options: { newTab?: boolean } = {}): void {
-    if (options.newTab) {
-      this.openTab(location);
-      return;
-    }
-    const tab = this.activeTab;
-    tab.history = [...tab.history.slice(0, tab.index + 1), location];
+  #current(tab: Tab): Layout {
+    return tab.history[tab.index]!;
+  }
+
+  /** The tab whose current layout has this pane. */
+  #tabOf(paneId: string): Tab | undefined {
+    return this.tabs.find((tab) => this.#current(tab).panes.some((pane) => pane.id === paneId));
+  }
+
+  /** The current layout the pane is in. */
+  layoutOf(paneId: string): Layout | undefined {
+    const tab = this.#tabOf(paneId);
+    return tab && this.#current(tab);
+  }
+
+  locationOf(paneId: string): Location {
+    return this.layoutOf(paneId)?.panes.find((pane) => pane.id === paneId)?.location ?? HOME;
+  }
+
+  /** A navigation: a step Back can undo. */
+  #push(tab: Tab, layout: Layout): void {
+    tab.history = [...tab.history.slice(0, tab.index + 1), layout];
     tab.index = tab.history.length - 1;
     this.#changed();
   }
 
-  /** Changes the current place without adding a history step (the page you are on, panel mode). */
-  update(patch: Partial<Location>, tabId = this.activeTabId): void {
-    const tab = this.tabs.find((candidate) => candidate.id === tabId);
-    if (!tab) return;
-    tab.history[tab.index] = { ...tab.history[tab.index]!, ...patch } as Location;
+  /** A change to where the tab already is (a page turned, a pane resized): no history step. */
+  #replace(tab: Tab, layout: Layout): void {
+    tab.history[tab.index] = layout;
     this.#changed();
   }
 
-  locationOf(tabId: string): Location {
+  /**
+   * Goes to a place in the active pane, or in `paneId`; in a new tab, or in a new pane beside
+   * the active one.
+   */
+  navigate(
+    location: Location,
+    options: { newTab?: boolean; beside?: boolean; paneId?: string } = {},
+  ): void {
+    if (options.newTab) {
+      this.openTab(location);
+      return;
+    }
+    const tab = (options.paneId && this.#tabOf(options.paneId)) || this.activeTab;
+    const layout = this.#current(tab);
+    const target = layout.panes.some((pane) => pane.id === options.paneId)
+      ? options.paneId!
+      : activeIn(layout).id;
+    this.#push(
+      tab,
+      options.beside
+        ? openBeside(layout, location, target, newId())
+        : activate(withLocation(layout, target, location), target),
+    );
+  }
+
+  /** Changes a pane's place without a history step (the page you are on, a course's tab). */
+  update(patch: Partial<Location>, paneId = this.activePane.id): void {
+    const tab = this.#tabOf(paneId);
+    if (!tab) return;
+    const layout = this.#current(tab);
+    const pane = layout.panes.find((candidate) => candidate.id === paneId)!;
+    this.#replace(tab, withLocation(layout, paneId, { ...pane.location, ...patch } as Location));
+  }
+
+  /** The pane the student is working in now, which a click or a keystroke makes active. */
+  activatePane(paneId: string): void {
+    const tab = this.#tabOf(paneId);
+    if (!tab) return;
+    const layout = this.#current(tab);
+    const next = activate(layout, paneId);
+    if (next !== layout) this.#replace(tab, next);
+  }
+
+  /** Closes a pane; Back brings it back. A tab's last pane closes the tab. */
+  closePane(paneId: string): void {
+    const tab = this.#tabOf(paneId);
+    if (!tab) return;
+    const layout = this.#current(tab);
+    if (layout.panes.length === 1) {
+      this.closeTab(tab.id);
+      return;
+    }
+    const closing = layout.panes.find((pane) => pane.id === paneId)!;
+    if (closing.location.view === "chat" && lastUsed(layout, "document")) this.#keepBeside(false);
+    this.#push(tab, closePane(layout, paneId));
+  }
+
+  /** Shows a pane alone, or all of them again. */
+  toggleMaximized(paneId: string): void {
+    const tab = this.#tabOf(paneId);
+    if (!tab) return;
+    const layout = activate(this.#current(tab), paneId);
+    this.#replace(tab, { ...layout, maximized: layout.maximized === paneId ? null : paneId });
+  }
+
+  resizePanes(tabId: string, sizes: number[]): void {
     const tab = this.tabs.find((candidate) => candidate.id === tabId);
-    return tab?.history[tab.index] ?? HOME;
+    if (tab) this.#replace(tab, { ...this.#current(tab), sizes });
   }
 
   back(): void {
@@ -450,7 +522,11 @@ class FolioState {
   }
 
   openTab(location: Location = HOME): void {
-    const tab: Tab = { id: newId(), history: [location], index: 0 };
+    this.#openTab(this.#withChat(single(location, newId())));
+  }
+
+  #openTab(layout: Layout): void {
+    const tab: Tab = { id: newId(), history: [layout], index: 0 };
     const at = this.tabs.findIndex((candidate) => candidate.id === this.activeTabId);
     this.tabs.splice(at + 1, 0, tab);
     this.activeTabId = tab.id;
@@ -460,9 +536,9 @@ class FolioState {
   closeTab(id: string): void {
     const index = this.tabs.findIndex((tab) => tab.id === id);
     if (index < 0) return;
-    delete this.pending[id];
+    for (const pane of this.#current(this.tabs[index]!).panes) delete this.pending[pane.id];
     if (this.tabs.length === 1) {
-      this.tabs = [{ id: newId(), history: [HOME], index: 0 }];
+      this.tabs = [{ id: newId(), history: [single(HOME, newId())], index: 0 }];
       this.activeTabId = this.tabs[0]!.id;
     } else {
       this.tabs.splice(index, 1);
@@ -483,51 +559,234 @@ class FolioState {
     this.#changed();
   }
 
-  /** Opens a document, reusing a tab that already shows it, and goes to the page. */
+  /** A pane showing a place, in the active tab first, most recently used first. */
+  #find(test: (location: Location) => boolean): { tab: Tab; pane: Pane } | undefined {
+    for (const tab of [this.activeTab, ...this.tabs.filter((tab) => tab !== this.activeTab)]) {
+      const layout = this.#current(tab);
+      const pane = layout.recent
+        .map((id) => layout.panes.find((candidate) => candidate.id === id)!)
+        .find((candidate) => test(candidate.location));
+      if (pane) return { tab, pane };
+    }
+    return undefined;
+  }
+
+  #show(found: { tab: Tab; pane: Pane }): void {
+    this.activeTabId = found.tab.id;
+    this.activatePane(found.pane.id);
+  }
+
+  /**
+   * A document opened alone gets a new chat beside it, as long as the student keeps one there:
+   * closing the chat beside a document stops it, Ask Folio starts it again.
+   */
+  besideDocuments = $state(this.#savedFlag("folio.besideDocuments") ?? true);
+
+  #keepBeside(on: boolean): void {
+    this.besideDocuments = on;
+    try {
+      localStorage.setItem("folio.besideDocuments", on ? "1" : "0");
+    } catch {
+      // A per-device convenience.
+    }
+  }
+
+  #withChat(layout: Layout): Layout {
+    const pane = layout.panes[0]!;
+    if (layout.panes.length !== 1 || pane.location.view !== "document" || !this.besideDocuments)
+      return layout;
+    const courseId = this.document(pane.location.documentId)?.courseId ?? null;
+    return openBeside(layout, { view: "chat", chatId: null, courseId }, pane.id, newId(), {
+      activate: false,
+    });
+  }
+
+  /**
+   * Opens a document at a page. A page link in a chat opens in the document that chat follows,
+   * or beside the chat; a document already open goes to the page there. Otherwise it opens in
+   * the active pane, or, when that is a chat beside a document, in that document.
+   */
   openDocument(
     documentId: string,
     page = 1,
-    options: { newTab?: boolean; chatId?: string | null } = {},
+    options: { newTab?: boolean; beside?: boolean; chatId?: string | null } = {},
   ): void {
-    const existing = this.tabs.find((tab) => {
-      const location = tab.history[tab.index];
-      return location?.view === "document" && location.documentId === documentId;
-    });
-    if (existing && !options.newTab) {
-      this.activeTabId = existing.id;
-      this.update({ page } as Partial<Location>, existing.id);
-    } else {
-      this.navigate(
-        { view: "document", documentId, page, panel: "docked", chatId: options.chatId ?? null },
-        { newTab: options.newTab },
+    const location = { view: "document" as const, documentId, page };
+    const tab = this.activeTab;
+    const layout = this.layout;
+    const fromChat = options.chatId
+      ? layout.panes.find(
+          (pane) => pane.location.view === "chat" && pane.location.chatId === options.chatId,
+        )
+      : undefined;
+    const followed = lastUsed(layout, "document");
+    if (options.newTab) this.openTab(location);
+    else if (options.beside) this.navigate(location, { beside: true });
+    else if (fromChat && followed) this.#goTo(followed, location);
+    else if (fromChat)
+      this.#push(tab, openBeside(layout, location, fromChat.id, newId(), { side: "left" }));
+    else {
+      const open = this.#find(
+        (shown) => shown.view === "document" && shown.documentId === documentId,
       );
+      const active = activeIn(layout);
+      if (open) {
+        this.#show(open);
+        this.update({ page }, open.pane.id);
+      } else if (active.location.view === "chat" && followed) this.#goTo(followed, location);
+      else
+        this.#push(
+          tab,
+          this.#withChat(activate(withLocation(layout, active.id, location), active.id)),
+        );
     }
     this.jump = { documentId, page, nonce: ++this.#nonce };
   }
 
+  /** A document pane goes to a document: a new step, or only a page turn within the same one. */
+  #goTo(pane: Pane, location: Extract<Location, { view: "document" }>): void {
+    if (pane.location.view === "document" && pane.location.documentId === location.documentId) {
+      this.update({ page: location.page }, pane.id);
+      this.activatePane(pane.id);
+    } else this.navigate(location, { paneId: pane.id });
+  }
+
   /**
-   * Opens a note in the notebook, reusing a tab that already shows the notebook. Its course
+   * The chat pane beside a document pane: the tab's chat used last, or a new chat for the
+   * document's course on its right. A course chat can't read another course's pages, so one
+   * for another course gives way to a new chat for this one.
+   */
+  chatBeside(documentPaneId: string): string | null {
+    const tab = this.#tabOf(documentPaneId);
+    if (!tab) return null;
+    const layout = this.#current(tab);
+    const shown = layout.panes.find((pane) => pane.id === documentPaneId)?.location;
+    if (shown?.view !== "document") return null;
+    const courseId = this.document(shown.documentId)?.courseId ?? null;
+    const fresh: Location = { view: "chat", chatId: null, courseId };
+    const chat = lastUsed(layout, "chat");
+    this.#keepBeside(true);
+    if (!chat) {
+      const id = newId();
+      this.#push(tab, openBeside(layout, fresh, documentPaneId, id, { activate: false }));
+      return id;
+    }
+    const summary = this.chats.find((candidate) => candidate.id === chat.location.chatId);
+    const other = chat.location.chatId
+      ? summary?.kind === "course" && summary.courseId !== courseId
+      : chat.location.courseId !== courseId;
+    if (other) this.navigate(fresh, { paneId: chat.id });
+    return chat.id;
+  }
+
+  /**
+   * The note pane beside a document pane, opened if needed on the note there, else the note
+   * that cites the document, else a new note named after it. Returns the note's ID.
+   */
+  async noteBeside(documentPaneId: string): Promise<string | null> {
+    const shown = this.locationOf(documentPaneId);
+    if (shown.view !== "document") return null;
+    const before = this.layoutOf(documentPaneId);
+    const open = before && lastUsed(before, "notes");
+    if (open?.location.noteId) return open.location.noteId;
+    const noteId =
+      this.noteCiting(shown.documentId)?.id ?? (await this.createNoteBeside(shown.documentId));
+    const tab = this.#tabOf(documentPaneId);
+    if (!noteId || !tab) return null;
+    const layout = this.#current(tab);
+    const pane = lastUsed(layout, "notes");
+    const courseId = this.document(shown.documentId)?.courseId ?? null;
+    this.#push(
+      tab,
+      pane
+        ? withLocation(layout, pane.id, { ...pane.location, noteId })
+        : openBeside(layout, { view: "notes", noteId, courseId }, documentPaneId, newId(), {
+            activate: false,
+          }),
+    );
+    return noteId;
+  }
+
+  /**
+   * Opens a chat as it was: beside the document it was last about, at that page, while the
+   * document is still there. A tab already showing the chat comes forward; a chat that was
+   * never beside a document opens on its own.
+   */
+  openChat(chatId: string, options: { newTab?: boolean } = {}): void {
+    const summary = this.chats.find((chat) => chat.id === chatId);
+    const chat: Location = { view: "chat", chatId, courseId: summary?.courseId ?? null };
+    const shown = options.newTab
+      ? undefined
+      : this.#find((location) => location.view === "chat" && location.chatId === chatId);
+    if (shown) {
+      this.#show(shown);
+      return;
+    }
+    const document = this.document(summary?.focus?.documentId);
+    if (!document) {
+      this.navigate(chat, options);
+      return;
+    }
+    const page = Math.min(Math.max(1, summary!.focus!.page), document.pages ?? 1);
+    const reader = newId();
+    const layout = openBeside(
+      single({ view: "document", documentId: document.id, page }, reader),
+      chat,
+      reader,
+      newId(),
+    );
+    if (options.newTab) this.#openTab(layout);
+    else this.#push(this.activeTab, layout);
+    this.jump = { documentId: document.id, page, nonce: ++this.#nonce };
+  }
+
+  /** Text for a note open in some pane, added at its end as the student's own edit. */
+  noteInsert = $state<{ noteId: string; text: string; nonce: number } | null>(null);
+
+  insertIntoNote(noteId: string, text: string): void {
+    this.noteInsert = { noteId, text, nonce: ++this.#nonce };
+  }
+
+  /** A pane whose message box should take the keyboard, such as after Ask…. */
+  composerFocus = $state<{ paneId: string; nonce: number } | null>(null);
+
+  focusComposer(paneId: string): void {
+    this.composerFocus = { paneId, nonce: ++this.#nonce };
+  }
+
+  /** ⌘J: Folio beside the document, or away again. */
+  toggleFolio(): void {
+    const layout = this.layout;
+    const chat = lastUsed(layout, "chat");
+    const active = activeIn(layout);
+    if (chat && lastUsed(layout, "document")) this.closePane(chat.id);
+    else if (active.location.view === "document") {
+      const id = this.chatBeside(active.id);
+      if (id) this.focusComposer(id);
+    }
+  }
+
+  /**
+   * Opens a note in the notebook, reusing a pane that already shows the notebook. Its course
    * filter stays when the note belongs to that course.
    */
   openNote(noteId: string, options: { newTab?: boolean; courseId?: string | null } = {}): void {
     const courseOf = this.note(noteId)?.courseId ?? null;
-    const existing = options.newTab
-      ? undefined
-      : (this.tabs.find(
-          (tab) => tab.id === this.activeTabId && tab.history[tab.index]?.view === "notes",
-        ) ?? this.tabs.find((tab) => tab.history[tab.index]?.view === "notes"));
-    const shown = existing?.history[existing.index];
+    const existing = options.newTab ? undefined : this.#find((shown) => shown.view === "notes");
+    const shown = existing?.pane.location;
     const filter =
       options.courseId !== undefined
         ? options.courseId
         : shown?.view === "notes" && shown.courseId === courseOf
           ? courseOf
           : null;
-    if (existing) {
-      this.selectTab(existing.id);
-      if (shown?.view === "notes" && shown.noteId === noteId && shown.courseId === filter) return;
+    if (!existing) {
+      this.navigate({ view: "notes", noteId, courseId: filter }, { newTab: options.newTab });
+      return;
     }
-    this.navigate({ view: "notes", noteId, courseId: filter }, { newTab: options.newTab });
+    this.#show(existing);
+    if (shown?.view === "notes" && shown.noteId === noteId && shown.courseId === filter) return;
+    this.navigate({ view: "notes", noteId, courseId: filter }, { paneId: existing.pane.id });
   }
 
   togglePin(noteId: string): void {
@@ -550,21 +809,22 @@ class FolioState {
     }
   }
 
-  /** Opens a course's study notes at a topic or session, reusing a tab that shows them. */
+  /** Opens a course's study notes at a topic or session, reusing a pane that shows them. */
   openStudyNotes(
     courseId: string,
     item: string | null = null,
     options: { newTab?: boolean } = {},
   ): void {
-    const existing = this.tabs.find((tab) => {
-      const location = tab.history[tab.index];
-      return location?.view === "study" && location.courseId === courseId;
-    });
-    if (existing && !options.newTab) {
-      this.selectTab(existing.id);
-      if ((this.location as { item?: string | null }).item !== item)
-        this.navigate({ view: "study", courseId, item });
-    } else this.navigate({ view: "study", courseId, item }, options);
+    const existing = options.newTab
+      ? undefined
+      : this.#find((shown) => shown.view === "study" && shown.courseId === courseId);
+    if (!existing) {
+      this.navigate({ view: "study", courseId, item }, options);
+      return;
+    }
+    this.#show(existing);
+    if ((existing.pane.location as { item?: string | null }).item !== item)
+      this.navigate({ view: "study", courseId, item }, { paneId: existing.pane.id });
   }
 
   /**
@@ -611,13 +871,13 @@ class FolioState {
   }
 
   /**
-   * Sends from a tab's chat (a full chat or the panel beside a document). Shows the message at
+   * Sends from a pane's chat. Shows the message at
    * once; returns null (keep the draft) if Folio did not accept it.
    */
   async send(
     text: string,
     context: {
-      tabId: string;
+      paneId: string;
       chatId: string | null;
       courseId: string | null;
       focus: Focus | null;
@@ -659,7 +919,7 @@ class FolioState {
         reads: previous.kind === "course" ? reads(previous.reads) : previous.reads,
       };
     else
-      this.pending[context.tabId] = {
+      this.pending[context.paneId] = {
         id: "",
         kind: context.courseId ? "course" : "library",
         title: chatTitle(text),
@@ -674,7 +934,7 @@ class FolioState {
           : { courses: [], documents: [] },
       };
     this.error = null;
-    if (!context.chatId) this.#awaiting.push(context.tabId);
+    if (!context.chatId) this.#awaiting.push(context.paneId);
     try {
       const { chatId } = await this.#api.send({
         chatId: context.chatId,
@@ -691,15 +951,15 @@ class FolioState {
         ...(this.webSearch ? {} : { webSearch: false }),
         ...(added.length ? { attachments: added.map((item) => item.input) } : {}),
       });
-      if (!context.chatId) this.#adopt(context.tabId, chatId);
+      if (!context.chatId) this.#adopt(context.paneId, chatId);
       return chatId;
     } catch (error) {
       if (context.chatId && previous) this.chatViews[context.chatId] = previous;
-      delete this.pending[context.tabId];
+      delete this.pending[context.paneId];
       this.error = message(error);
       return null;
     } finally {
-      this.#awaiting = this.#awaiting.filter((id) => id !== context.tabId);
+      this.#awaiting = this.#awaiting.filter((id) => id !== context.paneId);
     }
   }
 
@@ -707,17 +967,63 @@ class FolioState {
     if (chatId) void this.#api?.cancel(chatId);
   }
 
+  /** Records the page a course chat is beside; the chat list knows it at once, to reopen there. */
   setFocus(chatId: string | null, focus: Focus): void {
-    if (chatId) void this.#api?.setFocus(chatId, focus).catch(() => undefined);
+    if (!chatId) return;
+    void this.#api
+      ?.setFocus(chatId, focus)
+      .then(() => {
+        const summary = this.chats.find((chat) => chat.id === chatId);
+        if (summary?.kind === "course") summary.focus = focus;
+      })
+      .catch(() => undefined);
   }
 
-  #adopt(tabId: string, chatId: string): void {
-    const location = this.locationOf(tabId);
-    if ((location.view === "chat" || location.view === "document") && location.chatId === null)
-      this.update({ chatId } as Partial<Location>, tabId);
-    if (!this.chatViews[chatId] && this.pending[tabId])
-      this.chatViews[chatId] = { ...this.pending[tabId]!, id: chatId };
-    delete this.pending[tabId];
+  #adopt(paneId: string, chatId: string): void {
+    const location = this.locationOf(paneId);
+    if (location.view === "chat" && location.chatId === null) this.update({ chatId }, paneId);
+    if (!this.chatViews[chatId] && this.pending[paneId])
+      this.chatViews[chatId] = { ...this.pending[paneId]!, id: chatId };
+    delete this.pending[paneId];
+    // Anything written while the first question was on its way stays with the new chat.
+    this.drafts = moveDraft(this.drafts, `new:${paneId}`, chatId);
+    this.draftAdded = moveDraft(this.draftAdded, `new:${paneId}`, chatId);
+    this.#saveDrafts();
+  }
+
+  // ── Drafts ──────────────────────────────────────────────────────────────
+
+  setDraft(key: string, patch: Partial<Pick<Draft, "text" | "quote">>): void {
+    this.drafts = putDraft(this.drafts, key, patch);
+    this.#saveDrafts();
+  }
+
+  setDraftAdded(key: string, added: Added[]): void {
+    const rest = { ...this.draftAdded };
+    delete rest[key];
+    this.draftAdded = added.length ? { ...rest, [key]: added } : rest;
+  }
+
+  #saveDrafts(): void {
+    clearTimeout(this.#draftTimer);
+    this.#draftTimer = setTimeout(() => this.#writeDrafts(), 400);
+  }
+
+  #writeDrafts(): void {
+    clearTimeout(this.#draftTimer);
+    try {
+      localStorage.setItem("folio.drafts", JSON.stringify(this.drafts));
+    } catch {
+      // A per-device convenience; drafts last until Folio closes.
+    }
+  }
+
+  #savedDrafts(): Record<string, Draft> {
+    try {
+      return readDrafts(JSON.parse(localStorage.getItem("folio.drafts") ?? "{}"));
+    } catch {
+      return {};
+    }
   }
 
   // ── Library ─────────────────────────────────────────────────────────────
@@ -809,10 +1115,12 @@ class FolioState {
     );
     // The notebook stays open, with nothing selected where the note was.
     for (const tab of this.tabs)
-      tab.history = tab.history.map((location) =>
-        location.view === "notes" && location.noteId === id
-          ? { ...location, noteId: null }
-          : location,
+      tab.history = tab.history.map((layout) =>
+        mapPanes(layout, (location) =>
+          location.view === "notes" && location.noteId === id
+            ? { ...location, noteId: null }
+            : location,
+        ),
       );
     this.#changed();
   }
@@ -922,13 +1230,17 @@ class FolioState {
     }
   }
 
-  /** Takes removed things out of every tab's history; a tab left with nothing goes home. */
+  /**
+   * Takes removed things out of every tab's history: their panes close, a step left with no
+   * pane goes, and a tab left with nothing goes home.
+   */
   #forget(showed: (location: Location) => boolean): void {
     for (const tab of this.tabs) {
-      const current = tab.history[tab.index];
-      const kept = tab.history.filter((location) => !showed(location));
-      if (kept.length === tab.history.length) continue;
-      tab.history = kept.length ? kept : [HOME];
+      const steps = tab.history.map((layout) => withoutPanes(layout, showed));
+      if (steps.every((step, index) => step === tab.history[index])) continue;
+      const current = steps[tab.index] ?? null;
+      const kept = steps.filter((step): step is Layout => step !== null);
+      tab.history = kept.length ? kept : [single(HOME, newId())];
       const at = current ? tab.history.indexOf(current) : -1;
       tab.index = at >= 0 ? at : Math.min(tab.index, tab.history.length - 1);
     }
@@ -1431,33 +1743,24 @@ class FolioState {
 
   // ── Workspace ───────────────────────────────────────────────────────────
 
-  /** Open tabs and reading positions come back on relaunch; nothing is re-run. */
+  /** Open tabs, their panes and reading positions come back on relaunch; nothing is re-run. */
   async #restoreWorkspace(): Promise<void> {
-    const saved = (await this.#api!.loadWorkspace().catch(() => null)) as {
-      version?: number;
-      tabs?: { id?: string; location?: Location }[];
-      active?: string;
-      sidebarOpen?: boolean;
-    } | null;
-    if (saved?.version !== 1 || !Array.isArray(saved.tabs)) return;
-    const tabs: Tab[] = [];
-    for (const tab of saved.tabs) {
-      const location = this.#valid(tab.location);
-      if (location)
-        tabs.push({
-          id: typeof tab.id === "string" ? tab.id : newId(),
-          history: [location],
-          index: 0,
-        });
-    }
-    if (!tabs.length) return;
-    this.tabs = tabs;
-    this.activeTabId = tabs.some((tab) => tab.id === saved.active) ? saved.active! : tabs[0]!.id;
-    if (typeof saved.sidebarOpen === "boolean") this.sidebarOpen = saved.sidebarOpen;
+    const saved = await this.#api!.loadWorkspace().catch(() => null);
+    const workspace = readWorkspace(
+      saved,
+      (location) => this.#valid(location),
+      (documentId) => this.document(documentId)?.courseId ?? null,
+      newId,
+    );
+    if (!workspace) return;
+    this.tabs = workspace.tabs.map((tab) => ({ id: tab.id, history: [tab.layout], index: 0 }));
+    this.activeTabId = workspace.active ?? this.tabs[0]!.id;
+    if (workspace.sidebarOpen !== null) this.sidebarOpen = workspace.sidebarOpen;
   }
 
-  #valid(location: Location | undefined): Location | null {
-    if (!location || typeof location !== "object") return null;
+  #valid(saved: unknown): Location | null {
+    if (!saved || typeof saved !== "object") return null;
+    const location = saved as Location;
     // Practice was a placeholder place until 2026-10-29; a tab saved on it reopens at Home.
     if ((location as { view: unknown }).view === "practice") return HOME;
     // A note opened alone until 2026-10-29; it reopens in the notebook.
@@ -1482,17 +1785,12 @@ class FolioState {
       case "document": {
         const document = this.document(location.documentId);
         if (!document) return null;
-        const chatId = this.chats.some((chat) => chat.id === location.chatId)
-          ? location.chatId
-          : null;
+        const zoom = Number(location.zoom);
         return {
           view: "document",
           documentId: document.id,
           page: Math.min(Math.max(1, Number(location.page) || 1), document.pages ?? 1),
-          panel: ["docked", "full", "closed"].includes(location.panel) ? location.panel : "docked",
-          chatId,
-          side: location.side === "note" ? "note" : "chat",
-          noteId: this.note(location.noteId)?.id ?? null,
+          ...(zoom >= 0.5 && zoom <= 3 ? { zoom } : {}),
         };
       }
       case "notes":
@@ -1527,8 +1825,8 @@ class FolioState {
     this.#saveTimer = setTimeout(() => {
       this.#noteReading();
       const state = {
-        version: 1,
-        tabs: this.tabs.map((tab) => ({ id: tab.id, location: tab.history[tab.index] })),
+        version: 2,
+        tabs: this.tabs.map((tab) => ({ id: tab.id, layout: this.#current(tab) })),
         active: this.activeTabId,
         sidebarOpen: this.sidebarOpen,
       };
@@ -1539,10 +1837,10 @@ class FolioState {
   /** Where the student last read each document, on this device: what "Pick up" resumes. */
   reading = $state<Record<string, { page: number; at: string }>>(this.#savedReading());
 
-  /** Records the open document's page once the student settles on it. */
+  /** Records the open document's page once the student settles on it, chat beside or not. */
   #noteReading(): void {
-    const location = this.location;
-    if (location.view !== "document") return;
+    const location = lastUsed(this.layout, "document")?.location;
+    if (!location) return;
     const last = this.reading[location.documentId];
     if (last?.page === location.page && Date.now() - Date.parse(last.at) < 60_000) return;
     this.reading[location.documentId] = { page: location.page, at: new Date().toISOString() };

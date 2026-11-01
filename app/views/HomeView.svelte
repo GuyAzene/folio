@@ -4,7 +4,7 @@
   import FolioMark from "../components/FolioMark.svelte";
   import { folio } from "../lib/state.svelte.ts";
 
-  let { tabId }: { tabId: string } = $props();
+  let { paneId }: { paneId: string } = $props();
   let composer = $state<Composer>();
 
   const greeting = $derived.by(() => {
@@ -37,7 +37,7 @@
     <div class="mt-7">
       <Composer
         bind:this={composer}
-        {tabId}
+        {paneId}
         chatId={null}
         courseId={null}
         large

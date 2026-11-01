@@ -4,7 +4,6 @@
     ChevronDown,
     Copy,
     FileText,
-    Globe,
     NotebookPen,
     Plus,
     ScanText,
@@ -28,6 +27,7 @@
   import PendingCard from "./PendingCard.svelte";
   import SourceList from "./SourceList.svelte";
   import VisualCard from "./VisualCard.svelte";
+  import WebSources from "./WebSources.svelte";
 
   /**
    * `chatId` lets a citation open its page with this chat beside it. `base` is the direction of
@@ -372,29 +372,7 @@
       <SourceList sources={message.sources} {chatId} />
     {/if}
     {#if message.webSources?.length}
-      <div class="flex flex-col gap-1.5">
-        <span class="text-[11px] font-medium tracking-[0.06em] text-text-3 uppercase"
-          >From the web</span
-        >
-        <div class="flex flex-wrap gap-1.5">
-          {#each message.webSources as source, index (source.url)}
-            <a
-              href={source.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              title={source.url}
-              class="inline-flex h-6 max-w-full items-center gap-1.5 rounded-md border border-line-subtle bg-sunken px-2 text-[12px] whitespace-nowrap text-text-2 no-underline transition-colors hover:border-line hover:text-text dark:bg-raised"
-            >
-              <Globe size={12} strokeWidth={1.75} class="shrink-0" />
-              <span class="shrink-0 tabular-nums text-text-3">{index + 1}</span>
-              <span class="max-w-[220px] min-w-0 truncate" dir="auto">{source.title}</span>
-              <span class="max-w-[140px] shrink-0 truncate text-text-3"
-                >{new URL(source.url).hostname.replace(/^www\./, "")}</span
-              >
-            </a>
-          {/each}
-        </div>
-      </div>
+      <WebSources sources={message.webSources} />
     {/if}
     {#each message.proposals ?? [] as id (id)}
       <ProposalCard {id} />

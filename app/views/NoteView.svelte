@@ -1,11 +1,12 @@
 <script lang="ts">
   import { DropdownMenu, ToggleGroup } from "bits-ui";
-  import { onDestroy, tick, untrack } from "svelte";
+  import { onDestroy, tick, untrack, type Snippet } from "svelte";
   import { History, Pin, PinOff, TableOfContents, Trash2 } from "@lucide/svelte";
   import type { NoteVersionView } from "../../src/desktop/api.ts";
   import CourseTile from "../components/CourseTile.svelte";
   import IconButton from "../components/IconButton.svelte";
   import NoteBacklinks from "../components/NoteBacklinks.svelte";
+  import PaneControls from "../components/PaneControls.svelte";
   import {
     citationLabel,
     noteHeadings,
@@ -25,9 +26,14 @@
 
   /**
    * The student's own Markdown note. Saves as they type; never overwrites edits made elsewhere.
-   * Compact, beside a document, it leaves out the course, pin and outline.
+   * Compact, beside a document, it leaves out the course, pin and outline; `lead` takes the
+   * title's place in its header there, such as a menu of other notes.
    */
-  let { noteId, compact = false }: { noteId: string; compact?: boolean } = $props();
+  let {
+    noteId,
+    compact = false,
+    lead,
+  }: { noteId: string; compact?: boolean; lead?: Snippet } = $props();
 
   type Status =
     "loading" | "saved" | "editing" | "saving" | "conflict" | "missing";
@@ -73,7 +79,7 @@
     }
     if (target.startsWith("chat:")) {
       const chat = folio.chats.find((candidate) => candidate.id === target.slice(5));
-      if (chat) folio.navigate({ view: "chat", chatId: chat.id, courseId: chat.courseId }, { newTab });
+      if (chat) folio.openChat(chat.id, { newTab });
       else folio.error = "That chat is no longer in Folio.";
       return;
     }
@@ -194,6 +200,14 @@
     }
   }
   void load();
+
+  // "Add this page to a note" and "Quote to notes" in a document beside this note.
+  $effect(() => {
+    const request = folio.noteInsert;
+    if (request?.noteId !== noteId) return;
+    folio.noteInsert = null;
+    void insert(request.text);
+  });
 
   // A save elsewhere (Folio keeping an edit, another app) reloads a note with no unsaved typing,
   // and stops autosave for one that has some.
@@ -324,7 +338,9 @@
     <div
       class="@container flex h-11 shrink-0 items-center gap-2 border-b border-line-subtle px-4"
     >
-      {#if !compact}
+      {#if lead}
+        {@render lead()}
+      {:else if !compact}
         {#if course}<CourseTile {course} size={16} />{/if}
         <span class="min-w-0 truncate font-medium text-text"
           >{note?.title ?? "Note"}</span
@@ -368,7 +384,7 @@
         }}
       >
         <DropdownMenu.Trigger
-          class="flex size-7 shrink-0 items-center justify-center rounded-md text-text-3 transition-colors hover:bg-hover hover:text-text data-[state=open]:bg-hover data-[state=open]:text-text"
+          class="flex size-7 shrink-0 items-center justify-center rounded-md text-text-3 transition-colors hover:bg-hover hover:text-text data-[state=open]:bg-hover data-[state=open]:text-text @max-[400px]:hidden"
           aria-label="Earlier versions"
           title="Earlier versions"
         >
@@ -412,7 +428,7 @@
       </DropdownMenu.Root>
       <IconButton
         label="Move note to Trash"
-        class="hover:text-danger"
+        class="hover:text-danger @max-[440px]:hidden"
         onclick={async () => {
           // Unsaved typing is saved first, so restoring brings back the latest text.
           await save();
@@ -430,12 +446,13 @@
         {#each [{ value: "edit", label: "Edit" }, { value: "source", label: "Source" }, { value: "read", label: "Read" }] as option (option.value)}
           <ToggleGroup.Item
             value={option.value}
-            class="h-[24px] rounded-md px-2.5 text-[12px] font-medium text-text-2 transition-colors data-[state=on]:bg-surface data-[state=on]:text-text data-[state=on]:shadow-[0_1px_2px_#18181b14,0_0_0_1px_#18181b0a] dark:data-[state=on]:bg-selected"
+            class="h-[24px] rounded-md px-2.5 text-[12px] font-medium @max-[440px]:px-1.5 text-text-2 transition-colors data-[state=on]:bg-surface data-[state=on]:text-text data-[state=on]:shadow-[0_1px_2px_#18181b14,0_0_0_1px_#18181b0a] dark:data-[state=on]:bg-selected"
           >
             {option.label}
           </ToggleGroup.Item>
         {/each}
       </ToggleGroup.Root>
+      <PaneControls />
     </div>
 
     {#if status === "conflict"}

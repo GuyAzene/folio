@@ -385,13 +385,15 @@ function chatKind(scope: SessionRecord["scope"]): ChatKind {
 export function chatSummaries(sessions: SessionSummary[]): ChatSummary[] {
   return sessions
     .filter((session) => session.scope.courseId === null || "library" in session.scope)
-    .map(({ id, title, updatedAt, status, scope }) => ({
+    .map(({ id, title, updatedAt, status, scope, focus }) => ({
       id,
       kind: chatKind(scope),
       title,
       updatedAt,
       status,
       courseId: "library" in scope ? scope.courseId : null,
+      focus:
+        focus?.documentId !== undefined ? { documentId: focus.documentId, page: focus.page } : null,
     }));
 }
 

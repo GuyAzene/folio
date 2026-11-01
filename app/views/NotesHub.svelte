@@ -5,17 +5,29 @@
   import type { NoteView as Note } from "../../src/desktop/api.ts";
   import CourseTile from "../components/CourseTile.svelte";
   import IconButton from "../components/IconButton.svelte";
+  import NotePicker from "../components/NotePicker.svelte";
   import NoteRow from "../components/NoteRow.svelte";
+  import PaneControls from "../components/PaneControls.svelte";
   import { noteGroup, PENCIL } from "../lib/labels.ts";
+  import { getPane } from "../lib/pane.ts";
   import { folio } from "../lib/state.svelte.ts";
   import NoteView from "./NoteView.svelte";
 
   /**
    * The notebook: every note on the left, newest first under Pinned, Today, Previous 7 days and
    * so on, and the open note on the right. Courses are the folders and #tags cut across them;
-   * search reads the notes' text. A course's own notes are this view filtered to it.
+   * search reads the notes' text. A course's own notes are this view filtered to it. In a narrow
+   * pane, beside a document, it shows only the open note, with the others in a menu.
    */
-  let { noteId, courseId }: { noteId: string | null; courseId: string | null } = $props();
+  let {
+    paneId,
+    noteId,
+    courseId,
+  }: { paneId: string; noteId: string | null; courseId: string | null } = $props();
+  const pane = getPane();
+  const compact = $derived((pane?.width ?? 1000) < 640);
+  /** The document beside this pane, whose notes come first in the menu. */
+  const beside = $derived(pane?.source?.location.documentId ?? null);
 
   let query = $state("");
   let tag = $state<string | null>(null);
@@ -106,11 +118,21 @@
 
   function open(id: string, newTab = false): void {
     if (newTab) folio.openNote(id, { newTab: true });
-    else if (id !== noteId) folio.navigate({ view: "notes", noteId: id, courseId });
+    else if (id !== noteId) folio.navigate({ view: "notes", noteId: id, courseId }, { paneId });
   }
 
   function setCourse(id: string | null): void {
-    folio.update({ courseId: id });
+    folio.update({ courseId: id }, paneId);
+  }
+
+  /** A new note in the narrow pane: named after the document beside it, or in its course. */
+  async function newBeside(): Promise<void> {
+    const created = beside
+      ? await folio.createNoteBeside(beside)
+      : courseForNew
+        ? await folio.createNote(courseForNew)
+        : null;
+    if (typeof created === "string") open(created);
   }
 
   /** ↑ and ↓ move through the list, as in a mail or notes app. */
@@ -172,6 +194,65 @@
   {/if}
 {/snippet}
 
+{#if compact}
+  {@const picked = noteId && folio.note(noteId) ? noteId : null}
+  {#snippet picker()}
+    <DropdownMenu.Root>
+      <DropdownMenu.Trigger
+        class="flex h-7 min-w-[72px] shrink items-center gap-1 rounded-md px-1.5 text-left font-medium text-text transition-colors hover:bg-hover data-[state=open]:bg-hover"
+      >
+        <span class="min-w-0 truncate" dir="auto"
+          >{picked ? (folio.note(picked)?.title ?? "Note") : "Choose a note"}</span
+        >
+        <ChevronDown size={13} strokeWidth={2} class="shrink-0 text-text-3" />
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Portal>
+        <DropdownMenu.Content
+          align="start"
+          sideOffset={6}
+          class="z-50 max-h-[420px] w-[280px] animate-[folio-scale_140ms_var(--ease-out-quint)] overflow-y-auto rounded-xl border border-line-subtle bg-raised p-1.5 shadow-3 outline-none"
+        >
+          <NotePicker
+            menu
+            documentId={beside}
+            courseId={courseId ?? folio.document(beside)?.courseId ?? null}
+            onpick={(id) => open(id)}
+            onnew={newBeside}
+          />
+        </DropdownMenu.Content>
+      </DropdownMenu.Portal>
+    </DropdownMenu.Root>
+  {/snippet}
+  {#if picked}
+    {#key picked}
+      <NoteView noteId={picked} compact lead={picker} />
+    {/key}
+  {:else}
+    <div class="flex h-full min-h-0 flex-col">
+      <div class="flex h-11 shrink-0 items-center gap-2 border-b border-line-subtle pr-2 pl-2.5">
+        {@render picker()}
+        <span class="flex-1"></span>
+        <PaneControls />
+      </div>
+      <div class="scroll-quiet min-h-0 flex-1 overflow-y-auto px-3 py-4">
+        <p class="px-2 pb-3 text-[13px] leading-5 text-text-2">
+          {#if beside}
+            Take notes beside {folio.document(beside)?.title}. A page you add from the reader
+            becomes a link back to it.
+          {:else}
+            Choose a note, or start one.
+          {/if}
+        </p>
+        <NotePicker
+          documentId={beside}
+          courseId={courseId ?? folio.document(beside)?.courseId ?? null}
+          onpick={(id) => open(id)}
+          onnew={newBeside}
+        />
+      </div>
+    </div>
+  {/if}
+{:else}
 <div class="flex h-full min-h-0">
   <aside
     class="flex w-[300px] shrink-0 flex-col border-r border-line-subtle max-md:w-[232px]"
@@ -348,7 +429,10 @@
     </div>
   </aside>
 
-  <section class="min-w-0 flex-1">
+  <section class="relative min-w-0 flex-1">
+    {#if !shown}
+      <div class="absolute top-2 right-2"><PaneControls /></div>
+    {/if}
     {#if shown}
       {#key shown}
         <NoteView noteId={shown} />
@@ -390,3 +474,4 @@
     {/if}
   </section>
 </div>
+{/if}

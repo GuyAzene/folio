@@ -1,21 +1,8 @@
 <script lang="ts">
-  import {
-    BookMarked,
-    Trash2,
-    BookOpen,
-    ChevronLeft,
-    ChevronRight,
-    FileText,
-    House,
-    ListChecks,
-    MessageSquare,
-    MessagesSquare,
-    NotebookPen,
-    Plus,
-    Highlighter,
-    X,
-  } from "@lucide/svelte";
+  import { ChevronLeft, ChevronRight, Columns2, Plus, X } from "@lucide/svelte";
   import { tabTitle } from "../lib/labels.ts";
+  import { mainPane } from "../lib/layout.ts";
+  import { PLACE_ICONS } from "../lib/place-icons.ts";
   import { folio, type Location } from "../lib/state.svelte.ts";
   import CourseTile from "./CourseTile.svelte";
   import IconButton from "./IconButton.svelte";
@@ -23,22 +10,10 @@
   let { leftInset }: { leftInset: boolean } = $props();
   let dragging = $state<number | null>(null);
 
-  const icons = {
-    home: House,
-    library: BookOpen,
-    chats: MessagesSquare,
-    assignments: ListChecks,
-    jobs: Highlighter,
-    document: FileText,
-    notes: NotebookPen,
-    study: BookMarked,
-    trash: Trash2,
-    chat: MessageSquare,
-  };
-
+  /** A tab is named after the document in it, or else its active pane. */
   function current(index: number): Location {
     const tab = folio.tabs[index]!;
-    return tab.history[tab.index]!;
+    return mainPane(tab.history[tab.index]!).location;
   }
 </script>
 
@@ -77,7 +52,8 @@
         location.view === "course"
           ? folio.course(location.courseId)
           : undefined}
-      {@const Icon = location.view === "course" ? null : icons[location.view]}
+      {@const Icon = PLACE_ICONS[location.view]}
+      {@const panes = tab.history[tab.index]!.panes.length}
       <div
         role="tab"
         tabindex="0"
@@ -110,6 +86,11 @@
           class="min-w-0 flex-1 truncate text-[12.5px] font-medium"
           dir="auto">{tabTitle(location)}</span
         >
+        {#if panes > 1}
+          <span class="shrink-0 text-text-4" title="{panes} panes side by side">
+            <Columns2 size={12} strokeWidth={1.75} aria-label="{panes} panes side by side" />
+          </span>
+        {/if}
         <button
           class="inline-flex size-5 shrink-0 items-center justify-center rounded text-text-3 opacity-0 group-hover:opacity-100 hover:bg-press hover:text-text {active
             ? 'opacity-100'

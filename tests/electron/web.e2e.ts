@@ -6,8 +6,8 @@ import { launch, recordExternalLinks, type Running } from "./app.ts";
 import { reply, seedHome } from "./seed.ts";
 
 /**
- * A reply that searched the web, in a real window: its sources are listed apart from the
- * course's, and one opens in the system browser, never in Folio.
+ * A reply that searched the web, in a real window: its sources fold into one line apart from
+ * the course's, closed until opened, and one opens in the system browser, never in Folio.
  * Run with `vp run test:electron`; nothing here talks to a model or the web.
  */
 
@@ -41,13 +41,16 @@ const SEARCHED: AgentMessage[] = [
 ];
 
 void describe("web search in a chat", () => {
-  void it("lists the sources apart from the course's, opening them outside Folio", async () => {
+  void it("folds the sources into one line, opening them outside Folio", async () => {
     const seeded = await seedHome("", "chat", undefined, SEARCHED);
     const app = await launch(seeded.home);
     running.push(app);
     const { app: electron, page } = app;
     const opened = await recordExternalLinks(electron);
-    await page.getByText("From the web").waitFor();
+    const folded = page.getByRole("button", { name: "Searched the web · 1 page" });
+    await folded.waitFor();
+    assert.equal(await page.getByRole("link", { name: /A history of graph search/ }).count(), 0);
+    await folded.click();
     await page.getByRole("link", { name: /A history of graph search/ }).click();
     await page.waitForTimeout(300);
     assert.deepEqual(await opened(), ["https://example.org/bfs-history"]);

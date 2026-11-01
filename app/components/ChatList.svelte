@@ -30,10 +30,12 @@
       <button
         class="flex h-10 min-w-0 flex-1 items-center gap-3 px-2 text-left"
         onclick={(event) =>
-          folio.navigate(
-            { view: "chat", chatId: chat.id, courseId: chat.courseId },
-            { newTab: event.metaKey || event.ctrlKey },
-          )}
+          event.altKey
+            ? folio.navigate(
+                { view: "chat", chatId: chat.id, courseId: chat.courseId },
+                { beside: true },
+              )
+            : folio.openChat(chat.id, { newTab: event.metaKey || event.ctrlKey })}
       >
         {#if showCourse && course}<CourseTile
             {course}

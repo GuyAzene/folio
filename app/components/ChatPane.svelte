@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { Snippet } from "svelte";
   import type { Focus } from "../../src/desktop/api.ts";
   import { folio } from "../lib/state.svelte.ts";
   import Composer from "./Composer.svelte";
@@ -7,33 +8,41 @@
 
   /** One conversation: the thread, its composer, and a quiet empty state before the first message. */
   let {
-    tabId,
+    paneId,
     chatId,
     courseId,
     focus = null,
     compact = false,
     emptyTitle = "What are we studying?",
     emptyNote = "",
-    quote = $bindable(null),
+    empty,
     onnewchat,
   }: {
-    tabId: string;
+    paneId: string;
     chatId: string | null;
     courseId: string | null;
     focus?: Focus | null;
     compact?: boolean;
     emptyTitle?: string;
     emptyNote?: string;
-    quote?: { text: string; source: string } | null;
+    /** More for the empty state, under the message box: earlier chats to go on with. */
+    empty?: Snippet;
     /** Starts a new chat in this place; defaults to a new chat tab view. */
     onnewchat?: () => void;
   } = $props();
 
   let composer = $state<Composer>();
-  const chat = $derived(folio.chatFor(chatId, tabId));
+  const chat = $derived(folio.chatFor(chatId, paneId));
 
   $effect(() => {
     if (chatId) void folio.loadChat(chatId);
+  });
+
+  // Ask… from a document beside this chat puts the passage here, and the keyboard with it.
+  $effect(() => {
+    if (folio.composerFocus?.paneId !== paneId) return;
+    folio.composerFocus = null;
+    queueMicrotask(() => composer?.focusInput());
   });
 
   export function focusInput(): void {
@@ -50,8 +59,7 @@
   >
     <Composer
       bind:this={composer}
-      bind:quote
-      {tabId}
+      {paneId}
       {chatId}
       {courseId}
       {focus}
@@ -85,8 +93,7 @@
       <div class="{compact ? '' : 'mt-8'} w-full">
         <Composer
           bind:this={composer}
-          bind:quote
-          {tabId}
+          {paneId}
           {chatId}
           {courseId}
           {focus}
@@ -97,6 +104,7 @@
       {#if emptyNote}<p class="mt-3 text-center text-[12px] text-text-3">
           {emptyNote}
         </p>{/if}
+      {@render empty?.()}
     </div>
   </div>
 {/if}

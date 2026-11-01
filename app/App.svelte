@@ -8,17 +8,8 @@
   import Sidebar from "./components/Sidebar.svelte";
   import TabStrip from "./components/TabStrip.svelte";
   import { folio } from "./lib/state.svelte.ts";
-  import ChatView from "./views/ChatView.svelte";
-  import CourseView from "./views/CourseView.svelte";
-  import DocumentView from "./views/DocumentView.svelte";
-  import HomeView from "./views/HomeView.svelte";
-  import JobsView from "./views/JobsView.svelte";
-  import AssignmentsBoard from "./views/AssignmentsBoard.svelte";
-  import ListViews from "./views/ListViews.svelte";
-  import NotesHub from "./views/NotesHub.svelte";
   import NoteSwitcher from "./components/NoteSwitcher.svelte";
-  import StudyView from "./views/StudyView.svelte";
-  import TrashView from "./views/TrashView.svelte";
+  import Panes from "./components/Panes.svelte";
   import ConfirmDialog from "./components/ConfirmDialog.svelte";
 
   let width = $state(1280);
@@ -75,8 +66,9 @@
       event.preventDefault();
       folio.openTab();
     } else if (mod && key === "w") {
+      // A split tab closes its active pane first.
       event.preventDefault();
-      folio.closeTab(folio.activeTabId);
+      folio.closePane(folio.activePane.id);
     } else if (mod && /^[1-9]$/.test(event.key)) {
       event.preventDefault();
       const tab =
@@ -93,11 +85,9 @@
     } else if (mod && event.key === "\\") {
       event.preventDefault();
       toggleSidebar();
-    } else if (mod && key === "j" && location.view === "document") {
+    } else if (mod && key === "j") {
       event.preventDefault();
-      folio.update({
-        panel: location.panel === "closed" ? "docked" : "closed",
-      });
+      folio.toggleFolio();
     } else if (mod && event.key === ",") {
       event.preventDefault();
       folio.settingsOpen = true;
@@ -106,12 +96,13 @@
       !folio.settingsOpen &&
       !folio.paletteOpen
     ) {
-      const chatId =
-        location.view === "chat" || location.view === "document"
-          ? location.chatId
-          : null;
-      if (chatId && folio.running(folio.chatViews[chatId] ?? null))
-        folio.cancel(chatId);
+      // Stops the reply in the active chat, or else the one in the chat beside it.
+      const chats = [location, ...folio.layout.panes.map((pane) => pane.location)];
+      for (const shown of chats)
+        if (shown.view === "chat" && shown.chatId && folio.running(folio.chatViews[shown.chatId] ?? null)) {
+          folio.cancel(shown.chatId);
+          break;
+        }
     }
   }
 </script>
@@ -141,39 +132,9 @@
         <div class="relative min-h-0 flex-1">
           {#if folio.ready}
             {#each folio.tabs as tab (tab.id)}
-              {@const location = tab.history[tab.index]!}
               {#if tab.id === folio.activeTabId}
                 <div class="absolute inset-0 flex flex-col">
-                  {#if location.view === "home"}
-                    <HomeView tabId={tab.id} />
-                  {:else if location.view === "course"}
-                    <CourseView
-                      tabId={tab.id}
-                      courseId={location.courseId}
-                      tab={location.tab}
-                    />
-                  {:else if location.view === "document"}
-                    {#key location.documentId}
-                      <DocumentView tabId={tab.id} {location} />
-                    {/key}
-                  {:else if location.view === "notes"}
-                    <NotesHub noteId={location.noteId} courseId={location.courseId} />
-                  {:else if location.view === "study"}
-                    <StudyView
-                      courseId={location.courseId}
-                      item={location.item}
-                    />
-                  {:else if location.view === "chat"}
-                    <ChatView tabId={tab.id} {location} />
-                  {:else if location.view === "jobs"}
-                    <JobsView />
-                  {:else if location.view === "trash"}
-                    <TrashView />
-                  {:else if location.view === "assignments"}
-                    <AssignmentsBoard />
-                  {:else}
-                    <ListViews view={location.view} />
-                  {/if}
+                  <Panes {tab} />
                 </div>
               {/if}
             {/each}

@@ -78,7 +78,11 @@ void describe("the notebook", () => {
     running.push(app);
     const { page } = app;
     await page.getByRole("button", { name: "Add this page to a note" }).click();
-    await page.getByRole("tab", { name: "Note", selected: true }).waitFor();
+    // The note opens in a pane beside the lecture.
+    await page
+      .getByText(/^Notes on /)
+      .first()
+      .waitFor();
     const notes = new CourseNotes(await LibraryStore.open({ home: seeded.home }));
     await eventually(
       async () =>

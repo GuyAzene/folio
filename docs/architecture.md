@@ -90,6 +90,31 @@ server records any request that arrives.
 A note can hold a demo as a ```` ```demo ```` block, run the same way. In the editor it runs while
 the cursor is away, and waits for **Run** while its code is being written.
 
+## Tabs and panes
+
+A tab holds one to three panes side by side, and each pane shows any place: a document, a chat,
+a note, study notes, a course or a list (`app/lib/layout.ts`, `app/components/Panes.svelte`). A
+tab's history is a history of these layouts, so Back undoes the last navigation, a pane opened
+or closed included; turning a page, resizing or maximizing a pane is no step of its own. Each
+pane's share of the width is part of the layout, held above each pane's minimum (more for a
+page than for a chat or a note); a window too narrow for every pane shows the active one, with
+the others as chips above it. The open tabs and their current layouts are saved in
+`workspace.json` (version 2; a version 1 file, from before panes, opens with the reader's old
+panel as a pane beside the document), and restoring them never starts model work.
+
+A chat follows the document pane in its tab used last. Each question carries that document's
+page, as long as the chat may read it, and the chat remembers the document and page as the
+student reads (`setFocus`), so opening the chat later, from anywhere, puts it back beside that
+page. A question asked with no document beside the chat leaves that memory alone, and says
+itself that nothing is open. Explain and Ask… go to the tab's chat, opening one beside the
+document if there is none; "Add this page to a note" and "Quote to notes" go to the tab's note
+the same way. A chat for another course gives way to a new chat for the document's own course,
+since a course chat can't read beyond it.
+
+What the student is writing to a chat belongs to the chat, not to the pane: it stays through tab
+switches and a restart until it is sent (`app/lib/drafts.ts`, in the window's storage on this
+device, the most recent hundred). Pages and images added to it last until Folio closes.
+
 ## Chats and what they may read
 
 There are three kinds of chat, fixed when a chat is created:
@@ -154,8 +179,9 @@ so a web page cannot reach what the student wrote or act through Folio. The quer
 code before it leaves (short, with no email, phone or ID numbers), a reply searches at most three
 times, and the student can turn search off in Settings; the tool then refuses, so the prompt
 stays the same. Pi drops the search's sources and citations; Folio reads them from the raw
-stream, keeps only https links, saves them with the tool's result, and lists them under the
-reply apart from course sources. Links open in the system browser.
+stream, keeps only https links, and saves them with the tool's result. The reply links each
+web claim where it makes it; under it, one folded line ("Searched the web · 4 pages") opens the
+full list, apart from course sources. Links open in the system browser.
 
 ## Connections and models
 
@@ -315,8 +341,9 @@ its Markdown each time it lists it (`src/library/note-meta.ts`); nothing about a
 apart from the note. The bottom of a note lists the course's other notes that link to it and
 those that only name it, and "Link" turns such a mention into a link as a revision-checked save.
 
-A note can sit beside a document in place of the chat. "Add this page to a note" and "Quote to
-notes" write into it as the student's own undoable edit, as a link back to the page
+A note can sit in a pane beside a document, or between the document and its chat. Narrow, the
+notebook there shows only the note, with the others in a menu. "Add this page to a note" and
+"Quote to notes" write into it as the student's own undoable edit, as a link back to the page
 (`[[page:<document>#<page>|Lecture 3 · p. 12]]`), and the notes that cite a document are offered
 first beside it. A tutor's reply is saved to a note only when the student chooses "Save to note",
 with a line linking the chat (`[[chat:<id>|title]]`) and the pages it cited; Undo takes it back
@@ -398,7 +425,7 @@ Everything lives in `~/.folio/` (or `FOLIO_HOME`), with directories `0700` and f
 | `library/kb.sqlite` | Which version of each course's study notes is current |
 | `jobs.sqlite` | Study jobs and the saved output of their steps |
 | `trash/<id>/` | Removed items, kept for 30 days |
-| `workspace.json` | Open tabs |
+| `workspace.json` | Open tabs and their panes |
 
 Writes are atomic. Revision and hash checks refuse edits made elsewhere instead of overwriting
 them, and a chat open in one process refuses writes from another. Session files are versioned and

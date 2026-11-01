@@ -92,8 +92,9 @@
   );
   const shownNoteId = $derived(here.view === "notes" ? here.noteId : null);
 
+  /** ⌘-click opens a new tab, ⌥-click a pane beside the active one. */
   function go(location: Location, event: MouseEvent): void {
-    folio.navigate(location, { newTab: event.metaKey || event.ctrlKey });
+    folio.navigate(location, { newTab: event.metaKey || event.ctrlKey, beside: event.altKey });
   }
 </script>
 
@@ -180,17 +181,7 @@
           class="flex h-8 w-full items-center gap-2.5 rounded-md px-2 text-text-2 transition-colors hover:bg-hover hover:text-text"
           title={proposal.reason || undefined}
           onclick={(event) =>
-            go(
-              {
-                view: "chat",
-                chatId: proposal.chatId,
-                // A library chat may have suggested it; the chat, not the note, sets the scope.
-                courseId:
-                  folio.chats.find((chat) => chat.id === proposal.chatId)
-                    ?.courseId ?? null,
-              },
-              event,
-            )}
+            folio.openChat(proposal.chatId, { newTab: event.metaKey || event.ctrlKey })}
         >
           <span class="relative shrink-0">
             <NotebookPen size={15} strokeWidth={1.75} />
@@ -209,16 +200,7 @@
           class="flex h-8 w-full items-center gap-2.5 rounded-md px-2 text-text-2 transition-colors hover:bg-hover hover:text-text"
           title={change.summary}
           onclick={(event) =>
-            go(
-              {
-                view: "chat",
-                chatId: change.chatId,
-                courseId:
-                  folio.chats.find((chat) => chat.id === change.chatId)
-                    ?.courseId ?? null,
-              },
-              event,
-            )}
+            folio.openChat(change.chatId, { newTab: event.metaKey || event.ctrlKey })}
         >
           <span class="relative shrink-0">
             <Hand size={15} strokeWidth={1.75} />

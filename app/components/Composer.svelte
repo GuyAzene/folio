@@ -16,6 +16,7 @@
     picked,
     type Picked,
   } from "../lib/attachments.ts";
+  import { draftKey } from "../lib/drafts.ts";
   import { estimateDirection, writtenDirection } from "../lib/direction.ts";
   import { shortTitle } from "../lib/titles.ts";
   import { folio, type Added } from "../lib/state.svelte.ts";
@@ -25,18 +26,17 @@
   import ReasoningPicker from "./ReasoningPicker.svelte";
 
   let {
-    tabId,
+    paneId,
     chatId,
     courseId,
     focus = null,
     large = false,
     slim = false,
     placeholder = "Message Folio",
-    quote = $bindable(null),
     onbeforesend,
     onnewchat,
   }: {
-    tabId: string;
+    paneId: string;
     chatId: string | null;
     courseId: string | null;
     focus?: Focus | null;
@@ -44,28 +44,32 @@
     /** One line at rest, as on a course page; the toolbar opens once the student starts. */
     slim?: boolean;
     placeholder?: string;
-    quote?: { text: string; source: string } | null;
     /** Runs just before sending, for example to move from Home into the new chat. */
     onbeforesend?: () => void;
     /** Starts a new chat in this place, when the student picks another model. */
     onnewchat?: () => void;
   } = $props();
 
-  let text = $state("");
   let field: HTMLTextAreaElement;
   let root: HTMLDivElement;
   let engaged = $state(false);
-  /** What the student added with + (or by pasting or dropping an image); image bytes stay raw. */
-  let attachments = $state.raw<Added[]>([]);
 
-  const chat = $derived(folio.chatFor(chatId, tabId));
+  // The draft is the chat's, in Folio's state, so leaving the tab or quitting keeps it.
+  const key = $derived(draftKey(chatId, paneId));
+  const text = $derived(folio.drafts[key]?.text ?? "");
+  const quote = $derived(folio.drafts[key]?.quote ?? null);
+  /** What the student added with + (or by pasting or dropping an image); image bytes stay raw. */
+  const attachments = $derived(folio.draftAdded[key] ?? []);
+  const setAttachments = (added: Added[]) => folio.setDraftAdded(key, added);
+
+  const chat = $derived(folio.chatFor(chatId, paneId));
 
   // A demo's question, or "Ask the tutor to fix this", lands here unsent: the student decides.
   $effect(() => {
     const offered = folio.prefill;
-    if (!offered || offered.chatId !== chat?.id || tabId !== folio.activeTabId) return;
+    if (!offered || offered.chatId !== chat?.id) return;
     folio.prefill = null;
-    text = offered.text;
+    folio.setDraft(key, { text: offered.text });
     engaged = true;
     queueMicrotask(() => field?.focus());
   });
@@ -134,7 +138,8 @@
       folio.error = `Add at most ${MAX_IMAGES} images to one question.`;
     for (const file of files.slice(0, Math.max(0, room))) {
       try {
-        attachments = [...attachments, await imageAttachment(file)];
+        const image = await imageAttachment(file);
+        setAttachments([...attachments, image]);
       } catch (error) {
         folio.error = error instanceof Error ? error.message : String(error);
       }
@@ -145,12 +150,12 @@
   function add(input: Picked): void {
     const item = picked(input);
     if (!attachments.some((existing) => existing.key === item.key))
-      attachments = [...attachments, item];
+      setAttachments([...attachments, item]);
     field?.focus();
   }
 
-  function remove(key: string): void {
-    attachments = attachments.filter((item) => item.key !== key);
+  function remove(added: string): void {
+    setAttachments(attachments.filter((item) => item.key !== added));
     field?.focus();
   }
 
@@ -187,7 +192,7 @@
         if (!path) throw new Error("Folio couldn't find that file on this Mac.");
         const item = fileAttachment(file.name, path);
         if (!attachments.some((existing) => existing.key === item.key))
-          attachments = [...attachments, item];
+          setAttachments([...attachments, item]);
       } catch (error) {
         folio.error = error instanceof Error ? error.message : String(error);
       }
@@ -207,24 +212,23 @@
     const draft = text;
     const quoted = quote;
     const sending = attachments;
+    const from = key;
     const message = quoted
       ? `> ${quoted.text.replace(/\n+/g, " ")}\n> (${quoted.source})\n\n${draft.trim() || "Explain this passage."}`
       : draft.trim() || "Explain this.";
-    text = "";
-    quote = null;
-    attachments = [];
+    folio.setDraft(from, { text: "", quote: null });
+    folio.setDraftAdded(from, []);
     onbeforesend?.();
     const sent = await folio.send(message, {
-      tabId,
+      paneId,
       chatId,
       courseId,
       focus,
       attachments: sending,
     });
     if (!sent) {
-      text = draft;
-      quote = quoted;
-      attachments = sending;
+      folio.setDraft(from, { text: draft, quote: quoted });
+      folio.setDraftAdded(from, sending);
     }
     field?.focus();
   }
@@ -302,7 +306,7 @@
       <button
         class="inline-flex size-6 shrink-0 items-center justify-center rounded-md text-text-3 hover:bg-hover hover:text-text"
         aria-label="Remove quote"
-        onclick={() => (quote = null)}
+        onclick={() => folio.setDraft(key, { quote: null })}
       >
         <X size={13} strokeWidth={2} />
       </button>
@@ -363,7 +367,7 @@
   {/if}
   <textarea
     bind:this={field}
-    bind:value={text}
+    bind:value={() => text, (value) => folio.setDraft(key, { text: value })}
     dir={text ? "auto" : emptyDirection}
     {onkeydown}
     {onpaste}
