@@ -1,4 +1,5 @@
 import { lstat, readFile, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { StreamFn } from "@earendil-works/pi-agent-core";
@@ -17,7 +18,7 @@ import {
 import { createFolioModels, readConnections } from "../auth.ts";
 import { FolioConfig, studyRoles } from "../config.ts";
 import { checkKey, cleanKey, modelCatalog } from "../connections.ts";
-import { writeAtomic } from "../files.ts";
+import { privateDirectory, writeAtomic } from "../files.ts";
 import { IngestRunner, trialRoles } from "../ingest/pipeline.ts";
 import { piComplete } from "../ingest/pi-complete.ts";
 import { prepareSource } from "../ingest/source.ts";
@@ -90,15 +91,34 @@ import {
   type PendingView,
   type TrashEntryView,
   type ProposalAction,
+  type SkillsView,
   type SyllabusDraft,
+  type ApprovalView,
+  type McpView,
 } from "./api.ts";
 import { ChatService, errorMessage } from "./chat-service.ts";
 import { PageReader } from "../library/page-reader.ts";
 import { Removal } from "../library/removal.ts";
 import { Trash, TRASH_DAYS, type TrashEntry } from "../library/trash.ts";
 import { studyNotesView } from "./study-notes.ts";
-import { courseView, documentView, noteView, proposalView } from "./view.ts";
+import {
+  courseView,
+  documentView,
+  mcpView,
+  noteView,
+  proposalView,
+  type LiveChat,
+} from "./view.ts";
 import { folioHome, prepareHome } from "../home.ts";
+import { SkillError, SkillLibrary } from "../skills/library.ts";
+import { Approvals, type ApprovalRequest, type Decision } from "../mcp/approvals.ts";
+import { McpConfig, type ServerInput, type ToolRule } from "../mcp/config.ts";
+import { toolNames } from "../mcp/names.ts";
+import { McpServers } from "../mcp/servers.ts";
+import { mergePath, shellPath } from "../mcp/shell-path.ts";
+import { promptCommand } from "../mcp/prompts.ts";
+import { serviceTools } from "../mcp/tools.ts";
+import { skillCommand, skillTool } from "../skills/tool.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const rendererRoot = resolve(here, "..", "build", "renderer");
@@ -200,6 +220,98 @@ void config.then((settings) =>
     void modelsChanged();
   }),
 );
+
+/**
+ * The student's routines: Folio's own, and other agents' folders once turned on. Tests point
+ * `FOLIO_SKILL_HOME` at a disposable folder, so they never read the developer's own skills.
+ */
+const skills = config.then(
+  (settings) =>
+    new SkillLibrary({
+      home,
+      user: process.env.FOLIO_SKILL_HOME ? resolve(process.env.FOLIO_SKILL_HOME) : homedir(),
+      switches: () => settings.skills,
+    }),
+);
+
+/**
+ * The student's MCP servers: mcp.json, the servers it starts, and calls waiting for the student.
+ * A packaged Folio, opened from the Dock, asks the login shell for the PATH once, so commands
+ * installed with uv or Homebrew are found.
+ */
+const mcpConfig = McpConfig.open(home);
+let serverPath: Promise<string> | undefined;
+const servers = mcpConfig.then(
+  (config) =>
+    new McpServers({
+      config,
+      home,
+      path: () =>
+        (serverPath ??= app.isPackaged
+          ? shellPath().then((path) => mergePath(path, process.env.PATH))
+          : Promise.resolve(mergePath(process.env.PATH))),
+      changed: () => void emitMcp(),
+      fetch: (input, init) => net.fetch(input as string, init as RequestInit),
+    }),
+);
+void Promise.all([mcpConfig, servers]).then(([config, running]) =>
+  config.watch(() => void running.reconcile()),
+);
+
+async function currentMcpView(): Promise<McpView> {
+  const [config, running] = await Promise.all([mcpConfig, servers]);
+  return mcpView(running.list(), config.problems);
+}
+async function emitMcp(): Promise<void> {
+  emit({ type: "mcp", mcp: await currentMcpView() });
+}
+
+const approvalView = (request: ApprovalRequest): ApprovalView => ({
+  id: request.id,
+  chatId: request.chatId,
+  label: request.label,
+  tool: request.tool,
+  description: request.description,
+  hints: request.hints,
+  args: JSON.stringify(request.args, null, 2),
+});
+const approvals = new Approvals((chatId) => {
+  emit({ type: "approvals", approvals: approvals.list().map(approvalView) });
+  void service.then((chats) => chats.refresh(chatId));
+});
+
+/** A chat's waiting calls, and the server and tool behind each service tool's name. */
+async function liveChats(): Promise<(chatId: string) => LiveChat> {
+  const running = await servers;
+  return (chatId) => {
+    const waiting = approvals.list(chatId);
+    const names = new Map<string, { label: string; tool: string }>();
+    const taken = new Set<string>();
+    for (const state of running.list()) {
+      const tools = state.tools.map((tool) => tool.name);
+      toolNames(state.entry.id, tools, taken).forEach((name, index) => {
+        taken.add(name);
+        names.set(name, { label: state.entry.label, tool: tools[index]! });
+      });
+    }
+    return {
+      approvals: waiting.map(approvalView),
+      waiting: waiting.map((request) => request.callId),
+      service: (name) => names.get(name),
+    };
+  };
+}
+
+async function skillsView(): Promise<SkillsView> {
+  const [library, settings] = await Promise.all([skills, config]);
+  const { skills: found, skipped } = await library.scan();
+  return {
+    skills: found.map(({ digest: _digest, ...skill }) => skill),
+    skipped,
+    folders: settings.skills.folders,
+    folder: library.key(library.folder),
+  };
+}
 
 /**
  * Web search on the research role's model. Each search is its own request carrying the query
@@ -370,86 +482,113 @@ const service = Promise.all([
   pageReader,
   config,
   operations,
-]).then(([store, courses, courseNotes, knowledge, pages, settings, changes]) => {
-  // What the tutor can do in Folio: the same code the window's controls run.
-  const controls: AppControls = {
-    library: courses,
-    operations: changes,
-    categories: () => settings.categories,
-    naming: () => settings.naming,
-    async trashDocument(id) {
-      const entry = await (await removal).removeDocument(id);
-      await trashChanged();
-      return entry.id;
-    },
-    async trashCourse(id) {
-      const entry = await (await removal).removeCourse(id);
-      await trashChanged();
-      return entry.id;
-    },
-    async restore(entryId) {
-      await (await removal).restore(entryId);
-      await trashChanged();
-    },
-    roles: () => settings.roles,
-    async setModel(step, ref) {
-      try {
-        await settings.setRole(step, ref);
-      } finally {
-        await modelsChanged();
-      }
-    },
-    async study(courseId, documentIds) {
-      const missing = await studyMissing();
-      if (missing) throw new LibraryError(`Connect ${missing} in Settings to study documents.`);
-      await (await jobs).runner.start(courseId, documentIds);
-    },
-    async stopStudying(documentIds) {
-      await (
-        await jobs
-      ).runner.withdraw((job) => job.documentIds.some((id) => documentIds.includes(id)));
-    },
-    chatFile: (file) => chatFiles.path({ fileId: file.fileId, kind: file.fileKind }),
-  };
-  appControls.resolve(controls);
-  const runtimes = createRuntimes(courses, {
-    categories: () => settings.categories,
-    files: chatFiles,
-    app: { controls, pending: pendingActions },
-    notes: courseNotes,
-    changed: () => emit({ type: "library" }),
-    knowledge,
-    pages,
-    visuals: true,
-    search,
-  });
-  return new ChatService({
-    store,
-    streamFn,
-    resolveModel,
-    model: () => settings.roles.teaching,
-    offered: (ref) => offered(ref, settings.openrouter),
-    connected: async (needed) => (await connected()).has(needed.id),
-    emit,
-    courseRuntime: runtimes.course,
-    libraryRuntime: runtimes.library,
-    // Pages, images, files, lectures and courses the student adds, checked against the chat.
-    attach: createAttach(courses, pages, {
-      studied: (id) => !!knowledge.current(id),
+  mcpConfig,
+  servers,
+  liveChats(),
+]).then(
+  ([store, courses, courseNotes, knowledge, pages, settings, changes, mcp, running, live]) => {
+    // What the tutor can do in Folio: the same code the window's controls run.
+    const controls: AppControls = {
+      library: courses,
+      operations: changes,
+      categories: () => settings.categories,
+      naming: () => settings.naming,
+      async trashDocument(id) {
+        const entry = await (await removal).removeDocument(id);
+        await trashChanged();
+        return entry.id;
+      },
+      async trashCourse(id) {
+        const entry = await (await removal).removeCourse(id);
+        await trashChanged();
+        return entry.id;
+      },
+      async restore(entryId) {
+        await (await removal).restore(entryId);
+        await trashChanged();
+      },
+      roles: () => settings.roles,
+      async setModel(step, ref) {
+        try {
+          await settings.setRole(step, ref);
+        } finally {
+          await modelsChanged();
+        }
+      },
+      async study(courseId, documentIds) {
+        const missing = await studyMissing();
+        if (missing) throw new LibraryError(`Connect ${missing} in Settings to study documents.`);
+        await (await jobs).runner.start(courseId, documentIds);
+      },
+      async stopStudying(documentIds) {
+        await (
+          await jobs
+        ).runner.withdraw((job) => job.documentIds.some((id) => documentIds.includes(id)));
+      },
+      chatFile: (file) => chatFiles.path({ fileId: file.fileId, kind: file.fileKind }),
+    };
+    appControls.resolve(controls);
+    const runtimes = createRuntimes(courses, {
+      categories: () => settings.categories,
       files: chatFiles,
-    }),
-    // How the student answered the tutor's proposals since its last reply.
-    async notes(chatId) {
-      return (await pendingActions.untold(chatId)).map((record) =>
-        record.state === "applied"
-          ? `The student applied "${record.summary}".`
-          : record.state === "cancelled"
-            ? `The student cancelled "${record.summary}".`
-            : `"${record.summary}" could not be applied: ${record.note ?? "it failed"}.`,
-      );
-    },
-  });
-});
+      app: { controls, pending: pendingActions },
+      notes: courseNotes,
+      changed: () => emit({ type: "library" }),
+      knowledge,
+      pages,
+      visuals: true,
+      search,
+      // The routines that are on, as each question is sent.
+      async extras(chat) {
+        const library = await skills;
+        const active = await library.active();
+        return [
+          ...(active.length ? [skillTool(library, active, () => chat.grants().skills ?? [])] : []),
+          ...serviceTools({
+            servers: running,
+            config: mcp,
+            approvals,
+            chatId: chat.chatId,
+            home,
+            budget: { used: 0 },
+            notice: (message) => emit({ type: "error", chatId: chat.chatId, message }),
+          }),
+        ];
+      },
+    });
+    return new ChatService({
+      store,
+      streamFn,
+      resolveModel,
+      model: () => settings.roles.teaching,
+      offered: (ref) => offered(ref, settings.openrouter),
+      connected: async (needed) => (await connected()).has(needed.id),
+      emit,
+      courseRuntime: runtimes.course,
+      libraryRuntime: runtimes.library,
+      // Pages, images, files, lectures and courses the student adds, checked against the chat.
+      attach: createAttach(courses, pages, {
+        studied: (id) => !!knowledge.current(id),
+        files: chatFiles,
+      }),
+      command: async (input) =>
+        input.kind === "skill"
+          ? skillCommand(await skills, input.name)
+          : promptCommand(running, mcp, input),
+      live,
+      // How the student answered the tutor's proposals since its last reply.
+      async notes(chatId) {
+        return (await pendingActions.untold(chatId)).map((record) =>
+          record.state === "applied"
+            ? `The student applied "${record.summary}".`
+            : record.state === "cancelled"
+              ? `The student cancelled "${record.summary}".`
+              : `"${record.summary}" could not be applied: ${record.note ?? "it failed"}.`,
+        );
+      },
+    });
+  },
+);
 
 // Removed things wait 30 days in Folio's Trash, then move on to the Mac's Trash.
 const trash = new Trash(home, { discard: (path) => shell.trashItem(path) });
@@ -809,6 +948,107 @@ const handlers: Record<InvokeMethod, (...args: unknown[]) => Promise<unknown>> =
     const settings = await config;
     await settings.ensure();
     shell.showItemInFolder(settings.path);
+  },
+  listSkills: skillsView,
+  async setSkillOn(key, on) {
+    const found = (await (await skills).scan()).skills.find((skill) => skill.key === key);
+    if (!found) throw new SkillError("That routine is no longer there.");
+    await (await config).setSkill(found.key, on === true, found.source === "folio");
+    return skillsView();
+  },
+  async createSkill(input) {
+    const { name, description, body } = (input ?? {}) as Record<string, unknown>;
+    if (typeof name !== "string" || typeof description !== "string" || typeof body !== "string")
+      throw new SkillError("Give the routine a name, a description and instructions.");
+    await (await skills).create(name.trim(), description, body);
+    return skillsView();
+  },
+  readSkill: async (name) => (await skills).read(String(name)),
+  async saveSkill(name, text, revision) {
+    if (typeof text !== "string" || typeof revision !== "string")
+      throw new SkillError("Nothing to save.");
+    await (await skills).save(String(name), text, revision);
+    return skillsView();
+  },
+  async addSkillFolder() {
+    const folder = await choose({
+      title: "Choose a folder of skills",
+      buttonLabel: "Add",
+      properties: ["openDirectory"],
+    });
+    if (!folder) return null;
+    await (await config).setSkillFolder((await skills).key(folder), true);
+    return skillsView();
+  },
+  async removeSkillFolder(key) {
+    await (await config).setSkillFolder(String(key), false);
+    return skillsView();
+  },
+  mcpServers: currentMcpView,
+  async addMcpServers(text) {
+    if (typeof text !== "string" || !text.trim())
+      throw new Error("Paste the server's block first.");
+    await (await mcpConfig).addPasted(text);
+    await (await servers).reconcile();
+    return currentMcpView();
+  },
+  async saveMcpServer(input, previous) {
+    if (
+      typeof input !== "object" ||
+      input === null ||
+      typeof (input as ServerInput).id !== "string"
+    )
+      throw new Error("Name the server.");
+    await (
+      await mcpConfig
+    ).saveServer(input as ServerInput, typeof previous === "string" ? previous : undefined);
+    await (await servers).reconcile();
+    return currentMcpView();
+  },
+  async removeMcpServer(id) {
+    await (await mcpConfig).removeServer(String(id));
+    await (await servers).reconcile();
+    return currentMcpView();
+  },
+  async setMcpServerOn(id, on) {
+    await (await mcpConfig).setEnabled(String(id), on === true);
+    await (await servers).reconcile();
+    return currentMcpView();
+  },
+  async restartMcpServer(id) {
+    await (await servers).restart(String(id));
+    return currentMcpView();
+  },
+  async setMcpServerApproval(id, approval) {
+    await (await mcpConfig).setApproval(String(id), approval === "allow" ? "allow" : "ask");
+    return currentMcpView();
+  },
+  async setMcpToolRule(id, tool, rule) {
+    await (await mcpConfig).setToolRule(String(id), String(tool), rule as ToolRule);
+    return currentMcpView();
+  },
+  async revealMcpConfig() {
+    const config = await mcpConfig;
+    // Shown with nothing in it yet, rather than not at all.
+    if ((await lstat(config.path).catch(() => null)) === null)
+      await writeAtomic(config.path, '{\n  "version": 1,\n  "mcpServers": {}\n}\n', {
+        mode: 0o600,
+      });
+    shell.showItemInFolder(config.path);
+  },
+  listApprovals: async () => approvals.list().map(approvalView),
+  async answerApproval(id, decision) {
+    approvals.answer(String(id), decision as Decision);
+  },
+  async revealSkill(key) {
+    const library = await skills;
+    if (typeof key !== "string") {
+      await privateDirectory(library.folder, "skills", SkillError);
+      return void (await shell.openPath(library.folder));
+    }
+    const found = (await library.scan()).skills.find((skill) => skill.key === key);
+    if (!found) throw new SkillError("That routine is no longer there.");
+    shell.showItemInFolder(resolve(library.path(found.key), "SKILL.md"));
   },
   listCourses: courses,
   async createCourse(input) {
@@ -1288,9 +1528,13 @@ app.on("before-quit", (event) => {
   event.preventDefault();
   quitting = true;
   signIn?.abort();
-  // Closing settles running replies as interrupted and releases each chat's lease.
+  // Closing settles running replies as interrupted and releases each chat's lease; the student's
+  // servers close after them, so no reply is left calling one.
   void service
     .then((chats) => chats.close())
+    .catch(() => undefined)
+    .then(() => servers)
+    .then((running) => running.close(3_000))
     .catch(() => undefined)
     .finally(() => app.quit());
 });
@@ -1323,4 +1567,6 @@ void app.whenReady().then(() => {
     ),
   );
   createWindow();
+  // The student's servers start once the window is up, in the background.
+  setTimeout(() => void servers.then((running) => running.reconcile()), 1_500);
 });

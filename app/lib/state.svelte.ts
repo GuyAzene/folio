@@ -23,6 +23,13 @@ import type {
   NoteEditView,
   NoteVersionView,
   NoteView,
+  ApprovalDecision,
+  ApprovalView,
+  CommandInput,
+  McpServerView,
+  McpView,
+  SkillsView,
+  SkillView,
   SourceView,
   ProposalAction,
   PendingView,
@@ -59,7 +66,13 @@ import { shortTitle } from "./titles.ts";
 
 export type { CourseTab, Layout, Location, Pane, Tab };
 export type ThemePreference = "system" | "light" | "dark";
-export type SettingsSection = "general" | "connections" | "models" | "categories";
+export type SettingsSection =
+  | "general"
+  | "connections"
+  | "models"
+  | "categories"
+  | "skills"
+  | "mcp";
 /** A question asked before something hard to undo, answered in a dialog. */
 export interface Confirmation {
   title: string;
@@ -204,6 +217,103 @@ class FolioState {
     return this.#api!;
   }
 
+  /** The student's MCP servers, as Settings shows them; null until first read. */
+  mcp = $state<McpView | null>(null);
+  /** Calls to services waiting for the student, in every chat. */
+  approvals = $state<ApprovalView[]>([]);
+
+  async refreshMcp(): Promise<void> {
+    try {
+      this.mcp = await this.#api!.mcpServers();
+    } catch (error) {
+      this.error = message(error);
+    }
+  }
+
+  /** Runs a change to the servers and shows the list it returns; false when it was refused. */
+  async changeMcp(change: (api: FolioApi) => Promise<McpView | void>): Promise<boolean> {
+    try {
+      const next = await change(this.#api!);
+      if (next) this.mcp = next;
+      return true;
+    } catch (error) {
+      this.error = message(error);
+      return false;
+    }
+  }
+
+  /** The student's answer to a call waiting in a chat. */
+  async answerApproval(id: string, decision: ApprovalDecision): Promise<void> {
+    try {
+      await this.#api!.answerApproval(id, decision);
+    } catch (error) {
+      this.error = message(error);
+    }
+  }
+
+  /** The student's routines; the composer's / menu offers the ones that are on. */
+  skills = $state<SkillsView | null>(null);
+
+  async refreshSkills(): Promise<void> {
+    try {
+      this.skills = await this.#api!.listSkills();
+    } catch (error) {
+      this.error = message(error);
+    }
+  }
+
+  /** Routines the student can start with `/name`: on, used, and meant to be started. */
+  get startable(): SkillView[] {
+    return this.skills?.skills.filter((skill) => skill.on && !skill.hiddenBy && skill.user) ?? [];
+  }
+
+  /** Prompts of the services that are running, each started with `/server:name`. */
+  get prompts(): { server: McpServerView; prompt: McpServerView["prompts"][number] }[] {
+    return (this.mcp?.servers ?? []).flatMap((server) =>
+      server.enabled && server.status === "ready"
+        ? server.prompts.map((prompt) => ({ server, prompt }))
+        : [],
+    );
+  }
+
+  /**
+   * What a message starts with `/`, when it can be started: a routine (`/name`), or a service's
+   * prompt (`/server:name`) with `args`, the draft's answers to its arguments.
+   */
+  commandIn(text: string, args: Record<string, string> = {}): CommandInput | undefined {
+    const token = /^\/(\S+)(?:\s|$)/.exec(text.trimStart())?.[1];
+    if (!token) return undefined;
+    if (this.startable.some((skill) => skill.name === token)) return { kind: "skill", name: token };
+    const found = this.prompts.find(
+      ({ server, prompt }) => `${server.id}:${prompt.name}` === token,
+    );
+    return found
+      ? {
+          kind: "prompt",
+          server: found.server.id,
+          name: found.prompt.name,
+          label: found.server.label,
+          args: Object.fromEntries(
+            (found.prompt.arguments ?? []).flatMap((argument) =>
+              args[argument.name]?.trim() ? [[argument.name, args[argument.name]!.trim()]] : [],
+            ),
+          ),
+        }
+      : undefined;
+  }
+
+  /** Runs a change to the routines and shows the list it returns; false when it was refused. */
+  async changeSkills(change: (api: FolioApi) => Promise<SkillsView | null>): Promise<boolean> {
+    try {
+      const next = await change(this.#api!);
+      if (next) this.skills = next;
+      return true;
+    } catch (error) {
+      this.error = message(error);
+      return false;
+    }
+  }
+
   async init(bridge: FolioApi): Promise<void> {
     const api = plainCalls(bridge);
     this.#api = api;
@@ -225,6 +335,9 @@ class FolioState {
       await this.refreshLibrary();
       this.jobs = await api.listJobs();
       this.trash = await api.listTrash();
+      void this.refreshSkills();
+      void this.refreshMcp();
+      this.approvals = await api.listApprovals();
       await this.#restoreWorkspace();
     } catch (error) {
       this.error = message(error);
@@ -883,16 +996,20 @@ class FolioState {
       focus: Focus | null;
       /** What the student added with the composer's +. */
       attachments?: Added[];
+      /** Answers to the arguments of a service's prompt the message starts with. */
+      args?: Record<string, string>;
     },
   ): Promise<string | null> {
     if (!this.#api) return null;
     const added = context.attachments ?? [];
+    const command = this.commandIn(text, context.args);
     const sent: ChatMessageView[] = [
       {
         role: "user",
         text,
         state: "complete",
         ...(added.length ? { attachments: added.map((item) => item.view) } : {}),
+        ...(command ? { command } : {}),
       },
       { role: "assistant", text: "", state: "streaming", steps: [], sources: [] },
     ];
@@ -922,7 +1039,13 @@ class FolioState {
       this.pending[context.paneId] = {
         id: "",
         kind: context.courseId ? "course" : "library",
-        title: chatTitle(text),
+        // A question that starts a routine is named for what follows "/name", as Folio names it.
+        title: chatTitle(
+          command
+            ? text.trimStart().replace(/^\/\S+\s*/, "") ||
+                (command.kind === "prompt" ? `${command.label} ${command.name}` : command.name)
+            : text,
+        ),
         status: "running",
         model: this.modelChoice,
         updatedAt: new Date().toISOString(),
@@ -950,6 +1073,7 @@ class FolioState {
           : {}),
         ...(this.webSearch ? {} : { webSearch: false }),
         ...(added.length ? { attachments: added.map((item) => item.input) } : {}),
+        ...(command ? { command } : {}),
       });
       if (!context.chatId) this.#adopt(context.paneId, chatId);
       return chatId;
@@ -993,7 +1117,7 @@ class FolioState {
 
   // ── Drafts ──────────────────────────────────────────────────────────────
 
-  setDraft(key: string, patch: Partial<Pick<Draft, "text" | "quote">>): void {
+  setDraft(key: string, patch: Partial<Pick<Draft, "text" | "quote" | "args">>): void {
     this.drafts = putDraft(this.drafts, key, patch);
     this.#saveDrafts();
   }
@@ -1907,6 +2031,10 @@ class FolioState {
       this.jobs = this.jobs.filter((job) => job.id !== event.id);
     } else if (event.type === "trash") {
       void this.refreshTrash();
+    } else if (event.type === "mcp") {
+      this.mcp = event.mcp;
+    } else if (event.type === "approvals") {
+      this.approvals = event.approvals;
     } else {
       this.error = event.message;
     }

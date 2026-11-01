@@ -5,14 +5,19 @@ import { noteFacts } from "../library/note-meta.ts";
 import type { CourseRecord, DocumentRecord } from "../library/store.ts";
 import { refOf } from "../model-refs.ts";
 import type { SessionRecord, SessionSummary } from "../session-store.ts";
+import type { CommandRecord } from "../commands.ts";
+import type { ServerState } from "../mcp/servers.ts";
 import type {
   ActionView,
+  ApprovalView,
   AttachmentView,
   ChatKind,
   ChatMessageView,
   ChatSummary,
   ChatView,
+  CommandInput,
   CourseView,
+  McpView,
   DocumentView,
   NoteEditView,
   NoteView,
@@ -66,7 +71,91 @@ export function visualView(id: string, args: unknown, at: number): VisualView {
   };
 }
 
-function runningLabel(name: string, args: unknown): string {
+/** An argument that looks like a key or a password, which Settings would show in full. */
+function looksSecret(arg: string): boolean {
+  return (
+    /^(sk-|ghp_|github_pat_|xox[abp]-|AIza)/.test(arg) ||
+    /(token|key|secret|password)=/i.test(arg) ||
+    (arg.length >= 24 && /^[A-Za-z0-9_-]+$/.test(arg) && /\d/.test(arg) && /[A-Za-z]/.test(arg))
+  );
+}
+
+/** A remote server's address with the values of its query hidden. */
+function maskedUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    for (const key of new Set(parsed.searchParams.keys())) parsed.searchParams.set(key, "…");
+    parsed.username = "";
+    parsed.password = "";
+    return parsed.toString();
+  } catch {
+    return "";
+  }
+}
+
+/** The student's servers for Settings: names of settings and headers, never their values. */
+export function mcpView(states: ServerState[], problems: string[]): McpView {
+  return {
+    servers: states.map(({ entry, status, tools, prompts, error, log, instructions }) => ({
+      id: entry.id,
+      label: entry.label,
+      kind: entry.kind,
+      command: entry.kind === "remote" ? maskedUrl(entry.url ?? "") : (entry.command ?? ""),
+      args: [...entry.args],
+      cwd: entry.cwd ?? null,
+      env: Object.keys(entry.env),
+      headers: Object.keys(entry.headers),
+      enabled: entry.enabled,
+      approval: entry.approval,
+      status,
+      error: error ?? null,
+      log,
+      instructions: instructions ?? null,
+      tools: tools.map((tool) => ({
+        name: tool.name,
+        title: tool.title ?? tool.annotations?.title ?? null,
+        description: (tool.description ?? "").replace(/\s+/g, " ").trim().slice(0, 600),
+        rule: entry.tools[tool.name] ?? "ask",
+        hints: {
+          ...(tool.annotations?.readOnlyHint !== undefined
+            ? { readOnly: tool.annotations.readOnlyHint }
+            : {}),
+          ...(tool.annotations?.destructiveHint !== undefined
+            ? { destructive: tool.annotations.destructiveHint }
+            : {}),
+          ...(tool.annotations?.openWorldHint !== undefined
+            ? { openWorld: tool.annotations.openWorldHint }
+            : {}),
+        },
+      })),
+      prompts: prompts.map((prompt) => ({
+        name: prompt.name,
+        title: prompt.title ?? null,
+        description: (prompt.description ?? "").replace(/\s+/g, " ").trim().slice(0, 300),
+        arguments: (prompt.arguments ?? []).map((argument) => ({
+          name: argument.name,
+          description: argument.description ?? "",
+          required: argument.required === true,
+        })),
+      })),
+      argWarning: entry.args.some(looksSecret),
+    })),
+    problems,
+  };
+}
+
+/** What the window knows of a chat beyond its saved file: calls waiting for the student, and service names. */
+export interface LiveChat {
+  approvals: ApprovalView[];
+  /** The callIds of `approvals`, in order. */
+  waiting: string[];
+  /** A service tool's server and own name, by the name the tutor sees. */
+  service: (name: string) => { label: string; tool: string } | undefined;
+}
+
+function runningLabel(name: string, args: unknown, live?: LiveChat): string {
+  const service = live?.service(name);
+  if (service) return `Using ${service.label} · ${service.tool}`;
   const page = (args as { page?: unknown } | undefined)?.page;
   if (name === "read_page")
     return typeof page === "number" ? `Reading page ${page}` : "Reading a page";
@@ -84,6 +173,13 @@ function runningLabel(name: string, args: unknown): string {
   if (name === "create_note") return "Writing a note";
   if (name === "edit_note") return "Editing your note";
   if (name === "rename_note") return "Renaming your note";
+  if (name === "use_skill") {
+    const { name: skill, file } = (args ?? {}) as { name?: unknown; file?: unknown };
+    if (typeof skill !== "string") return "Opening a routine";
+    return typeof file === "string"
+      ? `Reading ${skill}'s ${file}`
+      : `Following your routine ${skill}`;
+  }
   return APP_STEPS[name]?.[0] ?? name;
 }
 
@@ -108,6 +204,16 @@ const APP_STEPS: Record<string, readonly [string, string, string]> = {
 };
 
 function finishedLabel(name: string, details: unknown, failed: boolean, fallback: string): string {
+  const service = (
+    details as { mcp?: { label?: unknown; tool?: unknown; decision?: unknown } } | undefined
+  )?.mcp;
+  if (typeof service?.label === "string" && typeof service.tool === "string") {
+    const what = `${service.label} · ${service.tool}`;
+    if (service.decision === "declined") return `You declined ${what}`;
+    return failed ? `Couldn't use ${what}` : `Used ${what}`;
+  }
+  // A service call cut off before it finished (the reply stopped, or Folio closed).
+  if (failed && fallback.startsWith("Using ")) return `Couldn't use ${fallback.slice(6)}`;
   if (name === "list_documents")
     return failed ? "Couldn't list the course" : "Looked through the course";
   if (name === "read_page") {
@@ -145,6 +251,13 @@ function finishedLabel(name: string, details: unknown, failed: boolean, fallback
   if (name === "edit_note") return failed ? "Couldn't edit your note" : `Edited your note${title}`;
   if (name === "rename_note")
     return failed ? "Couldn't rename your note" : `Renamed your note to${title}`;
+  if (name === "use_skill") {
+    const skill = (details as { skill?: { name?: unknown; file?: unknown } } | undefined)?.skill;
+    if (failed || typeof skill?.name !== "string") return "Couldn't open that routine";
+    return typeof skill.file === "string"
+      ? `Read ${skill.name}'s ${skill.file}`
+      : `Following your routine ${skill.name}`;
+  }
   const app = APP_STEPS[name];
   if (app) {
     if (failed) return app[2];
@@ -156,11 +269,31 @@ function finishedLabel(name: string, details: unknown, failed: boolean, fallback
   return fallback;
 }
 
+/** What a question started with `/`, as saved on the student's message. */
+function commandView(message: AgentMessage): CommandInput | undefined {
+  const record = (message as { folioCommand?: Partial<CommandRecord> }).folioCommand;
+  if (record?.kind === "skill" && typeof record.name === "string")
+    return { kind: "skill", name: record.name };
+  if (
+    record?.kind === "prompt" &&
+    typeof record.name === "string" &&
+    typeof record.server === "string"
+  )
+    return {
+      kind: "prompt",
+      server: record.server,
+      name: record.name,
+      args: { ...record.args },
+      label: typeof record.label === "string" ? record.label : record.server,
+    };
+  return undefined;
+}
+
 /**
  * A renderer-safe view of a saved chat. Each answer groups the assistant's messages and tool
  * results after a question into one turn with plain-language steps and the pages it read.
  */
-export function chatView(record: SessionRecord, streaming?: string): ChatView {
+export function chatView(record: SessionRecord, streaming?: string, now?: LiveChat): ChatView {
   const messages: ChatMessageView[] = [];
   let turn: Turn | undefined;
   for (const message of record.messages as AgentMessage[]) {
@@ -171,11 +304,13 @@ export function chatView(record: SessionRecord, streaming?: string): ChatView {
     } else if (message.role === "user") {
       turn = undefined;
       const attachments = attachmentViews(message);
+      const command = commandView(message);
       messages.push({
         role: "user",
         text: questionText(message),
         state: "complete",
         ...(attachments.length ? { attachments } : {}),
+        ...(command ? { command } : {}),
       });
     } else if (message.role === "assistant") {
       if (!turn) {
@@ -201,7 +336,7 @@ export function chatView(record: SessionRecord, streaming?: string): ChatView {
           turn.steps.push({
             id: block.id,
             tool: block.name,
-            label: runningLabel(block.name, block.arguments),
+            label: runningLabel(block.name, block.arguments, now),
             state: "running",
           });
       if (message.stopReason === "aborted") {
@@ -321,6 +456,14 @@ export function chatView(record: SessionRecord, streaming?: string): ChatView {
     }
     turn.state = "streaming";
     if (streaming) turn.text = turn.text ? `${turn.text}\n\n${streaming}` : streaming;
+    // Calls waiting for the student show on the reply that made them.
+    if (now?.approvals.length) {
+      turn.approvals = now.approvals;
+      for (const step of turn.steps) {
+        const service = now.waiting.includes(step.id) ? now.service(step.tool) : undefined;
+        if (service) step.label = `Waiting for you: ${service.label} · ${service.tool}`;
+      }
+    }
   }
   return {
     id: record.id,

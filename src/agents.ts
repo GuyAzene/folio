@@ -85,7 +85,10 @@ const CHAT_PROMPT = [
 
 /**
  * A course chat: the app installs its current prompt (course, documents, the page the student is
- * reading) before every request, and the only tools are the ones built for that course.
+ * reading) before every request, and the only tools are the ones built for that course, plus
+ * `extraTools`: the student's routines and services, which can change from one question to the
+ * next. Both are declared at the top of every request, so an unchanged set keeps the request's
+ * start the same and a changed one costs one uncached request.
  */
 export function createCourseAgent(
   model: Model<Api>,
@@ -94,9 +97,17 @@ export function createCourseAgent(
     messages?: AgentMessage[];
     sessionId?: string;
     tools: AgentTool[];
+    extraTools?: () => readonly AgentTool[];
     prompt: () => Promise<string>;
   },
 ): Agent {
+  const current = () => {
+    const names = new Set(options.tools.map((tool) => tool.name));
+    return [
+      ...options.tools,
+      ...(options.extraTools?.() ?? []).filter((tool) => !names.has(tool.name)),
+    ];
+  };
   return new Agent({
     initialState: {
       model,
@@ -107,15 +118,19 @@ export function createCourseAgent(
     },
     streamFn,
     convertToLlm: modelContextMessages,
-    prepareRequest: async ({ context }) => ({
-      context: {
-        ...context,
-        messages: [
-          createInitialSystemMessage(await options.prompt(), options.tools.map(toToolDeclaration))!,
-          ...context.messages.filter((message) => message.role !== "system"),
-        ],
-      },
-    }),
+    prepareRequest: async ({ context }) => {
+      const tools = current();
+      return {
+        context: {
+          ...context,
+          tools,
+          messages: [
+            createInitialSystemMessage(await options.prompt(), tools.map(toToolDeclaration))!,
+            ...context.messages.filter((message) => message.role !== "system"),
+          ],
+        },
+      };
+    },
     sessionId: options.sessionId,
     identity: { userAgent: { custom: "folio/0.0.1" }, attribution: null },
     maxRetryDelayMs: 5_000,

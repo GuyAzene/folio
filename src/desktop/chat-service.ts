@@ -9,13 +9,16 @@ import {
   THINKING_LEVELS,
   type AttachmentInput,
   type ChatSummary,
+  type CommandInput,
   type ChatView,
   type DesktopEvent,
   type Focus,
   type SendInput,
   type Thinking,
 } from "./api.ts";
-import { chatSummaries, chatView, visibleText, visualView } from "./view.ts";
+import { chatSummaries, chatView, visibleText, visualView, type LiveChat } from "./view.ts";
+import type { CommandRecord } from "../commands.ts";
+import { promptArgs } from "../mcp/prompts.ts";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_MESSAGE_LENGTH = 100_000;
@@ -51,6 +54,10 @@ export interface ChatServiceOptions {
   attach?: (reach: AttachReach, inputs: AttachmentInput[]) => Promise<ResolvedAttachment[]>;
   /** Folio's notes for the tutor on a chat's next question, such as changes the student answered. */
   notes?: (chatId: string) => Promise<string[]>;
+  /** Calls waiting for the student in a chat, and the names of service tools, for its view. */
+  live?: (chatId: string) => LiveChat | undefined;
+  /** A routine the student starts with `/name`, as it is now; refused when it isn't on. */
+  command?: (input: CommandInput) => Promise<{ record: CommandRecord; block: string }>;
 }
 
 /**
@@ -96,6 +103,7 @@ export class ChatService {
       thinking,
       fast,
       webSearch,
+      command,
     } = validSend(input);
     const existing = chatId ? await this.#conversation(chatId) : null;
     const ref = model ?? this.#options.model();
@@ -125,6 +133,19 @@ export class ChatService {
         attachments,
       );
     }
+    // So is a routine: it must be on, and only course and library chats have tools to follow it.
+    let started: { record: CommandRecord; block: string } | undefined;
+    if (command) {
+      const kind =
+        existing?.kind ?? (courseId ? "course" : this.#options.libraryRuntime ? "library" : "chat");
+      if (kind === "chat" || !this.#options.command)
+        throw new Error(
+          command.kind === "skill"
+            ? "This older chat can't start routines. Start a new chat to use one."
+            : "This older chat can't use services. Start a new chat to use one.",
+        );
+      started = await this.#options.command(command);
+    }
     const conversation = existing ?? (await this.#create(courseId ?? null, focus ?? null, ref));
     const id = conversation.snapshot.id;
     // A course chat's question carries the page in view, so the tutor's prompt stays the same.
@@ -138,6 +159,7 @@ export class ChatService {
         webSearch,
         ...extras,
         ...(notes.length ? { notes } : {}),
+        ...(started ? { command: started } : {}),
       })
       .then(
         () => this.#settled(conversation),
@@ -286,7 +308,13 @@ export class ChatService {
 
   #view(conversation: Conversation): ChatView {
     const snapshot = conversation.snapshot;
-    return chatView(snapshot, this.#streaming.get(snapshot.id));
+    return chatView(snapshot, this.#streaming.get(snapshot.id), this.#options.live?.(snapshot.id));
+  }
+
+  /** Sends an open chat's view again, as when a call in it starts or stops waiting for the student. */
+  refresh(chatId: string): void {
+    const conversation = this.#open.get(chatId);
+    if (conversation) this.#options.emit({ type: "chat", chat: this.#view(conversation) });
   }
 
   #settled(conversation: Conversation): void {
@@ -320,6 +348,7 @@ function validSend(input: unknown): SendInput & { attachments: AttachmentInput[]
     thinking,
     fast,
     webSearch,
+    command,
   } = input as Record<string, unknown>;
   if (chatId !== null && (typeof chatId !== "string" || !UUID.test(chatId)))
     throw new Error("Unknown chat.");
@@ -340,6 +369,8 @@ function validSend(input: unknown): SendInput & { attachments: AttachmentInput[]
   if (fast !== undefined && typeof fast !== "boolean") throw new Error("Invalid speed.");
   if (webSearch !== undefined && typeof webSearch !== "boolean")
     throw new Error("Invalid web search setting.");
+  const started =
+    command === undefined || command === null ? undefined : validCommand(command, text);
   return {
     chatId,
     text,
@@ -351,7 +382,39 @@ function validSend(input: unknown): SendInput & { attachments: AttachmentInput[]
     ...(thinking !== undefined ? { thinking: thinking as Thinking } : {}),
     ...(fast ? { fast: true } : {}),
     ...(webSearch === false ? { webSearch: false } : {}),
+    ...(started ? { command: started } : {}),
   };
+}
+
+/** A routine (`/name`) or a service's prompt (`/server:name`): the question must start with it. */
+function validCommand(command: unknown, text: string): CommandInput {
+  const { kind, name, server, args } = command as Record<string, unknown>;
+  const startsWith = (prefix: string) =>
+    text.trimStart() === prefix ||
+    text.trimStart().startsWith(`${prefix} `) ||
+    text.trimStart().startsWith(`${prefix}\n`);
+  if (kind === "skill") {
+    if (typeof name !== "string" || !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(name))
+      throw new Error("Unknown routine.");
+    if (!startsWith(`/${name}`))
+      throw new Error(`Start the message with /${name} to use that routine.`);
+    return { kind, name };
+  }
+  if (kind === "prompt") {
+    if (
+      typeof server !== "string" ||
+      !/^[A-Za-z0-9_-]{1,64}$/.test(server) ||
+      typeof name !== "string" ||
+      !name ||
+      name.length > 128 ||
+      /[\s\p{Cc}]/u.test(name)
+    )
+      throw new Error("Unknown prompt.");
+    if (!startsWith(`/${server}:${name}`))
+      throw new Error(`Start the message with /${server}:${name} to use that prompt.`);
+    return { kind, server, name, args: promptArgs(args) };
+  }
+  throw new Error("Unknown routine.");
 }
 
 function validAttachments(value: unknown): AttachmentInput[] {

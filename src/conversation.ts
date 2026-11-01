@@ -21,6 +21,7 @@ import { DEMO_PAGE_COUNT, readDemoPage, type DemoPage } from "./demo-source.ts";
 import { createChatAgent, createCourseAgent, createDemoAgent, DEFAULT_MODEL } from "./agents.ts";
 import type { SessionFocus, SessionLease, SessionRecord, SessionStore } from "./session-store.ts";
 import type { Thinking } from "./desktop/api.ts";
+import type { CommandRecord } from "./commands.ts";
 import { estimateMessageTokens } from "@earendil-works/pi-ai/utils/estimate";
 import {
   modelContextMessages,
@@ -59,6 +60,11 @@ export interface CourseRuntime {
   checkFocus(focus: SessionFocus): Promise<FocusAbout>;
   /** Called as each question is sent, before any tool runs: a reply's own limits start over. */
   beforeSend?(question: { webSearch: boolean }): void;
+  /**
+   * The student's routines and services as each question is sent, beside `tools`: they can
+   * change between questions, and stay the same for the whole reply.
+   */
+  extraTools?(): Promise<AgentTool[]>;
 }
 
 /** What the tutor is told about a page the student is reading. */
@@ -129,6 +135,8 @@ export interface Grants {
   documents: string[];
   /** Files of their own, which the tutor may read and, when asked, add to a course. */
   files?: Extract<Attachment, { kind: "file" }>[];
+  /** Routines the student started in this chat with `/name`. */
+  skills?: string[];
 }
 
 /** Past this share of the model's context, earlier tool results reach it as short notes. */
@@ -156,6 +164,8 @@ type SubmittedMessage = UserMessage & {
   /** How long the tutor thought about this question, and whether it asked for the fast tier. */
   folioThinking?: Thinking;
   folioFast?: true;
+  /** The routine the student started with this question (`/name`). */
+  folioCommand?: CommandRecord;
 };
 
 /** The providers with OpenAI's priority tier: the ChatGPT plan and the OpenAI API. */
@@ -177,6 +187,8 @@ export interface SendExtras {
   webSearch?: boolean;
   /** Folio's own notes for the tutor, such as how the student answered a change it proposed. */
   notes?: string[];
+  /** A routine the student started with `/name`: its record, and its text as it is now. */
+  command?: { record: CommandRecord; block: string };
 }
 
 /** Every course and document the student added in a chat, read from their own messages only. */
@@ -184,8 +196,10 @@ export function grantsOf(messages: readonly unknown[]): Grants {
   const courses = new Set<string>();
   const documents = new Set<string>();
   const files = new Map<string, Extract<Attachment, { kind: "file" }>>();
+  const skills = new Set<string>();
   for (const message of messages as SubmittedMessage[]) {
     if (message.role !== "user") continue;
+    if (message.folioCommand?.kind === "skill") skills.add(message.folioCommand.name);
     for (const attachment of message.folioAttachments ?? []) {
       if (attachment.kind === "course") courses.add(attachment.courseId);
       else if (attachment.kind === "document") documents.add(attachment.documentId);
@@ -196,6 +210,7 @@ export function grantsOf(messages: readonly unknown[]): Grants {
     courses: [...courses],
     documents: [...documents],
     ...(files.size ? { files: [...files.values()] } : {}),
+    ...(skills.size ? { skills: [...skills] } : {}),
   };
 }
 
@@ -239,6 +254,8 @@ export class Conversation {
   #cancelRequested = false;
   #partialSavedAt = 0;
   #summaryAbort?: AbortController;
+  /** The routines and services this reply may use, fixed when its question was sent. */
+  #extra: AgentTool[] = [];
 
   private constructor(
     options: OpenConversationOptions,
@@ -398,6 +415,7 @@ export class Conversation {
           messages: this.#record.messages,
           sessionId: this.#record.id,
           tools: runtime.tools,
+          extraTools: () => this.#extra,
           prompt: () => runtime.prompt(),
         })
       : this.#record.focus === null
@@ -495,12 +513,13 @@ export class Conversation {
   async #send(text: string, submissionId: string, extras: SendExtras): Promise<void> {
     const added = extras.attachments ?? [];
     const notes = extras.notes ?? [];
+    const command = extras.command;
     const focus = await this.#focusSnapshot(extras.focus);
     // The typed text stays first, so the chat shows only what the student wrote.
     const input: SubmittedMessage = {
       role: "user",
       content:
-        added.length || notes.length
+        added.length || notes.length || command
           ? [
               { type: "text", text },
               ...(added.length
@@ -512,6 +531,7 @@ export class Conversation {
                   ]
                 : []),
               ...notes.map((note) => ({ type: "text" as const, text: `[Folio: ${note}]` })),
+              ...(command ? [{ type: "text" as const, text: command.block }] : []),
               ...added.flatMap((item) => (item.image ? [item.image] : [])),
             ]
           : text,
@@ -521,18 +541,28 @@ export class Conversation {
       ...(focus !== undefined ? { folioFocus: focus } : {}),
       ...(extras.thinking ? { folioThinking: extras.thinking } : {}),
       ...(extras.fast ? { folioFast: true } : {}),
+      ...(command ? { folioCommand: command.record } : {}),
     };
     if (extras.thinking) this.#agent.state.thinkingLevel = extras.thinking;
     // Set on every question, so a fast question never leaves the next one fast.
     this.#agent.onPayload =
       extras.fast && OPENAI_PROVIDERS.includes(this.#record.provider) ? priorityTier : undefined;
     this.#runtime?.beforeSend?.({ webSearch: extras.webSearch !== false });
+    this.#extra = (await this.#runtime?.extraTools?.()) ?? [];
     const summarize = this.#trim(input);
     // The chat remembers the document it was last beside. A question asked away from it says
     // so itself (no page), and leaves that memory alone, so the chat still reopens beside it.
     if (focus) this.#record.focus = { documentId: focus.documentId, page: focus.page };
     if (!this.#record.messages.some((message) => message.role === "user"))
-      this.#record.title = chatTitle(text);
+      // A question started with / is named for what follows the command.
+      this.#record.title = chatTitle(
+        command
+          ? text.trimStart().replace(/^\/\S+\s*/, "") ||
+              (command.record.kind === "prompt"
+                ? `${command.record.label} ${command.record.name}`
+                : command.record.name)
+          : text,
+      );
     this.#record.status = "running";
     this.#record.partialAssistant = undefined;
     this.#record.activeRun = {

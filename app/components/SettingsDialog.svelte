@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Cpu, KeyRound, SlidersHorizontal, Tags, X } from "@lucide/svelte";
+  import { Cpu, KeyRound, Plug, ScrollText, SlidersHorizontal, Tags, X } from "@lucide/svelte";
   import { Dialog, ToggleGroup } from "bits-ui";
   import {
     folio,
@@ -9,6 +9,8 @@
   import CategorySettings from "./CategorySettings.svelte";
   import ConnectionSettings from "./ConnectionSettings.svelte";
   import ModelSettings from "./ModelSettings.svelte";
+  import SkillSettings from "./SkillSettings.svelte";
+  import McpSettings from "./McpSettings.svelte";
 
   const themes: { value: ThemePreference; label: string }[] = [
     { value: "system", label: "System" },
@@ -25,6 +27,8 @@
     { value: "connections", label: "Connections", icon: KeyRound },
     { value: "models", label: "Models", icon: Cpu },
     { value: "categories", label: "Categories", icon: Tags },
+    { value: "skills", label: "Skills", icon: ScrollText },
+    { value: "mcp", label: "MCP servers", icon: Plug },
   ];
 
   const toggle =
@@ -59,19 +63,19 @@
           </Dialog.Close>
         </div>
         <Dialog.Description class="sr-only"
-          >Appearance, connections, which model does what, and your categories of
-          course files.</Dialog.Description
+          >Appearance, connections, which model does what, your categories of
+          course files, your routines and your services.</Dialog.Description
         >
 
         <div class="flex min-h-0 flex-1 max-sm:flex-col">
           <nav
-            class="flex shrink-0 gap-0.5 px-3 pb-3 sm:w-[168px] sm:flex-col max-sm:border-b max-sm:border-line-subtle"
+            class="scroll-quiet flex shrink-0 gap-0.5 px-3 pb-3 sm:w-[168px] sm:flex-col max-sm:overflow-x-auto max-sm:border-b max-sm:border-line-subtle"
             aria-label="Settings sections"
           >
             {#each SECTIONS as section (section.value)}
               {@const Icon = section.icon}
               <button
-                class="flex h-8 items-center gap-2.5 rounded-md px-2.5 text-left transition-colors {folio.settingsSection ===
+                class="flex h-8 shrink-0 items-center gap-2.5 rounded-md px-2.5 text-left whitespace-nowrap transition-colors {folio.settingsSection ===
                 section.value
                   ? 'bg-hover font-medium text-text'
                   : 'text-text-2 hover:bg-hover hover:text-text'}"
@@ -95,6 +99,10 @@
               <ModelSettings />
             {:else if folio.settingsSection === "categories"}
               <CategorySettings />
+            {:else if folio.settingsSection === "skills"}
+              <SkillSettings />
+            {:else if folio.settingsSection === "mcp"}
+              <McpSettings />
             {:else}
               <section class="flex items-center justify-between gap-4 pb-4">
                 <div class="flex flex-col gap-0.5">

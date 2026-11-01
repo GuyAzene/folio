@@ -88,6 +88,7 @@ async function setup(
     courseRuntime?: ConstructorParameters<typeof ChatService>[0]["courseRuntime"];
     attach?: ConstructorParameters<typeof ChatService>[0]["attach"];
     notes?: ConstructorParameters<typeof ChatService>[0]["notes"];
+    command?: ConstructorParameters<typeof ChatService>[0]["command"];
   } = {},
 ): Promise<{ service: ChatService; store: SessionStore; events: DesktopEvent[] }> {
   const home = await mkdtemp(resolve(tmpdir(), "folio-desktop-test-"));
@@ -104,6 +105,7 @@ async function setup(
     courseRuntime: options.courseRuntime,
     attach: options.attach,
     notes: options.notes,
+    command: options.command,
     connected: async (connection) =>
       Array.isArray(options.connected)
         ? options.connected.includes(connection.id)
@@ -791,5 +793,104 @@ describe("fast replies", () => {
     await expect(
       service.send({ chatId, text: "Hmm", submissionId: randomUUID(), fast: "yes" as never }),
     ).rejects.toThrow("Invalid speed");
+  });
+});
+
+describe("routines started with /name", () => {
+  const libraryRuntime = async () => ({
+    tools: [],
+    prompt: async () => "Synthetic library prompt",
+    checkFocus: async () => {
+      throw new Error("Library chats do not follow a page.");
+    },
+  });
+  const command: ConstructorParameters<typeof ChatService>[0]["command"] = async ({ name }) => {
+    if (name !== "quiz-me") throw new Error(`There is no routine "${name}" turned on.`);
+    return {
+      record: { v: 1, kind: "skill", name, from: "Folio", digest: "synthetic" },
+      block: '<folio_skill name="quiz-me">\nAsk one question at a time.\n</folio_skill>',
+    };
+  };
+
+  it("sends the routine with the question, and the chat shows which routine it started", async () => {
+    const { service, events, store } = await setup({ libraryRuntime, command });
+    const { chatId } = await service.send({
+      chatId: null,
+      text: "/quiz-me heaps",
+      submissionId: randomUUID(),
+      command: { kind: "skill", name: "quiz-me" },
+    });
+    await settled(events);
+    const view = await service.openChat(chatId);
+    expect(view.messages[0]).toMatchObject({
+      role: "user",
+      text: "/quiz-me heaps",
+      command: { kind: "skill", name: "quiz-me" },
+    });
+    const saved = (await store.load(chatId)).messages.find((message) => message.role === "user");
+    expect(JSON.stringify(saved)).toContain("Ask one question at a time.");
+  });
+
+  it("refuses before any chat exists when the routine is off, unnamed in the text, or the chat is plain", async () => {
+    const { service, store } = await setup({ libraryRuntime, command });
+    const send = (text: string, name: string) =>
+      service.send({
+        chatId: null,
+        text,
+        submissionId: randomUUID(),
+        command: { kind: "skill", name },
+      });
+    await expect(send("/exam-prep now", "exam-prep")).rejects.toThrow(/no routine "exam-prep"/);
+    await expect(send("quiz me /quiz-me", "quiz-me")).rejects.toThrow(/Start the message with/);
+    await expect(send("/Quiz-Me", "Quiz-Me")).rejects.toThrow(/Unknown routine/);
+    const plain = await setup({ command });
+    await expect(
+      plain.service.send({
+        chatId: null,
+        text: "/quiz-me heaps",
+        submissionId: randomUUID(),
+        command: { kind: "skill", name: "quiz-me" },
+      }),
+    ).rejects.toThrow(/can't start routines/);
+    expect(await store.list()).toEqual([]);
+    expect(await plain.store.list()).toEqual([]);
+  });
+
+  it("checks a service's prompt: it must lead the message, and its answers must be short text", async () => {
+    const started: unknown[] = [];
+    const { service, events } = await setup({
+      libraryRuntime,
+      command: async (input) => {
+        started.push(input);
+        return {
+          record: {
+            v: 1,
+            kind: "prompt",
+            server: "moodle",
+            label: "Moodle",
+            name: "exam_prep",
+            args: {},
+            digest: "x",
+          },
+          block: '<folio_prompt service="Moodle" name="exam_prep">\nPlan.\n</folio_prompt>',
+        };
+      },
+    });
+    const send = (text: string, args: unknown) =>
+      service.send({
+        chatId: null,
+        text,
+        submissionId: randomUUID(),
+        command: { kind: "prompt", server: "moodle", name: "exam_prep", args } as never,
+      });
+    await expect(send("plan /moodle:exam_prep", {})).rejects.toThrow(/Start the message with/);
+    await expect(send("/moodle:exam_prep", { course: "x".repeat(2_001) })).rejects.toThrow(/2,000/);
+    await expect(send("/moodle:exam_prep", ["Algorithms"])).rejects.toThrow(/Invalid answers/);
+    expect(started).toEqual([]);
+    await send("/moodle:exam_prep heaps", { course: " Algorithms ", topic: "" });
+    await settled(events);
+    expect(started).toEqual([
+      { kind: "prompt", server: "moodle", name: "exam_prep", args: { course: "Algorithms" } },
+    ]);
   });
 });

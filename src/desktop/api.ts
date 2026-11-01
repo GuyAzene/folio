@@ -71,8 +71,131 @@ export interface ChatMessageView {
   attachments?: AttachmentView[];
   /** Drawings and demos the tutor showed in this turn, each at its place in `text`. */
   visuals?: VisualView[];
+  /** The routine the student started with this question (`/name`). */
+  command?: CommandInput;
+  /** Calls to the student's services in this reply that wait for their answer. */
+  approvals?: ApprovalView[];
   /** "summary": where Folio summarized the chat so far for the tutor; shown as a divider. */
   kind?: "summary";
+}
+
+/** A call to one of the student's services that waits for them: Allow once, Always allow or Deny. */
+export interface ApprovalView {
+  id: string;
+  chatId: string;
+  label: string;
+  tool: string;
+  description: string;
+  /** What the server says about its tool; shown, never trusted. */
+  hints: { readOnly?: boolean; destructive?: boolean; openWorld?: boolean };
+  /** Exactly what Folio will send, as indented JSON. */
+  args: string;
+}
+
+export type ApprovalDecision = "once" | "always" | "deny";
+export type ToolRuleView = "ask" | "allow" | "off";
+
+/** One of the student's MCP servers, as Settings shows it. No setting's or header's value is ever here. */
+export interface McpServerView {
+  id: string;
+  label: string;
+  kind: "local" | "remote";
+  /** A local server's program; a remote one's address, with any query hidden. */
+  command: string;
+  args: string[];
+  cwd: string | null;
+  /** The names of its settings (environment) and headers; their values stay in the main process. */
+  env: string[];
+  headers: string[];
+  enabled: boolean;
+  /** "allow": every tool runs without asking. */
+  approval: "ask" | "allow";
+  status: "off" | "starting" | "ready" | "stopped" | "failed";
+  error: string | null;
+  /** The end of what it printed to its error output, its secrets hidden. */
+  log: string;
+  instructions: string | null;
+  tools: {
+    name: string;
+    title: string | null;
+    description: string;
+    rule: ToolRuleView;
+    hints: { readOnly?: boolean; destructive?: boolean; openWorld?: boolean };
+  }[];
+  /** Prompts it offers while it runs, started with `/server:name`. */
+  prompts: {
+    name: string;
+    title: string | null;
+    description: string;
+    arguments: { name: string; description: string; required: boolean }[];
+  }[];
+  /** An argument that looks like a key, which Settings shows in full. */
+  argWarning: boolean;
+}
+
+export interface McpView {
+  servers: McpServerView[];
+  /** Entries in mcp.json Folio couldn't use, and why. */
+  problems: string[];
+}
+
+/** A server to add or change; a setting's or header's null removes it, one left out stays. */
+export interface McpServerInput {
+  id: string;
+  label?: string;
+  command?: string;
+  args?: string[];
+  cwd?: string | null;
+  url?: string;
+  env?: Record<string, string | null>;
+  headers?: Record<string, string | null>;
+}
+
+/**
+ * What a question starts with `/`: one of the student's routines (`/name`), or a prompt one of
+ * their services offers (`/server:name`) with their answers to its arguments. The question's
+ * text starts with it.
+ */
+export type CommandInput =
+  | { kind: "skill"; name: string }
+  | {
+      kind: "prompt";
+      server: string;
+      name: string;
+      args: Record<string, string>;
+      /** The service's name, shown on the question; Folio fills it in. */
+      label?: string;
+    };
+
+/** One of the student's routines (Agent Skills), as Settings lists it. */
+export interface SkillView {
+  /** Its folder, with ~ for the home folder. */
+  key: string;
+  name: string;
+  description: string;
+  source: "folio" | "agents" | "claude" | "codex" | "folder";
+  /** Where it came from: "Folio", "Claude Code", or a folder the student added. */
+  from: string;
+  on: boolean;
+  /** False when only the student starts it. */
+  model: boolean;
+  /** False when it isn't one to start with `/name`. */
+  user: boolean;
+  /** Another routine that is on with the same name, which is used instead. */
+  hiddenBy?: string;
+  note?: string;
+  /** Tools it asks for in other agents; Folio grants none. */
+  allowedTools?: string;
+}
+
+export interface SkillsView {
+  skills: SkillView[];
+  /** SKILL.md files Folio couldn't use, and why. */
+  skipped: { key: string; from: string; reason: string }[];
+  /** Folders of routines the student added. */
+  folders: string[];
+  /** Folio's own routines folder. */
+  folder: string;
 }
 
 /** An assignment as the board shows it. */
@@ -630,6 +753,8 @@ export interface SendInput {
   fast?: boolean;
   /** False when the student turned web search off in Settings. */
   webSearch?: boolean;
+  /** A routine the question starts; its text starts with `/name`. */
+  command?: CommandInput;
 }
 
 export type DesktopEvent =
@@ -644,6 +769,10 @@ export type DesktopEvent =
   | { type: "trash" }
   /** Connections, the composer's models or config.json changed. */
   | { type: "models"; models: ModelsView }
+  /** A server started, stopped or changed its tools, or mcp.json changed. */
+  | { type: "mcp"; mcp: McpView }
+  /** Calls to services that wait for the student, in every chat. */
+  | { type: "approvals"; approvals: ApprovalView[] }
   | { type: "error"; chatId: string | null; message: string };
 
 export interface FolioApi {
@@ -686,6 +815,39 @@ export interface FolioApi {
   openrouterCatalog(): Promise<ModelView[]>;
   /** Shows config.json in Finder, writing today's choices to it first if it doesn't exist. */
   revealConfig(): Promise<void>;
+  /** The student's routines from every folder Folio reads, and the ones it couldn't. */
+  listSkills(): Promise<SkillsView>;
+  /** Turns a routine on or off, by its folder's key, in config.json. */
+  setSkillOn(key: string, on: boolean): Promise<SkillsView>;
+  /** Makes a routine in Folio's own folder. */
+  createSkill(input: { name: string; description: string; body: string }): Promise<SkillsView>;
+  /** One of Folio's own routines' SKILL.md, to edit. */
+  readSkill(name: string): Promise<{ text: string; revision: string }>;
+  /** Saves it; refused when it changed since `revision` or no longer reads as a routine. */
+  saveSkill(name: string, text: string, revision: string): Promise<SkillsView>;
+  /** Opens the folder picker and adds a folder of routines; null when cancelled. */
+  addSkillFolder(): Promise<SkillsView | null>;
+  removeSkillFolder(key: string): Promise<SkillsView>;
+  /** Shows a routine (or Folio's routines folder) in Finder. */
+  revealSkill(key: string | null): Promise<void>;
+  /** The student's MCP servers and how each is doing. */
+  mcpServers(): Promise<McpView>;
+  /** Adds the servers in a block pasted from a README or another app, each off until turned on. */
+  addMcpServers(text: string): Promise<McpView>;
+  /** Adds a server, or changes one named `previous`; a new one is off until turned on. */
+  saveMcpServer(input: McpServerInput, previous: string | null): Promise<McpView>;
+  removeMcpServer(id: string): Promise<McpView>;
+  setMcpServerOn(id: string, on: boolean): Promise<McpView>;
+  restartMcpServer(id: string): Promise<McpView>;
+  /** "allow" lets every tool of the server run without asking. */
+  setMcpServerApproval(id: string, approval: "ask" | "allow"): Promise<McpView>;
+  setMcpToolRule(id: string, tool: string, rule: ToolRuleView): Promise<McpView>;
+  /** Shows mcp.json in Finder. */
+  revealMcpConfig(): Promise<void>;
+  /** Calls to services waiting for the student, in every chat. */
+  listApprovals(): Promise<ApprovalView[]>;
+  /** The student's answer to a waiting call; refused when it no longer waits. */
+  answerApproval(id: string, decision: ApprovalDecision): Promise<void>;
   listCourses(): Promise<CourseView[]>;
   createCourse(input: CourseInput): Promise<CourseView>;
   updateCourse(id: string, patch: CourseInput, revision: number): Promise<CourseView>;

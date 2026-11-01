@@ -7,6 +7,7 @@
     ListChecks,
     MessagesSquare,
     NotebookPen,
+    Plug,
     Plus,
     Search,
     Settings,
@@ -169,7 +170,7 @@
       </button>
     {/each}
 
-    {#if folio.needsYou.length || folio.waitingChanges.length}
+    {#if folio.needsYou.length || folio.waitingChanges.length || folio.approvals.length}
       <div class="mt-5 flex h-6 items-center px-2">
         <span
           class="flex-1 text-[11px] font-medium tracking-[0.06em] text-text-3 uppercase"
@@ -192,6 +193,24 @@
           <span class="min-w-0 flex-1 truncate text-left"
             >{proposal.noteId ? "Review edit to" : "Review new note"}
             <bdi>{proposal.noteTitle}</bdi></span
+          >
+        </button>
+      {/each}
+      {#each folio.approvals as approval (approval.id)}
+        <button
+          class="flex h-8 w-full items-center gap-2.5 rounded-md px-2 text-text-2 transition-colors hover:bg-hover hover:text-text"
+          title="Folio waits for you to allow or deny this"
+          onclick={(event) =>
+            folio.openChat(approval.chatId, { newTab: event.metaKey || event.ctrlKey })}
+        >
+          <span class="relative shrink-0">
+            <Plug size={15} strokeWidth={1.75} />
+            <span
+              class="absolute -top-0.5 -right-0.5 size-1.5 rounded-full bg-highlight ring-2 ring-bg"
+            ></span>
+          </span>
+          <span class="min-w-0 flex-1 truncate text-left"
+            >Allow {approval.label} · <bdi>{approval.tool}</bdi>?</span
           >
         </button>
       {/each}

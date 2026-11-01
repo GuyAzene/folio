@@ -18,6 +18,12 @@ import type {
   PageCoverageView,
   ProposalView,
   SendInput,
+  ApprovalDecision,
+  ApprovalView,
+  McpServerView,
+  McpView,
+  SkillsView,
+  SkillView,
   StudyNotesView,
   TrashEntryView,
   VisualView,
@@ -1709,6 +1715,173 @@ const PREVIEW_GROUPS: {
   { connection: "openrouter", name: "OpenRouter", kind: "key", models: [] },
 ];
 
+/** Synthetic routines: two of Folio's own, and other agents' skills that start off. */
+const previewSkills: (SkillView & { body: string })[] = [
+  {
+    key: "~/.folio/skills/quiz-me",
+    name: "quiz-me",
+    description:
+      "Quiz the student one question at a time on the material they name, waiting for each answer before the next.",
+    source: "folio",
+    from: "Folio",
+    on: true,
+    model: true,
+    user: true,
+    body: "Ask one question at a time. Wait for the answer, then say what was right and what was missing before the next question.",
+  },
+  {
+    key: "~/.folio/skills/exam-prep",
+    name: "exam-prep",
+    description: "Plan a week of exam preparation from the course's lectures and past homework.",
+    source: "folio",
+    from: "Folio",
+    on: true,
+    model: false,
+    user: true,
+    body: "List the course's topics, ask which ones feel weakest, then plan seven days.",
+  },
+  {
+    key: "~/.claude/skills/feynman",
+    name: "feynman",
+    description: "Explain a concept in plain words, then find the gaps by teaching it back.",
+    source: "claude",
+    from: "Claude Code",
+    on: false,
+    model: true,
+    user: true,
+    body: "Explain it simply, then ask the student to teach it back.",
+  },
+  {
+    key: "~/.claude/skills/pdf",
+    name: "pdf",
+    description: "Fill, merge and split PDF files with Python scripts.",
+    source: "claude",
+    from: "Claude Code",
+    on: false,
+    model: true,
+    user: true,
+    allowedTools: "Bash(python:*) Read",
+    body: "Run scripts/fill.py with the form's fields.",
+  },
+];
+let previewSkillFolders: string[] = [];
+const skillRevision = (skill: { body: string; description: string }) =>
+  `${skill.description.length}-${skill.body.length}-${skill.body.slice(0, 8)}`;
+const skillFile = (skill: { name: string; description: string; body: string }) =>
+  `---\nname: ${skill.name}\ndescription: ${JSON.stringify(skill.description)}\n---\n\n${skill.body}\n`;
+function previewSkillsView(): SkillsView {
+  return {
+    skills: previewSkills.map(({ body: _body, ...skill }) => structuredClone(skill)),
+    skipped: [
+      {
+        key: "~/.claude/skills/scratch",
+        from: "Claude Code",
+        reason: "it has no description",
+      },
+    ],
+    folders: [...previewSkillFolders],
+    folder: "~/.folio/skills",
+  };
+}
+
+/** Synthetic services: a local Moodle server that is running, a Piazza one that is off, and one that failed. */
+const previewServers: McpServerView[] = [
+  {
+    id: "moodle",
+    label: "Moodle",
+    kind: "local",
+    command: "moodle-mcp",
+    args: [],
+    cwd: null,
+    env: ["MOODLE_URL", "MOODLE_TOKEN"],
+    headers: [],
+    enabled: true,
+    approval: "ask",
+    status: "ready",
+    error: null,
+    log: "",
+    instructions: "Read-only access to a student's Moodle.",
+    prompts: [
+      {
+        name: "weekly_briefing",
+        title: null,
+        description: "What is due, new, or needs action across your current courses.",
+        arguments: [],
+      },
+      {
+        name: "exam_prep",
+        title: null,
+        description: "A study plan from the course's slides and your past quiz mistakes.",
+        arguments: [
+          { name: "course", description: "The course.", required: true },
+          { name: "topic", description: "One topic, if any.", required: false },
+        ],
+      },
+    ],
+    tools: [
+      ["list_courses", "Courses by semester, with grades."],
+      ["get_deadlines", "Upcoming to-dos and submission status."],
+      ["get_announcements", "Announcement posts, newest first."],
+      ["read_file", "Text of a course file (PDF, slides, documents)."],
+      ["download_files", "Copies a course's files to a folder on this Mac."],
+    ].map(([name, description]) => ({
+      name: name!,
+      title: null,
+      description: description!,
+      rule: name === "download_files" ? "off" : name === "list_courses" ? "allow" : "ask",
+      hints: name === "download_files" ? { readOnly: false } : { readOnly: true },
+    })),
+    argWarning: false,
+  },
+  {
+    id: "piazza",
+    label: "Piazza",
+    kind: "local",
+    command: "/Users/student/piazza-mcp/.venv/bin/python",
+    args: ["/Users/student/piazza-mcp/main.py"],
+    cwd: null,
+    env: ["PIAZZA_EMAIL", "PIAZZA_PASSWORD", "PIAZZA_COURSES"],
+    headers: [],
+    enabled: false,
+    approval: "ask",
+    status: "off",
+    error: null,
+    log: "",
+    instructions: null,
+    tools: [],
+    prompts: [],
+    argWarning: false,
+  },
+  {
+    id: "campus",
+    label: "Campus",
+    kind: "local",
+    command: "campus-mcp",
+    args: ["--serve"],
+    cwd: null,
+    env: [],
+    headers: [],
+    enabled: true,
+    approval: "ask",
+    status: "failed",
+    error:
+      'Folio can\'t find the program "campus-mcp". Write its full path, or install it first (for a uv tool: uv tool install).',
+    log: "",
+    instructions: null,
+    tools: [],
+    prompts: [],
+    argWarning: false,
+  },
+];
+let previewApprovals: ApprovalView[] = [];
+const approvalWaiters = new Map<string, (decision: ApprovalDecision) => void>();
+const previewMcp = (): McpView => ({ servers: structuredClone(previewServers), problems: [] });
+const previewServer = (id: string) => {
+  const server = previewServers.find((candidate) => candidate.id === id);
+  if (!server) throw new Error("That server is no longer in mcp.json.");
+  return server;
+};
+
 let previewCategories: Category[] = structuredClone([...DEFAULT_CATEGORIES]);
 let previewNaming: string | null = null;
 
@@ -1808,12 +1981,37 @@ export const previewApi: FolioApi = {
     if (!chat) throw new Error("Unknown chat.");
     return structuredClone(chat);
   },
-  async send({ chatId, text, courseId, focus, model, attachments = [] }: SendInput) {
+  async send({ chatId, text, courseId, focus, model, attachments = [], command }: SendInput) {
+    const routine =
+      command?.kind === "skill"
+        ? previewSkills.find((skill) => skill.name === command.name && skill.on)
+        : undefined;
+    if (command?.kind === "skill" && !routine)
+      throw new Error(`There is no routine "${command.name}" turned on.`);
+    const served =
+      command?.kind === "prompt"
+        ? previewServers
+            .find((server) => server.id === command.server && server.status === "ready")
+            ?.prompts.find((prompt) => prompt.name === command.name)
+        : undefined;
+    if (command?.kind === "prompt") {
+      if (!served) throw new Error("That service is off. Turn it on in Settings.");
+      const missing = served.arguments.filter(
+        (argument) => argument.required && !command.args[argument.name],
+      );
+      if (missing.length)
+        throw new Error(`Fill in ${missing.map((argument) => argument.name).join(" and ")} first.`);
+    }
     const key = chatId ?? crypto.randomUUID();
     const chat: ChatView = chats.get(key) ?? {
       id: key,
       kind: courseId ? "course" : "library",
-      title: chatTitle(text),
+      title: chatTitle(
+        command
+          ? text.trimStart().replace(/^\/\S+\s*/, "") ||
+              (command.kind === "prompt" ? `${command.server} ${command.name}` : command.name)
+          : text,
+      ),
       status: "idle",
       model: model ?? previewRoles.teaching,
       updatedAt: new Date().toISOString(),
@@ -1848,6 +2046,14 @@ export const previewApi: FolioApi = {
       text,
       state: "complete",
       ...(views.length ? { attachments: views } : {}),
+      ...(command
+        ? {
+            command:
+              command.kind === "prompt"
+                ? { ...command, label: previewServer(command.server).label }
+                : command,
+          }
+        : {}),
     });
     chats.set(key, chat);
     // Asking for a diagram or a drawing shows one being written and then drawn.
@@ -1867,7 +2073,11 @@ export const previewApi: FolioApi = {
         ].join("\n")
       : /visual|demo|הדגמה/i.test(text)
         ? "Here is the queue as it changes, and a demo you can step through:"
-        : "This is the **preview bridge**. In the app, Folio reads your course pages and answers from them.";
+        : routine
+          ? `Following your routine **${routine.name}**. First question: what does breadth-first search keep in its queue?`
+          : command?.kind === "prompt"
+            ? `Here is a week of exam preparation for **${command.args.course ?? "your course"}**${command.args.topic ? `, starting with ${command.args.topic}` : ""}.`
+            : "This is the **preview bridge**. In the app, Folio reads your course pages and answers from them.";
     // Asking for a visual shows a drawing written piece by piece, then a demo's card.
     const visuals: VisualView[] = /visual|demo|הדגמה/i.test(text)
       ? [
@@ -1902,7 +2112,78 @@ export const previewApi: FolioApi = {
       });
       emit({ type: "chats", chats: summaries() });
       await new Promise((resolve) => setTimeout(resolve, 500));
-      const words = reply.split(" ");
+      // A question about Moodle uses the synthetic Moodle server, asking first unless allowed.
+      let answer = reply;
+      let steps: { label: string; state: "running" | "done" | "failed" }[] = [];
+      const moodle = previewServers.find((server) => server.id === "moodle" && server.enabled);
+      if (moodle && !command && /moodle|deadline|due/i.test(text)) {
+        const tool = moodle.tools.find((candidate) => candidate.name === "get_deadlines")!;
+        let decision: ApprovalDecision = "once";
+        if (moodle.approval !== "allow" && tool.rule !== "allow") {
+          const approval: ApprovalView = {
+            id: crypto.randomUUID(),
+            chatId: key,
+            label: "Moodle",
+            tool: "get_deadlines",
+            description: tool.description,
+            hints: tool.hints,
+            args: JSON.stringify({ days: 7 }, null, 2),
+          };
+          previewApprovals = [...previewApprovals, approval];
+          emit({ type: "approvals", approvals: structuredClone(previewApprovals) });
+          emit({
+            type: "chat",
+            chat: structuredClone({
+              ...chat,
+              messages: [
+                ...chat.messages,
+                {
+                  role: "assistant" as const,
+                  text: "",
+                  state: "streaming" as const,
+                  steps: [
+                    { label: "Waiting for you: Moodle · get_deadlines", state: "running" as const },
+                  ],
+                  sources: [],
+                  approvals: [approval],
+                },
+              ],
+            }),
+          });
+          decision = await new Promise<ApprovalDecision>((resolve) =>
+            approvalWaiters.set(approval.id, resolve),
+          );
+          previewApprovals = previewApprovals.filter((waiting) => waiting.id !== approval.id);
+          emit({ type: "approvals", approvals: structuredClone(previewApprovals) });
+          if (decision === "always") tool.rule = "allow";
+        }
+        steps = [
+          decision === "deny"
+            ? { label: "You declined Moodle · get_deadlines", state: "failed" }
+            : { label: "Used Moodle · get_deadlines", state: "done" },
+        ];
+        answer =
+          decision === "deny"
+            ? "You declined, so I didn't look at Moodle. Tell me what's due and I'll help you plan it."
+            : "From Moodle, due in the next seven days:\n\n- **Homework 3**, Automata Theory: Thursday at 23:59, not submitted yet\n- **Quiz 2**, Algorithms: Sunday at 12:00";
+        emit({
+          type: "chat",
+          chat: structuredClone({
+            ...chat,
+            messages: [
+              ...chat.messages,
+              {
+                role: "assistant" as const,
+                text: "",
+                state: "streaming" as const,
+                steps,
+                sources: [],
+              },
+            ],
+          }),
+        });
+      }
+      const words = answer.split(" ");
       for (let index = 1; index <= words.length; index++) {
         await new Promise((resolve) => setTimeout(resolve, 30));
         emit({ type: "stream", chatId: key, text: words.slice(0, index).join(" ") });
@@ -1918,9 +2199,9 @@ export const previewApi: FolioApi = {
         }
       chat.messages.push({
         role: "assistant",
-        text: reply,
+        text: answer,
         state: "complete",
-        steps: [],
+        steps,
         sources: [],
         ...(visuals.length ? { visuals } : {}),
       });
@@ -2015,6 +2296,202 @@ export const previewApi: FolioApi = {
     return structuredClone(OPENROUTER_CATALOG);
   },
   async revealConfig() {},
+  async listSkills() {
+    return previewSkillsView();
+  },
+  async setSkillOn(key, on) {
+    const skill = previewSkills.find((candidate) => candidate.key === key);
+    if (!skill) throw new Error("That routine is no longer there.");
+    skill.on = on;
+    return previewSkillsView();
+  },
+  async createSkill({ name, description, body }) {
+    if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(name) || name.length > 64)
+      throw new Error(
+        "That name can't be used: its name isn't lowercase letters, digits and single hyphens.",
+      );
+    if (!description.trim()) throw new Error("Write a description.");
+    if (previewSkills.some((skill) => skill.source === "folio" && skill.name === name))
+      throw new Error(`There is already a routine named ${name}.`);
+    previewSkills.splice(previewSkills.filter((skill) => skill.source === "folio").length, 0, {
+      key: `~/.folio/skills/${name}`,
+      name,
+      description: description.trim(),
+      source: "folio",
+      from: "Folio",
+      on: true,
+      model: true,
+      user: true,
+      body: body.trim(),
+    });
+    return previewSkillsView();
+  },
+  async readSkill(name) {
+    const skill = previewSkills.find(
+      (candidate) => candidate.source === "folio" && candidate.name === name,
+    );
+    if (!skill) throw new Error(`Folio has no routine of its own named ${name}.`);
+    return { text: skillFile(skill), revision: skillRevision(skill) };
+  },
+  async saveSkill(name, text, revision) {
+    const skill = previewSkills.find(
+      (candidate) => candidate.source === "folio" && candidate.name === name,
+    );
+    if (!skill) throw new Error(`Folio has no routine of its own named ${name}.`);
+    if (revision !== skillRevision(skill))
+      throw new Error("This routine changed since you opened it. Open it again.");
+    const match = /^---\n([\s\S]*?)\n---\n?([\s\S]*)$/.exec(text);
+    const description = match && /description:\s*(.+)/.exec(match[1]!)?.[1]?.replace(/^"|"$/g, "");
+    if (!match || !description) throw new Error("This can't be saved: it has no description.");
+    skill.description = description;
+    skill.body = match[2]!.trim();
+    return previewSkillsView();
+  },
+  async addSkillFolder() {
+    if (!previewSkillFolders.includes("~/Study/skills")) previewSkillFolders.push("~/Study/skills");
+    return previewSkillsView();
+  },
+  async removeSkillFolder(key) {
+    previewSkillFolders = previewSkillFolders.filter((folder) => folder !== key);
+    return previewSkillsView();
+  },
+  async revealSkill() {},
+  async mcpServers() {
+    return previewMcp();
+  },
+  async addMcpServers(text) {
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(text) as Record<string, unknown>;
+    } catch {
+      throw new Error("That isn't JSON. Paste the block with the server's name and command.");
+    }
+    const block = (parsed.mcpServers ?? parsed) as Record<
+      string,
+      { command?: string; args?: string[]; env?: Record<string, string> }
+    >;
+    for (const [id, entry] of Object.entries(block)) {
+      if (previewServers.some((server) => server.id === id))
+        throw new Error(`There is already a server named ${id}.`);
+      previewServers.push({
+        id,
+        label: id.charAt(0).toUpperCase() + id.slice(1),
+        kind: "local",
+        command: entry.command ?? "",
+        args: entry.args ?? [],
+        cwd: null,
+        env: Object.keys(entry.env ?? {}),
+        headers: [],
+        enabled: false,
+        approval: "ask",
+        status: "off",
+        error: null,
+        log: "",
+        instructions: null,
+        tools: [],
+        prompts: [],
+        argWarning: false,
+      });
+    }
+    return previewMcp();
+  },
+  async saveMcpServer(input, previous) {
+    const server = previous ? previewServer(previous) : undefined;
+    if (!server) {
+      if (previewServers.some((candidate) => candidate.id === input.id))
+        throw new Error(`There is already a server named ${input.id}.`);
+      previewServers.push({
+        id: input.id,
+        label: input.label || input.id,
+        kind: input.url ? "remote" : "local",
+        command: input.url ?? input.command ?? "",
+        args: input.args ?? [],
+        cwd: input.cwd ?? null,
+        env: Object.keys(input.env ?? {}),
+        headers: Object.keys(input.headers ?? {}),
+        enabled: false,
+        approval: "ask",
+        status: "off",
+        error: null,
+        log: "",
+        instructions: null,
+        tools: [],
+        prompts: [],
+        argWarning: false,
+      });
+    } else {
+      server.id = input.id;
+      server.label = input.label || server.label;
+      if (input.command !== undefined) server.command = input.command;
+      if (input.args) server.args = input.args;
+      for (const [name, value] of Object.entries(input.env ?? {}))
+        server.env =
+          value === null
+            ? server.env.filter((known) => known !== name)
+            : [...new Set([...server.env, name])];
+    }
+    return previewMcp();
+  },
+  async removeMcpServer(id) {
+    previewServers.splice(previewServers.indexOf(previewServer(id)), 1);
+    return previewMcp();
+  },
+  async setMcpServerOn(id, on) {
+    const server = previewServer(id);
+    server.enabled = on;
+    server.status = on ? (server.id === "campus" ? "failed" : "starting") : "off";
+    if (on && server.status === "starting")
+      setTimeout(() => {
+        server.status = "ready";
+        if (!server.tools.length)
+          server.tools = [
+            {
+              name: "list_courses",
+              title: null,
+              description: "The classes you are in.",
+              rule: "ask",
+              hints: {},
+            },
+            {
+              name: "fetch_posts",
+              title: null,
+              description: "Recent posts from a class.",
+              rule: "ask",
+              hints: {},
+            },
+          ];
+        emit({ type: "mcp", mcp: previewMcp() });
+      }, 900);
+    return previewMcp();
+  },
+  async restartMcpServer(id) {
+    const server = previewServer(id);
+    server.status = "starting";
+    setTimeout(() => {
+      server.status = server.id === "campus" ? "failed" : "ready";
+      emit({ type: "mcp", mcp: previewMcp() });
+    }, 900);
+    return previewMcp();
+  },
+  async setMcpServerApproval(id, approval) {
+    previewServer(id).approval = approval;
+    return previewMcp();
+  },
+  async setMcpToolRule(id, tool, rule) {
+    const found = previewServer(id).tools.find((candidate) => candidate.name === tool);
+    if (found) found.rule = rule;
+    return previewMcp();
+  },
+  async revealMcpConfig() {},
+  async listApprovals() {
+    return structuredClone(previewApprovals);
+  },
+  async answerApproval(id, decision) {
+    const waiter = approvalWaiters.get(id);
+    if (!waiter) throw new Error("That request is no longer waiting.");
+    approvalWaiters.delete(id);
+    waiter(decision);
+  },
   async listCourses() {
     return structuredClone(courses);
   },

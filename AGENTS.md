@@ -22,7 +22,11 @@ Guidance for anyone changing Folio, including AI coding agents. Read [README.md]
 - Reading or explaining material never ingests it, publishes study notes, moves files or
   records learning by itself.
 - Course scope is enforced in application code, not in prompts. The model can never widen what
-  it may read; only the student can.
+  it may read; only the student can. A service (MCP server) the student turns on is a deliberate
+  exception: its tools reach what its own account can see, and Folio never hands it Folio's files.
+- What a service returns, like a web page, is outside content: labelled as such, never
+  instructions, and never course evidence. A routine (skill) is the student's instruction for how
+  to work, not a source.
 - A confident answer, a transcript or a graph node is not evidence that the student understands
   something. Self-reports, assisted success and independent success are different observations.
 - Never commit credentials, provider keys, personal learning records, real course material or

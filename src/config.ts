@@ -1,11 +1,10 @@
-import { readFile, realpath } from "node:fs/promises";
-import { watch } from "node:fs";
 import { resolve } from "node:path";
 import type { Models } from "@earendil-works/pi-ai";
 import { IMAGE_ROLES, MODEL_ROLES, type ModelRole } from "./desktop/api.ts";
-import { writeAtomic } from "./files.ts";
+import { EditableFile } from "./editable-file.ts";
 import { DEFAULT_OPENROUTER, modelFor, modelName, offered } from "./model-choices.ts";
 import { formatRef, parseRef, studyModel } from "./model-refs.ts";
+import { NO_SWITCHES, type SkillSwitches } from "./skills/library.ts";
 import { DEFAULT_MODEL } from "./agents.ts";
 import { DEFAULT_ROLES as STUDY_DEFAULTS, type RoleModels } from "./ingest/pipeline.ts";
 import {
@@ -91,6 +90,8 @@ export interface ConfigState {
   categories: Category[];
   /** How files are named when their category has no pattern of its own; null keeps their names. */
   naming: string | null;
+  /** Which of the student's routines are on, and folders of routines they added. */
+  skills: SkillSwitches;
   /** Entries Folio could not use, each with where it is and why. */
   problems: string[];
 }
@@ -134,6 +135,7 @@ export function readConfig(catalog: Models, raw: unknown): ConfigState {
       openrouter: [...DEFAULT_OPENROUTER],
       categories: defaults,
       naming: null,
+      skills: structuredClone(NO_SWITCHES),
       problems,
     };
   if (!isRecord(raw))
@@ -142,6 +144,7 @@ export function readConfig(catalog: Models, raw: unknown): ConfigState {
       openrouter: [...DEFAULT_OPENROUTER],
       categories: defaults,
       naming: null,
+      skills: structuredClone(NO_SWITCHES),
       problems: ["config.json isn't a JSON object, so Folio uses its defaults until it's fixed."],
     };
   if (raw.version !== 1)
@@ -150,6 +153,7 @@ export function readConfig(catalog: Models, raw: unknown): ConfigState {
       openrouter: [...DEFAULT_OPENROUTER],
       categories: defaults,
       naming: null,
+      skills: structuredClone(NO_SWITCHES),
       problems: [
         `config.json is version ${JSON.stringify(raw.version)}, which this Folio can't read; it uses its defaults.`,
       ],
@@ -187,32 +191,54 @@ export function readConfig(catalog: Models, raw: unknown): ConfigState {
   }
   const library = readCategories(raw.library);
   const naming = readNaming(raw.library);
-  problems.push(...library.problems, ...naming.problems);
+  const skills = readSkills(raw.skills);
+  problems.push(...library.problems, ...naming.problems, ...skills.problems);
   return {
     roles,
     openrouter,
     categories: library.categories,
     naming: naming.naming,
+    skills: skills.switches,
     problems: [...new Set(problems)],
   };
+}
+
+/** The `skills` section: lists of skill folders turned on and off, and folders added. */
+export function readSkills(raw: unknown): { switches: SkillSwitches; problems: string[] } {
+  const switches = structuredClone(NO_SWITCHES);
+  if (raw === undefined) return { switches, problems: [] };
+  if (!isRecord(raw))
+    return { switches, problems: ['skills: write an object, such as { "on": [], "off": [] }.'] };
+  const problems: string[] = [];
+  for (const key of ["on", "off", "folders"] as const) {
+    const list = raw[key];
+    if (list === undefined) continue;
+    if (!Array.isArray(list) || !list.every((item) => typeof item === "string" && item)) {
+      problems.push(`skills.${key}: write a list of folders.`);
+      continue;
+    }
+    switches[key] = [...new Set(list as string[])];
+  }
+  return { switches, problems };
 }
 
 const CHANGED = "config.json changed outside Folio. Settings now shows it; try again.";
 
 export class FolioConfig {
-  readonly path: string;
+  readonly #file: EditableFile;
   readonly #catalog: Models;
-  /** The file as last read: null when there is none. */
-  #text: string | null = null;
   /** Its parsed contents, when it is a JSON object Folio can write back. */
   #raw: Record<string, unknown> | null = null;
   #state: ConfigState;
-  #writing: Promise<unknown> = Promise.resolve();
 
   private constructor(home: string, catalog: Models) {
-    this.path = resolve(home, "config.json");
+    this.#file = new EditableFile(resolve(home, "config.json"), { changed: CHANGED });
     this.#catalog = catalog;
     this.#state = readConfig(catalog, undefined);
+  }
+
+  get path(): string {
+    return this.#file.path;
   }
 
   static async open(home: string, catalog: Models): Promise<FolioConfig> {
@@ -236,18 +262,11 @@ export class FolioConfig {
   get naming(): string | null {
     return this.#state.naming;
   }
-
-  async #read(): Promise<string | null> {
-    try {
-      return await readFile(this.path, "utf8");
-    } catch (error) {
-      if (isRecord(error) && error.code === "ENOENT") return null;
-      throw error;
-    }
+  get skills(): SkillSwitches {
+    return structuredClone(this.#state.skills);
   }
 
   #apply(text: string | null): void {
-    this.#text = text;
     let parsed: unknown;
     let broken = false;
     if (text !== null)
@@ -268,7 +287,7 @@ export class FolioConfig {
   /** Reads the file again; true when what Folio uses or reports changed. */
   async reload(): Promise<boolean> {
     const before = JSON.stringify(this.#state);
-    this.#apply(await this.#read());
+    this.#apply(await this.#file.load());
     return JSON.stringify(this.#state) !== before;
   }
 
@@ -325,9 +344,35 @@ export class FolioConfig {
     });
   }
 
+  /**
+   * Turns one routine on or off, by its folder's key. `usual` is whether it is on with no entry:
+   * Folio's own routines are, other agents' are not.
+   */
+  setSkill(key: string, on: boolean, usual: boolean): Promise<void> {
+    if (typeof key !== "string" || !key) return Promise.reject(new Error("Unknown routine."));
+    return this.#update((raw) => {
+      const current = readSkills(raw.skills).switches;
+      const turnedOn = current.on.filter((item) => item !== key);
+      const off = current.off.filter((item) => item !== key);
+      if (on !== usual) (on ? turnedOn : off).push(key);
+      raw.skills = { ...(isRecord(raw.skills) ? raw.skills : {}), on: turnedOn, off };
+    });
+  }
+
+  /** Adds or removes a folder of routines, by its key. */
+  setSkillFolder(key: string, added: boolean): Promise<void> {
+    if (typeof key !== "string" || !key) return Promise.reject(new Error("Pick a folder."));
+    return this.#update((raw) => {
+      const current = readSkills(raw.skills).switches;
+      const folders = current.folders.filter((item) => item !== key);
+      if (added) folders.push(key);
+      raw.skills = { ...(isRecord(raw.skills) ? raw.skills : {}), folders };
+    });
+  }
+
   /** Writes today's choices when there is no file yet, so there is one to open and edit. */
   async ensure(): Promise<void> {
-    if ((await this.#read()) !== null) return;
+    if ((await this.#file.read()) !== null) return;
     const state = this.#state;
     await this.#update((raw) => {
       for (const role of MODEL_ROLES) {
@@ -340,48 +385,24 @@ export class FolioConfig {
   }
 
   #update(change: (raw: Record<string, unknown>) => void): Promise<void> {
-    const run = this.#writing.then(async () => {
-      const text = await this.#read();
-      if (text !== this.#text) {
-        await this.reload();
-        throw new Error(CHANGED);
-      }
-      if (text !== null && !this.#raw)
-        throw new Error(
-          "Folio can't change config.json while it isn't a version 1 JSON object. Fix or remove it, then try again.",
-        );
-      const raw = structuredClone(this.#raw ?? { version: 1 });
-      change(raw);
-      const next = `${JSON.stringify(raw, null, 2)}\n`;
-      // A config.json linked from elsewhere (a dotfiles folder) stays a link.
-      const target = text === null ? this.path : await realpath(this.path);
-      await writeAtomic(target, next, {
-        check: async () => {
-          if ((await this.#read()) !== text) throw new Error(CHANGED);
-        },
-      });
-      this.#apply(next);
-    });
-    this.#writing = run.catch(() => undefined);
-    return run;
+    return this.#file.write(
+      (text) => {
+        if (text !== null && !this.#raw)
+          throw new Error(
+            "Folio can't change config.json while it isn't a version 1 JSON object. Fix or remove it, then try again.",
+          );
+        const raw = structuredClone(this.#raw ?? { version: 1 });
+        change(raw);
+        return `${JSON.stringify(raw, null, 2)}\n`;
+      },
+      { stale: () => this.reload(), written: (next) => this.#apply(next) },
+    );
   }
 
   /** Calls `changed` after the file is edited outside Folio and what it says changed. */
   watch(changed: () => void): () => void {
-    let timer: NodeJS.Timeout | undefined;
-    const watcher = watch(resolve(this.path, ".."), { persistent: false }, (_event, name) => {
-      if (name !== "config.json") return;
-      clearTimeout(timer);
-      timer = setTimeout(() => {
-        void this.#writing
-          .then(() => this.reload())
-          .then((different) => different && changed())
-          .catch((error: unknown) => console.error("Folio could not read config.json:", error));
-      }, 150);
+    return this.#file.watch(async () => {
+      if (await this.reload()) changed();
     });
-    return () => {
-      clearTimeout(timer);
-      watcher.close();
-    };
   }
 }

@@ -6,7 +6,9 @@
     FileText,
     NotebookPen,
     Plus,
+    Plug,
     ScanText,
+    ScrollText,
   } from "@lucide/svelte";
   import { DropdownMenu } from "bits-ui";
   import type { ChatMessageView, VisualView } from "../../src/desktop/api.ts";
@@ -25,6 +27,7 @@
   import NoteEditCard from "./NoteEditCard.svelte";
   import ActionCard from "./ActionCard.svelte";
   import PendingCard from "./PendingCard.svelte";
+  import ApprovalCard from "./ApprovalCard.svelte";
   import SourceList from "./SourceList.svelte";
   import VisualCard from "./VisualCard.svelte";
   import WebSources from "./WebSources.svelte";
@@ -224,6 +227,32 @@
           </div>
         </div>
         {@render lines(quoted.rest)}
+      {:else if message.command}
+        <!-- What the question started with /: a chip, then what followed the command. -->
+        {@const command = message.command}
+        {@const rest = message.text.trimStart().replace(/^\/\S+\s*/, "")}
+        <span
+          class="inline-flex h-6 w-fit max-w-full items-center gap-1.5 rounded-md bg-surface px-1.5 text-[12px] font-medium text-text-2 dark:bg-sunken"
+          title={command.kind === "skill"
+            ? `You started your routine ${command.name}`
+            : `You started ${command.label ?? command.server}'s prompt ${command.name}${Object.keys(
+                command.args,
+              ).length
+                ? `: ${Object.entries(command.args)
+                    .map(([name, value]) => `${name} ${value}`)
+                    .join(", ")}`
+                : ""}`}
+          dir="ltr"
+        >
+          {#if command.kind === "skill"}
+            <ScrollText size={12} strokeWidth={1.75} class="shrink-0" />
+            {command.name}
+          {:else}
+            <Plug size={12} strokeWidth={1.75} class="shrink-0" />
+            <span class="truncate">{command.label ?? command.server} · {command.name}</span>
+          {/if}
+        </span>
+        {#if rest}{@render lines(rest)}{/if}
       {:else}
         {@render lines(message.text)}
       {/if}
@@ -385,6 +414,9 @@
     {/each}
     {#each message.pending ?? [] as id (id)}
       <PendingCard {id} />
+    {/each}
+    {#each message.approvals ?? [] as approval (approval.id)}
+      <ApprovalCard {approval} />
     {/each}
     {#if message.state === "interrupted"}
       <span class="text-[12px] text-text-3">Stopped</span>

@@ -8,6 +8,8 @@ export interface Quote {
 export interface Draft {
   text: string;
   quote: Quote | null;
+  /** Answers to the arguments of a service's prompt the draft starts with. */
+  args?: Record<string, string>;
   /** When it last changed; only the most recent drafts are kept. */
   at: string;
 }
@@ -23,13 +25,15 @@ export function draftKey(chatId: string | null, paneId: string): string {
 export function putDraft(
   drafts: Record<string, Draft>,
   key: string,
-  patch: Partial<Pick<Draft, "text" | "quote">>,
+  patch: Partial<Pick<Draft, "text" | "quote" | "args">>,
   now = new Date(),
 ): Record<string, Draft> {
   const before = drafts[key];
+  const args = patch.args !== undefined ? patch.args : before?.args;
   const next: Draft = {
     text: patch.text ?? before?.text ?? "",
     quote: patch.quote !== undefined ? patch.quote : (before?.quote ?? null),
+    ...(args && Object.keys(args).length ? { args } : {}),
     at: now.toISOString(),
   };
   const rest = { ...drafts };
@@ -70,9 +74,16 @@ export function readDrafts(saved: unknown): Record<string, Draft> {
       (quote != null && (typeof quote.text !== "string" || typeof quote.source !== "string"))
     )
       continue;
-    const kept = {
+    const args =
+      draft.args && typeof draft.args === "object" && !Array.isArray(draft.args)
+        ? Object.fromEntries(
+            Object.entries(draft.args).filter(([, value]) => typeof value === "string"),
+          )
+        : undefined;
+    const kept: Draft = {
       text: draft.text,
       quote: quote ? { text: quote.text!, source: quote.source! } : null,
+      ...(args && Object.keys(args).length ? { args } : {}),
       at: draft.at,
     };
     if (kept.text || kept.quote) drafts[key] = kept;

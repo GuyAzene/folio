@@ -27,6 +27,8 @@ src/desktop/main.ts           the main process
 | `src/ingest/` | Studying a lecture: page inventory, reading, drafting, reconciling and publishing study notes. |
 | `src/kb/` | Each course's knowledge base: immutable published versions, a search index and the tutor's study-note tools. |
 | `src/jobs/` | Background study jobs and the saved output of every finished step. |
+| `src/skills/` | The student's routines (Agent Skills): finding and reading `SKILL.md` folders, `use_skill`, and `/name`. |
+| `src/mcp/` | The student's MCP servers: `mcp.json`, starting and closing servers, their tools and prompts, and asking before a call. |
 | `src/cli.ts` | A terminal client with a small synthetic demo course. |
 | `tests/` | Deterministic test suites; `tests/fixtures/` builds synthetic PDFs and courses; `tests/electron/` checks Folio in a real window (`vp run test:electron`). |
 | `scripts/desktop.ts` | Runs the app from the dev server or from the production build. |
@@ -182,6 +184,69 @@ stays the same. Pi drops the search's sources and citations; Folio reads them fr
 stream, keeps only https links, and saves them with the tool's result. The reply links each
 web claim where it makes it; under it, one folded line ("Searched the web · 4 pages") opens the
 full list, apart from course sources. Links open in the system browser.
+
+### Routines (skills)
+
+A routine is the student's own instruction for how the tutor works, such as a way of quizzing
+or explaining: a folder with a `SKILL.md` in the open Agent Skills format (a name, a description,
+then the instructions), plus any files it refers to (`src/skills/`). Folio reads its own routines
+in `~/.folio/skills/`, which are on, and skills the student keeps for other agents in
+`~/.agents/skills`, `~/.claude/skills`, `~/.codex/skills` or a folder they add, which stay off
+until turned on in Settings. Switches and added folders are in `config.json` under `skills`. A
+skill without a description, with YAML that doesn't read or a name that isn't lowercase letters,
+digits and hyphens is skipped, and Settings says why; among routines that are on, the first of a
+name is used.
+
+The tutor sees one tool, `use_skill`, whose description lists the routines it may pick (name and
+description, within 8,000 characters), and loads one when it fits. A routine marked
+`disable-model-invocation` is the student's to start. `use_skill` also reads a text file the
+routine lists, only inside the routine's own folder (its real path, so links can't lead out), at
+most 128 KB and never binary. Folio never runs a routine's scripts.
+
+Typing `/` at the start of a message lists the routines that are on. A question started with
+`/name` carries the routine's text as it was when sent, and a `folioCommand` record that shows it
+as a chip on the question; editing the routine later never changes an earlier chat. A routine is
+an instruction about how to work, never a source: it can't widen what a chat may read.
+
+### Services (MCP servers)
+
+The student can connect services, such as their university's Moodle, as MCP servers
+(`src/mcp/`), with Folio as the client through Pi's MCP library. Servers are listed in
+`~/.folio/mcp.json` (`0600`) in the common `mcpServers` shape, so a block from a server's README,
+Claude Code or Claude Desktop pastes in as it is, with a `folio` block per server for what Folio
+adds: its label, whether it is on, and which tools run without asking. A server added in Settings
+starts off, so the student sees its full command line before it first runs. The values of its
+settings (`env`) and headers never leave the main process: the window sees their names only, and
+any of those values in a result, an error or a log reads `[hidden]`.
+
+- **Local servers** run as the student's own programs in a clean environment (the login shell's
+  PATH, read once with a time limit so commands installed with uv or Homebrew are found, plus the
+  server's own settings, never Folio's), each in its own folder in `~/.folio/mcp/<name>/`. A server
+  that stops is started again after 2, 10 and 60 seconds, and left failed after a fourth stop in
+  ten minutes until the student restarts it. Closing Folio closes every server's process group.
+- **Remote servers** (`"type": "http"`, https or this Mac only) are reached over Streamable HTTP
+  with the headers the student gives, such as a token. Signing in to a remote server with OAuth is
+  not built yet; Folio says so plainly, as it does for a token that is refused.
+
+Each course and library chat gets the tools of every server that is on, named `server__tool`,
+alongside Folio's own; the list is rebuilt for each question, and a server's last list of tools
+is kept so one still starting offers the same tools and the request keeps its cached start. This
+is a deliberate exception to course scope, chosen by the student: a server reaches whatever its
+own account can see. Folio never hands a server its own files; a server gets only what the tutor
+writes into a call, which is checked in code first (at most 16 KB, no path inside Folio's folder,
+at most 20 calls in a reply).
+
+Unless the student allowed the tool, or the whole server, a call waits for them inside the reply:
+a card shows the server, the tool and exactly what Folio will send, with Allow once, Always allow
+(saved in `mcp.json`) and Deny; it is listed under Needs you too. What a server says about its own
+tools (read-only, destructive) is shown, never trusted. Stopping the reply while a card waits sends
+nothing; approvals are never saved, so after a restart the reply is interrupted and the call never
+runs. What a server returns is labelled as coming from outside Folio and never as instructions,
+capped at 40,000 characters and four re-encoded images, and never ingested as course material.
+
+A server's prompts appear in the `/` menu as `/server:name`; one with arguments shows a small form
+in the composer, and its text goes with the question labelled as the service's, saved like a
+routine.
 
 ## Connections and models
 
@@ -415,7 +480,10 @@ Everything lives in `~/.folio/` (or `FOLIO_HOME`), with directories `0700` and f
 | --- | --- |
 | `connection.json` | The ChatGPT connection and installation ID |
 | `keys.json` | API keys, each checked with its provider before it was kept |
-| `config.json` | Which model does what, the OpenRouter models the composer offers, and the student's categories and naming patterns; never a key |
+| `config.json` | Which model does what, the OpenRouter models the composer offers, the student's categories and naming patterns, and which routines are on; never a key |
+| `skills/<name>/SKILL.md` | The student's own routines |
+| `mcp.json` | The student's MCP servers, with their settings and headers, and which tools run without asking |
+| `mcp/<name>/` | Each local server's working folder, and its last list of tools |
 | `sessions/<id>.json` | Each conversation |
 | `files/<hash>.pdf\|md` | Files the student added to chats, read-only |
 | `pending/<id>.json` | Changes the tutor proposed, waiting for the student or answered |

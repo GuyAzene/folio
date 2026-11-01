@@ -27,6 +27,12 @@ lectures into notes you can browse, and it never changes your files.
 - **Ask in your own words.** "Quiz me on this lecture", "get me ready for lecture 4", "where is
   this used later?" or "one step at a time": the tutor recognizes the request; there are no
   modes to pick.
+- **Your routines.** Write how you like to study as a routine (an Agent Skills `SKILL.md`), or
+  turn on skills you already keep for Claude Code or Codex. The tutor follows one when it fits,
+  or start it yourself with `/name`. Folio reads their instructions and never runs their scripts.
+- **Your services.** Connect MCP servers, such as one for your university's Moodle: the tutor can
+  use their tools and you can start their prompts with `/`. Folio asks before each call, showing
+  exactly what it will send, until you allow a tool.
 - **Diagrams, drawings and demos.** The tutor draws Mermaid diagrams (flowcharts, automata,
   sequences) right in the reply, and shows drawings or interactive demos you can step through.
   Demos run sealed off from Folio and the network.
@@ -133,7 +139,8 @@ only by you: your courses and their read-only originals, your notes, your chats,
 open tabs. Only what a question needs goes to the service its model runs on: your message, the
 pages and images the tutor reads, and what you added. Signing out, or removing a key, removes it
 and keeps everything else. API keys stay in `keys.json`, apart from `config.json`, which never
-holds one. See [docs/architecture.md](docs/architecture.md#on-disk) for the layout.
+holds one. MCP servers you connect get only what the tutor writes into a call, which you see
+before you allow it; their settings and keys stay in `mcp.json`. See [docs/architecture.md](docs/architecture.md#on-disk) for the layout.
 
 ## Development
 

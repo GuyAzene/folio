@@ -2,8 +2,10 @@
   import {
     ArrowUp,
     FileText,
+    Plug,
     Quote,
     ScanText,
+    ScrollText,
     Square,
     X,
   } from "@lucide/svelte";
@@ -97,9 +99,25 @@
   );
   const needed = $derived(folio.connectionFor(modelRef));
   const connected = $derived(!!needed?.connected);
+  /** A service's prompt the draft starts with, when it has arguments to answer. */
+  const prompted = $derived.by(() => {
+    const command = folio.commandIn(text);
+    if (command?.kind !== "prompt") return null;
+    const found = folio.prompts.find(
+      ({ server, prompt }) => server.id === command.server && prompt.name === command.name,
+    );
+    return found?.prompt.arguments.length ? found : null;
+  });
+  const args = $derived(folio.drafts[key]?.args ?? {});
+  const missingArgs = $derived(
+    prompted?.prompt.arguments.filter((argument) => argument.required && !args[argument.name]?.trim()) ?? [],
+  );
   // A page or image can be sent on its own; a lecture or course needs a question.
   const canSend = $derived(
-    connected && !running && (text.trim().length > 0 || !!quote || visual),
+    connected &&
+      !running &&
+      (text.trim().length > 0 || !!quote || visual) &&
+      !missingArgs.length,
   );
   // Folded only while there is nothing to show: no draft, quote or attachment.
   const collapsed = $derived(
@@ -127,6 +145,55 @@
   export function focusInput(): void {
     field?.focus();
   }
+
+  // Typing / at the start offers the student's routines and their services' prompts; picking
+  // one writes "/name " or "/server:name ".
+  const slashQuery = $derived(/^\/([A-Za-z0-9_.:-]*)$/.exec(text)?.[1] ?? null);
+  let slashIndex = $state(0);
+  /** The draft as it was when Escape closed the menu; it stays closed until the draft changes. */
+  let slashClosed = $state<string | null>(null);
+  const slashOptions = $derived.by(() => {
+    if (slashQuery === null || !canAttach || slashClosed === text) return [];
+    const query = slashQuery.toLowerCase();
+    return [
+      ...folio.startable.map((skill) => ({
+        key: skill.key,
+        command: skill.name,
+        description: skill.description,
+        prompt: false,
+      })),
+      ...folio.prompts.map(({ server, prompt }) => ({
+        key: `prompt:${server.id}:${prompt.name}`,
+        command: `${server.id}:${prompt.name}`,
+        description: `${server.label}: ${prompt.description || prompt.title || prompt.name}`,
+        prompt: true,
+      })),
+    ]
+      .filter((option) => option.command.toLowerCase().includes(query))
+      .sort(
+        (a, b) =>
+          Number(!a.command.toLowerCase().startsWith(query)) -
+          Number(!b.command.toLowerCase().startsWith(query)),
+      )
+      .slice(0, 8);
+  });
+  $effect(() => {
+    // The lists are read fresh each time the menu opens, so new routines and prompts show at once.
+    if (slashQuery === "") {
+      void folio.refreshSkills();
+      void folio.refreshMcp();
+    }
+  });
+  $effect(() => {
+    void slashQuery;
+    slashIndex = 0;
+  });
+
+  function pickCommand(command: string): void {
+    folio.setDraft(key, { text: `/${command} ` });
+    field?.focus();
+  }
+
 
   /** Adds pasted, dropped or chosen images, up to four per question. */
   export async function addImages(files: File[]): Promise<void> {
@@ -212,11 +279,12 @@
     const draft = text;
     const quoted = quote;
     const sending = attachments;
+    const answers = args;
     const from = key;
     const message = quoted
       ? `> ${quoted.text.replace(/\n+/g, " ")}\n> (${quoted.source})\n\n${draft.trim() || "Explain this passage."}`
       : draft.trim() || "Explain this.";
-    folio.setDraft(from, { text: "", quote: null });
+    folio.setDraft(from, { text: "", quote: null, args: {} });
     folio.setDraftAdded(from, []);
     onbeforesend?.();
     const sent = await folio.send(message, {
@@ -225,15 +293,35 @@
       courseId,
       focus,
       attachments: sending,
+      args: answers,
     });
     if (!sent) {
-      folio.setDraft(from, { text: draft, quote: quoted });
+      folio.setDraft(from, { text: draft, quote: quoted, args: answers });
       folio.setDraftAdded(from, sending);
     }
     field?.focus();
   }
 
   function onkeydown(event: KeyboardEvent): void {
+    if (slashOptions.length && !event.isComposing) {
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        const step = event.key === "ArrowDown" ? 1 : -1;
+        slashIndex = (slashIndex + step + slashOptions.length) % slashOptions.length;
+        return;
+      }
+      if ((event.key === "Enter" && !event.shiftKey) || event.key === "Tab") {
+        event.preventDefault();
+        pickCommand(slashOptions[slashIndex]!.command);
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        slashClosed = text;
+        return;
+      }
+    }
     if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
       event.preventDefault();
       void submit();
@@ -243,7 +331,7 @@
 
 <div
   bind:this={root}
-  class="flex w-full rounded-[14px] border border-line bg-surface shadow-[0_1px_2px_#18181b0a,0_6px_20px_-10px_#18181b26] transition-[border-color] duration-150 focus-within:border-line-strong dark:bg-raised {collapsed
+  class="relative flex w-full rounded-[14px] border border-line bg-surface shadow-[0_1px_2px_#18181b0a,0_6px_20px_-10px_#18181b26] transition-[border-color] duration-150 focus-within:border-line-strong dark:bg-raised {collapsed
     ? 'flex-row items-center'
     : 'flex-col'}"
   role="group"
@@ -255,6 +343,41 @@
   }}
   {ondrop}
 >
+  {#if slashOptions.length}
+    <div
+      class="absolute bottom-full left-0 z-30 mb-2 flex w-[min(380px,100%)] animate-[folio-fade_120ms_ease-out] flex-col rounded-xl border border-line-subtle bg-raised p-1.5 shadow-3"
+      role="listbox"
+      aria-label="Your routines and prompts"
+    >
+      <span class="px-2 pt-1 pb-1.5 text-[11px] font-medium tracking-[0.06em] text-text-3 uppercase"
+        >{slashOptions.some((option) => option.prompt) ? "Routines and prompts" : "Routines"}</span
+      >
+      {#each slashOptions as option, index (option.key)}
+        <button
+          class="flex items-start gap-2.5 rounded-md px-2 py-1.5 text-left {index === slashIndex
+            ? 'bg-hover'
+            : ''}"
+          role="option"
+          aria-selected={index === slashIndex}
+          onmousedown={(event) => event.preventDefault()}
+          onmouseenter={() => (slashIndex = index)}
+          onclick={() => pickCommand(option.command)}
+        >
+          {#if option.prompt}
+            <Plug size={14} strokeWidth={1.75} class="mt-0.5 shrink-0 text-text-3" />
+          {:else}
+            <ScrollText size={14} strokeWidth={1.75} class="mt-0.5 shrink-0 text-text-3" />
+          {/if}
+          <span class="flex min-w-0 flex-col">
+            <span class="font-medium" dir="ltr">/{option.command}</span>
+            <span class="line-clamp-1 text-[12px] text-text-3" dir="auto"
+              >{option.description}</span
+            >
+          </span>
+        </button>
+      {/each}
+    </div>
+  {/if}
   {#if folio.ready && !connected}
     <div
       class="flex items-center gap-3 rounded-t-[13px] border-b border-line-subtle bg-sunken px-3.5 py-2.5"
@@ -310,6 +433,33 @@
       >
         <X size={13} strokeWidth={2} />
       </button>
+    </div>
+  {/if}
+  {#if prompted}
+    <!-- A service's prompt with arguments: the student's answers go with the question. -->
+    <div class="mx-3 mt-3 flex flex-col gap-1.5 rounded-lg bg-sunken px-3 py-2 dark:bg-surface">
+      <span class="flex items-center gap-1.5 text-[12px] text-text-2"
+        ><Plug size={12} strokeWidth={1.75} class="shrink-0" />
+        {prompted.server.label} · <span dir="ltr">{prompted.prompt.name}</span></span
+      >
+      {#each prompted.prompt.arguments as argument (argument.name)}
+        <label class="flex items-center gap-2 text-[12px] text-text-3">
+          <span class="w-[30%] min-w-0 shrink-0 truncate" dir="ltr"
+            >{argument.name}{argument.required ? "" : " (optional)"}</span
+          >
+          <input
+            class="h-7 min-w-0 flex-1 rounded-md border border-line-strong bg-surface px-2 text-[13px] text-text outline-none placeholder:text-text-4 focus:border-ink dark:bg-raised"
+            value={args[argument.name] ?? ""}
+            placeholder={argument.description}
+            maxlength={2000}
+            dir="auto"
+            oninput={(event) =>
+              folio.setDraft(key, {
+                args: { ...args, [argument.name]: event.currentTarget.value },
+              })}
+          />
+        </label>
+      {/each}
     </div>
   {/if}
   {#if attachments.length}
