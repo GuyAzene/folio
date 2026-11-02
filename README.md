@@ -1,8 +1,30 @@
-# Folio
+<p align="center">
+  <img src="resources/icon.svg" width="96" height="96" alt="">
+</p>
 
-A local-first desktop study workspace with a tutor that reads your course with you.
+<h1 align="center">Folio</h1>
 
-![Folio's reader with a lecture open and the tutor answering a question about the page](docs/images/reader.png)
+<p align="center">
+  A local-first study workspace for your Mac, with a tutor that reads your course with you.
+</p>
+
+<p align="center">
+  <a href="https://github.com/GuyAzene/folio/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/GuyAzene/folio/ci.yml?branch=main&label=CI&labelColor=1f2328"></a>
+  <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-ffe433?labelColor=1f2328"></a>
+  <img alt="macOS on Apple silicon" src="https://img.shields.io/badge/macOS-Apple%20silicon-ffe433?labelColor=1f2328">
+</p>
+
+<p align="center">
+  <a href="#try-folio"><b>Download for Mac</b></a> ·
+  <a href="#what-it-does">What it does</a> ·
+  <a href="https://github.com/users/GuyAzene/projects/1">Roadmap</a> ·
+  <a href="CONTRIBUTING.md">Contributing</a>
+</p>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/reader-dark.png">
+  <img src="docs/images/reader-light.png" alt="A lecture open at a slide with an automaton, and beside it the tutor answering why the start state is accepting, with a formula, the automaton drawn again and the pages it read">
+</picture>
 
 Folio keeps a course in one place on your computer: lecture slides, recitations, assignments and
 your own notes. Its tutor answers from your course's own pages and cites them. It can study your
@@ -49,9 +71,32 @@ lectures into notes you can browse, and it never changes your files.
 - **Nothing lost.** Removed files, notes, chats, assignments and courses wait 30 days in Folio's
   Trash.
 
-| Add context with + | A course |
-| --- | --- |
-| ![The + menu searching lectures across courses](docs/images/add-context.png) | ![A course page with its materials](docs/images/course.png) |
+<table>
+  <tr>
+    <td width="50%"><b>Study notes</b>, by topic, each citing its slides<br><br>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/study-notes-dark.png">
+  <img src="docs/images/study-notes-light.png" alt="The study note for breadth-first search, with its rule in steps, a check-yourself question and the lecture pages it came from">
+</picture></td>
+    <td width="50%"><b>Your notebook</b>, with math, tasks and Hebrew beside English<br><br>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/notebook-dark.png">
+  <img src="docs/images/notebook-light.png" alt="A note on regular languages with a formula for the product construction, a Hebrew line, a task list and tags">
+</picture></td>
+  </tr>
+  <tr>
+    <td width="50%"><b>Assignments</b>, from To do to Done<br><br>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/board-dark.png">
+  <img src="docs/images/board-light.png" alt="The assignments board with columns To do, Doing, Submitted and Done">
+</picture></td>
+    <td width="50%"><b>Add context with +</b>: the page you're on, or any lecture<br><br>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/add-context-dark.png">
+  <img src="docs/images/add-context-light.png" alt="The + menu in the chat beside a lecture, offering the page on screen, an image, a file, or a search for any lecture or course">
+</picture></td>
+  </tr>
+</table>
 
 ## Try Folio
 
@@ -144,6 +189,22 @@ and keeps everything else. API keys stay in `keys.json`, apart from `config.json
 holds one. MCP servers you connect get only what the tutor writes into a call, which you see
 before you allow it; their settings and keys stay in `mcp.json`. See [docs/architecture.md](docs/architecture.md#on-disk) for the layout.
 
+## Roadmap
+
+What's planned is on the [Folio roadmap](https://github.com/users/GuyAzene/projects/1), and each
+upcoming version has a [milestone](https://github.com/GuyAzene/folio/milestones). Bug reports and
+ideas are welcome as [issues](https://github.com/GuyAzene/folio/issues/new/choose).
+
+## Built with
+
+- [Electron](https://www.electronjs.org/) for the Mac app, with the interface in
+  [Svelte 5](https://svelte.dev/), [Tailwind CSS](https://tailwindcss.com/) and
+  [Bits UI](https://bits-ui.com/)
+- [Pi](https://pi.dev/) for the tutor's connections to models and its agent loop
+- [pdf.js](https://mozilla.github.io/pdf.js/) for reading, [CodeMirror](https://codemirror.net/)
+  for notes and [KaTeX](https://katex.org/) for math
+- [Vite+](https://viteplus.dev/) for building, checking and testing
+
 ## Development
 
 ```sh
@@ -157,6 +218,7 @@ vp run desktop:package # Folio.app and its disk image, in release/
 vp run desktop:install # the same, then Folio.app into /Applications
 vp build && vp pack # renderer, CLI and Electron bundles
 vp dev              # the interface alone, in a browser, with synthetic data
+vp run screenshots  # the README's pictures, light and dark, from that preview
 ```
 
 The benchmark spends your ChatGPT plan, so it runs only with `FOLIO_BENCH=1` and never in `vp

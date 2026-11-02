@@ -46,7 +46,9 @@ import {
   type Rename,
 } from "../../src/library/naming.ts";
 import { linkFirstMention, matchNote, mentionsOf, noteFacts } from "../../src/library/note-meta.ts";
+import { FINITE_AUTOMATA, GRAPH_TRAVERSAL } from "../../tests/fixtures/showcase-slides.ts";
 import { SYNTHETIC_LECTURE, syntheticPdf } from "../../tests/fixtures/synthetic-pdf.ts";
+import { syntheticSlides } from "../../tests/fixtures/synthetic-slides.ts";
 
 /** A synthetic drawing for the preview's fake visual reply. */
 const PREVIEW_DRAWING = [
@@ -92,7 +94,7 @@ const documents: DocumentView[] = [
     title: "Lecture 1 Graph traversal",
     role: "lecture",
     kind: "pdf",
-    pages: 3,
+    pages: GRAPH_TRAVERSAL.length,
     size: 2048,
     dueAt: null,
     category: null,
@@ -137,7 +139,7 @@ const documents: DocumentView[] = [
     title: "Lecture 1 Finite automata",
     role: "lecture",
     kind: "pdf",
-    pages: 3,
+    pages: FINITE_AUTOMATA.length,
     size: 2048,
     dueAt: null,
     category: null,
@@ -299,6 +301,51 @@ const chats = new Map<string, ChatView>([
       ],
     },
   ],
+  [
+    id(34),
+    {
+      id: id(34),
+      kind: "course",
+      title: "Why the start state is accepting",
+      status: "idle",
+      model: "chatgpt/gpt-6.1-sol",
+      updatedAt: ago(0.2),
+      courseId: id(2),
+      focus: { documentId: id(21), page: 3 },
+      reads: { courses: [], documents: [] },
+      messages: [
+        { role: "user", text: "Why is the start state also accepting here?", state: "complete" },
+        {
+          role: "assistant",
+          text: [
+            "Because it accepts the words with an **even number of 1s**, and before reading anything it has seen none. Zero is even, so the empty word is accepted:",
+            "",
+            "$$",
+            "\\delta^*(\\textsf{even}, \\varepsilon) = \\textsf{even} \\in F",
+            "$$",
+            "",
+            "```mermaid",
+            "stateDiagram-v2",
+            "  direction LR",
+            "  [*] --> even",
+            "  even --> odd: 1",
+            "  odd --> even: 1",
+            "  even --> even: 0",
+            "  odd --> odd: 0",
+            "```",
+            "",
+            "So `1011` ends in odd and is rejected.",
+          ].join("\n"),
+          state: "complete",
+          steps: [{ label: "Read Lecture 1 Finite automata, pages 3 and 4", state: "done" }],
+          sources: [
+            { documentId: id(21), title: "Lecture 1 Finite automata", page: 3 },
+            { documentId: id(21), title: "Lecture 1 Finite automata", page: 4 },
+          ],
+        },
+      ],
+    },
+  ],
 ]);
 
 const notes = new Map<string, { note: NoteView; content: string }>();
@@ -363,6 +410,57 @@ const assignments = new Map<string, AssignmentView>(
         },
       ],
       grade: { score: 88, max: 100, text: "" },
+    }),
+    // Computational Models' coursework, so each column of the board has some.
+    assignment(84, "Problem set 1: DFAs and their languages", {
+      courseId: id(2),
+      status: "doing",
+      dueAt: ago(-50),
+      steps: [
+        { id: id(121), text: "Question 1: a DFA for even numbers of 1s", done: true },
+        { id: id(122), text: "Question 2: the product construction", done: true },
+        { id: id(123), text: "Question 3: prove the language is regular", done: false },
+      ],
+    }),
+    assignment(85, "Read the notes on nondeterminism", {
+      courseId: id(2),
+      kind: "reading",
+      dueAt: ago(-30),
+    }),
+    assignment(86, "Prepare for the midterm", {
+      courseId: id(2),
+      kind: "exam_prep",
+      dueAt: ago(-24 * 12),
+    }),
+    assignment(87, "Lab 1: a DFA simulator", {
+      courseId: id(2),
+      kind: "lab",
+      status: "submitted",
+      dueAt: ago(10),
+      attempts: [
+        {
+          id: id(124),
+          submittedAt: ago(14),
+          files: [
+            {
+              id: id(125),
+              name: "dfa.py",
+              size: 3_200,
+              sha256: "0".repeat(64),
+              addedAt: ago(14),
+            },
+          ],
+          note: "",
+        },
+      ],
+    }),
+    assignment(88, "Quiz 0: sets and strings", {
+      courseId: id(2),
+      kind: "quiz",
+      status: "done",
+      dueAt: ago(200),
+      finishedAt: ago(190),
+      grade: { score: 9, max: 10, text: "" },
     }),
   ].map((item) => [item.id, item]),
 );
@@ -445,6 +543,35 @@ putNote(
     "---",
     "",
     "נוסחה בתוך שורה $\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}$ וטקסט אחריה.",
+    "",
+  ].join("\n"),
+);
+// What a student's own note looks like, for the README's notebook picture.
+putNote(
+  id(55),
+  id(2),
+  [
+    "# Regular languages",
+    "",
+    "A language is **regular** if some DFA recognizes it. The definitions are in [[אוטומטים סופיים]].",
+    "",
+    "## Closure",
+    "",
+    "If $A$ and $B$ are regular, so are $A \\cup B$, $A \\cap B$ and $\\overline{A}$. For the first two, run both machines at once on pairs of states:",
+    "",
+    "$$",
+    "\\delta\\big((p, q), a\\big) = \\big(\\delta_A(p, a),\\ \\delta_B(q, a)\\big)",
+    "$$",
+    "",
+    "The complement swaps the accepting states: $F' = Q \\setminus F$.",
+    "",
+    "שפות רגולריות סגורות לאיחוד, לחיתוך ולמשלים.",
+    "",
+    "- [x] Product construction",
+    "- [x] Complement",
+    "- [ ] Pumping lemma for $\\{a^n b^n \\mid n \\ge 0\\}$",
+    "",
+    "#automata #exam",
     "",
   ].join("\n"),
 );
@@ -2543,7 +2670,10 @@ export const previewApi: FolioApi = {
     if (document.named === "pattern") previewFollow();
     return document;
   },
-  async readDocument() {
+  async readDocument(documentId) {
+    // Two lectures have slides drawn to show Folio off; the rest share a plain test page.
+    if (documentId === id(11)) return syntheticSlides(GRAPH_TRAVERSAL);
+    if (documentId === id(21)) return syntheticSlides(FINITE_AUTOMATA);
     return syntheticPdf(SYNTHETIC_LECTURE);
   },
   async listNotes(courseId) {
