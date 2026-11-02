@@ -187,9 +187,11 @@ docs/       architecture and images
 
 ## Contributing
 
-Folio isn't accepting outside contributions yet. To report a security problem, see
-[SECURITY.md](SECURITY.md).
+Bug reports and ideas are welcome as [issues](https://github.com/GuyAzene/folio/issues/new/choose).
+Folio isn't accepting outside code yet. [CONTRIBUTING.md](CONTRIBUTING.md) explains how changes
+are made and checked, and [SECURITY.md](SECURITY.md) how to report a security problem privately.
+Everyone taking part follows the [code of conduct](CODE_OF_CONDUCT.md).
 
 ## License
 
-All rights reserved. No license has been chosen yet.
+[MIT](LICENSE).
