@@ -19,6 +19,10 @@ updates:
     cooldown:
       default-days: 7
     labels: [maintenance]
+    ignore:
+      # Folio runs on Node 24 (.node-version), so its types stay on 24.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
     groups:
       # Minor and patch updates in one pull request. Electron, Pi and Vite+ (whose packages move
       # together) each come in their own, as does every major version.
