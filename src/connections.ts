@@ -9,6 +9,7 @@ import { anthropicProvider } from "@earendil-works/pi-ai/providers/anthropic";
 import { googleProvider } from "@earendil-works/pi-ai/providers/google";
 import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
 import { openrouterProvider } from "@earendil-works/pi-ai/providers/openrouter";
+import type { LiveCatalog } from "./live-catalog.ts";
 import { connectionById, type Connection } from "./model-refs.ts";
 
 /**
@@ -46,20 +47,25 @@ function openaiApiProvider(): Provider {
   };
 }
 
-export function keyProviders(): Provider[] {
+/** With `live`, OpenRouter also lists the models Pi published since its release. */
+export function keyProviders(live?: LiveCatalog): Provider[] {
+  const openrouter = { ...openrouterProvider(), auth: { apiKey: storedKey("OpenRouter API key") } };
   return [
     openaiApiProvider(),
     { ...anthropicProvider(), auth: { apiKey: storedKey("Anthropic API key") } },
     { ...googleProvider(), auth: { apiKey: storedKey("Gemini API key") } },
-    { ...openrouterProvider(), auth: { apiKey: storedKey("OpenRouter API key") } },
+    live ? live.wrap(openrouter) : openrouter,
   ];
 }
 
-/** Every provider's models, with no credentials: for looking models up, never for requests. */
-export function modelCatalog(): Models {
+/**
+ * Every provider's models, with no credentials: for looking models up, never for requests. A
+ * request needs only its model's provider, so a model from the live list is sent like any other.
+ */
+export function modelCatalog(live?: LiveCatalog): Models {
   const catalog: MutableModels = createModels();
   catalog.setProvider(openaiProvider());
-  for (const provider of keyProviders()) catalog.setProvider(provider);
+  for (const provider of keyProviders(live)) catalog.setProvider(provider);
   return catalog;
 }
 

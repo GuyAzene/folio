@@ -22,7 +22,7 @@ src/desktop/main.ts           the main process
 | `app/` | The renderer: `views/` (Home, course, reader, notes, study notes, chats, Studying, Trash), `components/`, and `lib/` (app state, Markdown and math rendering, text direction, the note editor in `lib/editor/`). |
 | `src/desktop/` | The Electron main process, the preload bridge, the IPC contract (`api.ts`) and the chat service. |
 | `src/conversation.ts`, `src/session-store.ts`, `src/transcript.ts`, `src/agents.ts` | Conversations on Pi: saving and resuming, cancellation, leases, and what history the model sees. |
-| `src/auth.ts`, `src/connections.ts`, `src/model-refs.ts`, `src/model-choices.ts`, `src/config.ts` | Connections and models: the ChatGPT sign-in and API keys, the models each connection offers, and which model does what (`config.json`). |
+| `src/auth.ts`, `src/connections.ts`, `src/model-refs.ts`, `src/model-choices.ts`, `src/live-catalog.ts`, `src/config.ts` | Connections and models: the ChatGPT sign-in and API keys, the models each connection offers, Pi's live list of OpenRouter's models, and which model does what (`config.json`). |
 | `src/library/` | Courses and documents with their categories, numbers and names, the operations that change them, PDF pages and page images, notes with their history, the Trash, the tutor's tools and teaching rules, and attachments. |
 | `src/ingest/` | Studying a lecture: page inventory, reading, drafting, reconciling and publishing study notes. |
 | `src/kb/` | Each course's knowledge base: immutable published versions, a search index and the tutor's study-note tools. |
@@ -267,6 +267,22 @@ text only is marked, and the tutor on one gets a note where a page image would b
 process refuses any other model, and asks for the connection a chat's model needs before it
 sends.
 
+OpenRouter adds models faster than Pi releases, so Folio also reads Pi's live list, as Pi's own
+app does (`src/live-catalog.ts`): pi.dev publishes each provider's models between releases, and
+answers a request naming Folio's Pi release with a list that release can use. Folio asks for
+OpenRouter's a moment after the window opens and again when its copy is four hours old, with the
+copy's ETag; the copy is kept in `catalog/openrouter.json` and read before `config.json`, so a
+model picked from it is known offline. The list is used only while it is newer than the one built
+into Pi, and a live entry replaces the built-in one with its ID, as in Pi. It comes from outside
+Folio, so each entry is checked against Pi's own schemas and kept only as a chat model on an API
+the built-in OpenRouter provider speaks, at the address its built-in models use; its headers and
+anything else are dropped. Every request still goes to OpenRouter with the student's key and
+nothing more; the request to pi.dev names only the provider and Folio's Pi release. Offline or refused, the
+copy stays; when the list changes, `config.json` is read again and the window is told. It is
+fetched with Node's fetch, like model requests: Electron's `net` goes through the window's
+session, which refuses every web request. `FOLIO_MODEL_CATALOG` names another source (an https
+address, or one on this Mac) or turns it off, as the window tests do.
+
 Which model does what lives in `config.json`, edited in Settings or by hand (`src/config.ts`):
 the tutor for new chats, web search, each step of studying (planner, reader, close-up, writer,
 checker, recheck, topics) and reading a syllabus. Folio checks every entry in code: the model must exist
@@ -481,6 +497,7 @@ Everything lives in `~/.folio/` (or `FOLIO_HOME`), with directories `0700` and f
 | `connection.json` | The ChatGPT connection and installation ID |
 | `keys.json` | API keys, each checked with its provider before it was kept |
 | `config.json` | Which model does what, the OpenRouter models the composer offers, the student's categories and naming patterns, and which routines are on; never a key |
+| `catalog/openrouter.json` | Pi's live list of OpenRouter's models, as last checked, with its ETag |
 | `skills/<name>/SKILL.md` | The student's own routines |
 | `mcp.json` | The student's MCP servers, with their settings and headers, and which tools run without asking |
 | `mcp/<name>/` | Each local server's working folder, and its last list of tools |

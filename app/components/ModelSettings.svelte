@@ -111,9 +111,10 @@
     return [...labs];
   });
 
+  /** Asked each time: OpenRouter's list grows when Pi publishes models between its releases. */
   async function choose(): Promise<void> {
     choosing = true;
-    if (!catalog.length) catalog = await folio.api.openrouterCatalog();
+    catalog = await folio.api.openrouterCatalog();
   }
 
   function toggle(model: ModelView): void {

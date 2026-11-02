@@ -106,7 +106,8 @@ Which model does what is yours to choose, in **Settings → Models** or in `~/.f
 the tutor for new chats, web search, each step of studying (planner, reader, close-up, writer,
 checker, topics) and reading a syllabus. Reading slides needs a model that sees images; writing
 the notes can use one that reads text only. OpenRouter's models are picked in the same place and
-appear in the composer by lab. Leave the file alone and everything runs on ChatGPT, as before.
+appear in the composer by lab; Folio checks pi.dev every few hours for models OpenRouter added
+since Folio's Pi release. Leave the file alone and everything runs on ChatGPT, as before.
 
 ```json
 {

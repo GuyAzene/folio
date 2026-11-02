@@ -18,6 +18,7 @@ import {
 import { createFolioModels, readConnections } from "../auth.ts";
 import { FolioConfig, studyRoles } from "../config.ts";
 import { checkKey, cleanKey, modelCatalog } from "../connections.ts";
+import { LiveCatalog, liveSource } from "../live-catalog.ts";
 import { privateDirectory, writeAtomic } from "../files.ts";
 import { IngestRunner, trialRoles } from "../ingest/pipeline.ts";
 import { piComplete } from "../ingest/pi-complete.ts";
@@ -155,7 +156,13 @@ protocol.registerSchemesAsPrivileged([
 let window: BrowserWindow | undefined;
 const emit = (event: DesktopEvent) => window?.webContents.send(CHANNELS.event, event);
 
-const catalog = modelCatalog();
+// OpenRouter's models Pi published since its release, kept in Folio's home and checked again every
+// four hours. FOLIO_MODEL_CATALOG names another source (tests), or "off". It is fetched like the
+// model requests themselves, with Node's fetch: Electron's net goes through the window's session,
+// which refuses every web request.
+const live = new LiveCatalog({ home, source: liveSource(process.env.FOLIO_MODEL_CATALOG) });
+const liveLoaded = live.load();
+const catalog = modelCatalog(live);
 const resolveModel = (id: string, provider = "openai") => {
   const model = folioModel(catalog, id, provider);
   if (!model) throw new Error(`Model '${id}' is not in Pi's catalog.`);
@@ -169,8 +176,9 @@ const resolveRef = (ref: string) => {
 const connection = createFolioModels({ home: connectionHome });
 const streamFn: StreamFn = async (model, context, options) =>
   (await connection).models.streamSimple(model, context, options);
-// Which model does what: config.json in Folio's home, edited in Settings or by hand.
-const config = FolioConfig.open(home, catalog);
+// Which model does what: config.json in Folio's home, edited in Settings or by hand. It is read
+// once the kept live list is, so a model picked from that list is still known.
+const config = liveLoaded.then(() => FolioConfig.open(home, catalog));
 
 let signIn: AbortController | undefined;
 const connected = async (): Promise<Set<ConnectionId>> => readConnections((await connection).store);
@@ -220,6 +228,17 @@ void config.then((settings) =>
     void modelsChanged();
   }),
 );
+
+/**
+ * Asks pi.dev for a newer list when the kept one is four hours old. New models may make an entry
+ * in config.json usable, so it is read again, and the window is told.
+ */
+async function refreshLive(): Promise<void> {
+  if (!(await live.refresh())) return;
+  await (await config).reload();
+  await modelsChanged();
+}
+setInterval(() => void refreshLive(), 3_600_000).unref();
 
 /**
  * The student's routines: Folio's own, and other agents' folders once turned on. Tests point
@@ -1567,6 +1586,8 @@ void app.whenReady().then(() => {
     ),
   );
   createWindow();
-  // The student's servers start once the window is up, in the background.
+  // The student's servers start once the window is up, in the background, and the live model
+  // list is checked.
   setTimeout(() => void servers.then((running) => running.reconcile()), 1_500);
+  setTimeout(() => void liveLoaded.then(refreshLive), 1_500);
 });
