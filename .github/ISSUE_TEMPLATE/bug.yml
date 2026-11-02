@@ -1,0 +1,52 @@
+name: Bug report
+description: Something in Folio doesn't work as it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Thanks for reporting it. Issues are public, so leave out anything private: course
+        material, notes, chats, keys, or paths and names that identify you.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you saw, including any message Folio showed.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open a course
+        2. Ask the tutor about a page
+        3. …
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: input
+    id: build
+    attributes:
+      label: Folio build
+      description: The release you installed, or "nightly" and the day you downloaded it.
+      placeholder: 0.1.0, or nightly from 2026-11-02
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: macOS 26.1
+    validations:
+      required: true
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else
+      description: A screenshot often helps; check it shows nothing private first.
