@@ -1,7 +1,7 @@
 /// <reference lib="dom" />
 import assert from "node:assert/strict";
 import { after, describe, it } from "node:test";
-import { launch, recordExternalLinks, type Running } from "./app.ts";
+import { launch, recordExternalLinks, stillness, type Running } from "./app.ts";
 import { seedHome } from "./seed.ts";
 
 /**
@@ -44,7 +44,7 @@ void describe("Folio's window", () => {
     await hide.click();
     const show = page.getByRole("button", { name: "Show sidebar" });
     await show.waitFor();
-    await page.waitForTimeout(400);
+    await stillness(page);
     const after = await show.boundingBox();
     await page.screenshot({
       path: process.env.FOLIO_E2E_SHOTS
@@ -89,7 +89,7 @@ void describe("Folio's window", () => {
     assert.equal(await drags(...(await middle("Hide sidebar"))), false);
     await page.getByRole("button", { name: "Hide sidebar" }).click();
     await page.getByRole("button", { name: "Show sidebar" }).waitFor();
-    await page.waitForTimeout(400);
+    await stillness(page);
     assert.equal(await drags(...(await middle("Show sidebar"))), false, "the sidebar button");
     assert.equal(await drags(...(await middle("New tab"))), false, "the new-tab button");
     const tab = (await page.getByRole("tab").first().boundingBox())!;

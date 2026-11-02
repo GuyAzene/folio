@@ -177,3 +177,25 @@ export async function recordExternalLinks(
   });
   return () => app.evaluate(() => (globalThis as { opened?: string[] }).opened ?? []);
 }
+
+/**
+ * Waits for the page to stop moving: hiding the sidebar slides the tab strip with a transition,
+ * and measured halfway its buttons are not where they will be. A fixed pause was not always
+ * enough on GitHub's virtual Macs. Looping animations, like a spinner, do not count.
+ */
+export async function stillness(page: Page): Promise<void> {
+  // A change made this frame starts its transition at the next one.
+  await page.evaluate(() => new Promise((frame) => requestAnimationFrame(() => frame(null))));
+  await page.waitForFunction(
+    () =>
+      !document
+        .getAnimations()
+        .some(
+          (animation) =>
+            animation.playState === "running" &&
+            animation.effect?.getTiming().iterations !== Infinity,
+        ),
+    undefined,
+    { timeout: 10_000 },
+  );
+}
