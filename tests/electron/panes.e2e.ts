@@ -51,11 +51,7 @@ void describe("panes", () => {
     await page.getByRole("button", { name: "Ask Folio" }).click();
     const box = page.getByRole("textbox", { name: "Message Folio" });
     await box.waitFor();
-    await eventually(
-      () => widths(page),
-      (open) => open.length === 2,
-      "the chat beside the lecture",
-    );
+    assert.equal((await widths(page)).length, 2);
     await box.fill("A half-written question");
 
     // The chat takes more than half the window.
@@ -75,12 +71,15 @@ void describe("panes", () => {
     assert.equal(await box.inputValue(), "A half-written question");
 
     // Saved with the workspace (after its short wait), and the draft on this device.
-    const saved = await eventually(
+    await eventually(
       async () => JSON.parse(await readFile(resolve(seeded.home, "workspace.json"), "utf8")),
-      (workspace) => workspace.version === 2 && workspace.tabs[0]?.layout?.panes?.length === 2,
-      "the workspace with two panes",
+      // An earlier save, from before the new tab, can already have both panes.
+      (workspace) =>
+        workspace.version === 2 &&
+        workspace.tabs.length === 2 &&
+        workspace.tabs[0]?.layout?.panes?.length === 2,
+      "the workspace with two tabs, the first with two panes",
     );
-    assert.equal(saved.tabs.length, 2);
     await app.close();
     app = await launch(seeded.home);
     running.push(app);

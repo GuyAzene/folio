@@ -19,7 +19,10 @@ interface Failure {
   name: string;
   file?: string;
   line?: number;
-  details: { type?: string; error?: { message?: string; cause?: { message?: string } } };
+  details: {
+    type?: string;
+    error?: { message?: string; stack?: string; cause?: { message?: string; stack?: string } };
+  };
 }
 
 /** The run's totals: node:test's last summary event, the one without a file. */
@@ -27,6 +30,16 @@ interface Summary {
   file?: string;
   duration_ms: number;
   counts: { tests: number; passed: number; failed: number; cancelled: number; skipped: number };
+}
+
+/**
+ * The line in the check's own file where it failed, read from the error's stack: node:test gives
+ * the line the check starts on, which says nothing about which of its assertions failed.
+ */
+function failedAt(stack: string | undefined, path: string): number | undefined {
+  for (const [, url, line] of (stack ?? "").matchAll(/(file:\/\/[^\s)]+):(\d+):\d+/g))
+    if (fileURLToPath(url!) === path) return Number(line);
+  return undefined;
 }
 
 const minutes = (ms: number) => {
@@ -68,9 +81,11 @@ export default async function* githubAnnotations(
       .slice(0, 20)
       .join("\n");
     const path = file?.startsWith("file:") ? fileURLToPath(file) : file;
+    const at =
+      (path ? failedAt(error?.cause?.stack ?? error?.stack, path) : undefined) ?? line ?? 1;
     const shown = path && relative(process.cwd(), path);
-    failed.push(shown ? `\`${shown}:${line ?? 1}\` ${name}` : name);
-    const where = shown ? `file=${property(shown)},line=${line ?? 1},` : "";
+    failed.push(shown ? `\`${shown}:${at}\` ${name}` : name);
+    const where = shown ? `file=${property(shown)},line=${at},` : "";
     yield `::error ${where}title=${property(name)}::${data(message)}\n`;
   }
 }
