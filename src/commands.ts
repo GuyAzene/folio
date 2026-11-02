@@ -7,7 +7,7 @@ export type CommandRecord =
       v: 1;
       kind: "skill";
       name: string;
-      /** Where the skill came from when it was started, such as "Folio" or "Claude Code". */
+      /** Where the skill came from when it was started: "Folio", or a folder the student added. */
       from: string;
       digest: string;
     }

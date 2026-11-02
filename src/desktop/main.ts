@@ -241,8 +241,8 @@ async function refreshLive(): Promise<void> {
 setInterval(() => void refreshLive(), 3_600_000).unref();
 
 /**
- * The student's routines: Folio's own, and other agents' folders once turned on. Tests point
- * `FOLIO_SKILL_HOME` at a disposable folder, so they never read the developer's own skills.
+ * The student's routines: Folio's own, and folders the student adds. An added folder is kept with
+ * ~ for the home folder; tests point `FOLIO_SKILL_HOME` at a disposable one.
  */
 const skills = config.then(
   (settings) =>
@@ -256,7 +256,8 @@ const skills = config.then(
 /**
  * The student's MCP servers: mcp.json, the servers it starts, and calls waiting for the student.
  * A packaged Folio, opened from the Dock, asks the login shell for the PATH once, so commands
- * installed with uv or Homebrew are found.
+ * installed with uv or Homebrew are found. Remote servers are reached with Node's fetch, like
+ * model requests: Electron's net goes through the window's session, which refuses them.
  */
 const mcpConfig = McpConfig.open(home);
 let serverPath: Promise<string> | undefined;
@@ -270,7 +271,6 @@ const servers = mcpConfig.then(
           ? shellPath().then((path) => mergePath(path, process.env.PATH))
           : Promise.resolve(mergePath(process.env.PATH))),
       changed: () => void emitMcp(),
-      fetch: (input, init) => net.fetch(input as string, init as RequestInit),
     }),
 );
 void Promise.all([mcpConfig, servers]).then(([config, running]) =>

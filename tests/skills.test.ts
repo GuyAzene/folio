@@ -46,7 +46,7 @@ async function writeSkill(root: string, dir: string, text: string): Promise<stri
   return path;
 }
 
-/** A Folio home and a home folder with other agents' skills, with switches kept in memory. */
+/** A Folio home and a home folder for added folders, with switches kept in memory. */
 async function libraryWith(switches: SkillSwitches = { on: [], off: [], folders: [] }) {
   const root = await folder();
   const home = resolve(root, "folio");
@@ -125,48 +125,55 @@ describe("reading SKILL.md", () => {
 });
 
 describe("the routines Folio finds", () => {
-  it("turns Folio's own on and other agents' off, and the first of a name wins among those on", async () => {
-    const { home, user, library, state } = await libraryWith();
+  it("turns Folio's own on and an added folder's off, and the first of a name wins among those on", async () => {
+    const { home, user, library, state } = await libraryWith({
+      on: [],
+      off: [],
+      folders: ["~/study"],
+    });
     await writeSkill(resolve(home, "skills"), "quiz-me", skillMd("quiz-me", "Folio's quiz."));
-    await writeSkill(
-      resolve(user, ".claude/skills"),
-      "quiz-me",
-      skillMd("quiz-me", "Claude's quiz."),
-    );
-    await writeSkill(resolve(user, ".claude/skills"), "pdf", skillMd("pdf", "Fill PDF forms."));
-    await writeSkill(resolve(user, ".codex/skills"), "broken", "---\nname: broken\n---\n");
-    await writeSkill(resolve(user, ".claude/skills"), ".hidden", skillMd("hidden", "Hidden."));
+    await writeSkill(resolve(user, "study"), "quiz-me", skillMd("quiz-me", "Another quiz."));
+    await writeSkill(resolve(user, "study"), "pdf", skillMd("pdf", "Fill PDF forms."));
+    await writeSkill(resolve(user, "study"), "broken", "---\nname: broken\n---\n");
+    await writeSkill(resolve(user, "study"), ".hidden", skillMd("hidden", "Hidden."));
 
     let found = await library.scan();
     expect(found.skills.map((skill) => [skill.key, skill.from, skill.on])).toEqual([
       [`${home}/skills/quiz-me`, "Folio", true],
-      ["~/.claude/skills/pdf", "Claude Code", false],
-      ["~/.claude/skills/quiz-me", "Claude Code", false],
+      ["~/study/pdf", "~/study", false],
+      ["~/study/quiz-me", "~/study", false],
     ]);
     expect(found.skipped).toEqual([
-      { key: "~/.codex/skills/broken", from: "Codex", reason: "it has no description" },
+      { key: "~/study/broken", from: "~/study", reason: "it has no description" },
     ]);
 
-    state.switches = {
-      on: ["~/.claude/skills/quiz-me", "~/.claude/skills/pdf"],
-      off: [],
-      folders: [],
-    };
+    state.switches = { on: ["~/study/quiz-me", "~/study/pdf"], off: [], folders: ["~/study"] };
     found = await library.scan();
     expect(
-      found.skills.find((skill) => skill.from === "Claude Code" && skill.name === "quiz-me"),
+      found.skills.find((skill) => skill.from === "~/study" && skill.name === "quiz-me"),
     ).toMatchObject({ on: true, hiddenBy: "Folio's quiz-me" });
     expect((await library.active()).map((skill) => `${skill.from}:${skill.name}`)).toEqual([
       "Folio:quiz-me",
-      "Claude Code:pdf",
+      "~/study:pdf",
     ]);
 
-    // Folio's own turned off, Claude's of the same name is used.
+    // Folio's own turned off, the added folder's of the same name is used.
     state.switches = { ...state.switches, off: [`${home}/skills/quiz-me`] };
     expect((await library.active()).map((skill) => `${skill.from}:${skill.name}`)).toEqual([
-      "Claude Code:pdf",
-      "Claude Code:quiz-me",
+      "~/study:pdf",
+      "~/study:quiz-me",
     ]);
+  });
+
+  it("never reads other apps' skill folders unless the student adds one", async () => {
+    const { user, library, state } = await libraryWith();
+    for (const app of [".agents", ".claude", ".codex"])
+      await writeSkill(resolve(user, app, "skills"), "pdf", skillMd("pdf", "Fill PDF forms."));
+    state.switches = { on: ["~/.claude/skills/pdf"], off: [], folders: [] };
+    expect(await library.scan()).toEqual({ skills: [], skipped: [] });
+
+    state.switches = { ...state.switches, folders: ["~/.claude/skills"] };
+    expect((await library.active()).map((skill) => skill.key)).toEqual(["~/.claude/skills/pdf"]);
   });
 
   it("reads a folder the student added, whether it holds skills or is one", async () => {
@@ -340,18 +347,18 @@ describe("the skills section of config.json", () => {
   it("writes a switch only where it differs from what is usual", async () => {
     const home = await folder();
     const config = await FolioConfig.open(home, modelCatalog());
-    await config.setSkill("~/.claude/skills/pdf", true, false);
+    await config.setSkill("~/study-skills/pdf", true, false);
     await config.setSkill("~/.folio/skills/quiz-me", false, true);
     await config.setSkillFolder("~/study-skills", true);
     expect(config.skills).toEqual({
-      on: ["~/.claude/skills/pdf"],
+      on: ["~/study-skills/pdf"],
       off: ["~/.folio/skills/quiz-me"],
       folders: ["~/study-skills"],
     });
     await config.setSkill("~/.folio/skills/quiz-me", true, true);
     await config.setSkillFolder("~/study-skills", false);
     expect(JSON.parse(await readFile(resolve(home, "config.json"), "utf8")).skills).toEqual({
-      on: ["~/.claude/skills/pdf"],
+      on: ["~/study-skills/pdf"],
       off: [],
       folders: [],
     });

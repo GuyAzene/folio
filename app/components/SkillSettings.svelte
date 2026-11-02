@@ -11,18 +11,18 @@
   import { folio } from "../lib/state.svelte.ts";
 
   /**
-   * The student's routines (Agent Skills): Folio's own, which they write here, and the skills they
-   * keep for other agents, which start off. Folio reads instructions and text files only.
+   * The student's routines (Agent Skills): Folio's own, which they write here, and those in
+   * folders they add, which start off. Folio reads instructions and text files only.
    */
   const view = $derived(folio.skills);
   const own = $derived(view?.skills.filter((skill) => skill.source === "folio") ?? []);
-  /** Other agents' skills, grouped by where they came from, in Folio's order. */
-  const others = $derived.by(() => {
+  /** The routines in each added folder, by the folder's key. */
+  const byFolder = $derived.by(() => {
     const groups = new Map<string, SkillView[]>();
     for (const skill of view?.skills ?? [])
-      if (skill.source !== "folio")
+      if (skill.source === "folder")
         groups.set(skill.from, [...(groups.get(skill.from) ?? []), skill]);
-    return [...groups];
+    return groups;
   });
 
   $effect(() => {
@@ -258,47 +258,35 @@
 <div class="h-px bg-line-subtle"></div>
 
 <section class="flex flex-col gap-1 pt-4">
-  <span class="font-medium">From other apps</span>
+  <span class="font-medium">Folders you add</span>
   <span class="text-[12px] text-text-3"
-    >Skills you keep for Claude Code, Codex and other agents. They start off:
-    turn on the ones that help you study. Folio reads their instructions and
-    text files, and never runs their scripts.</span
+    >Routines you keep in a folder of your own. They start off: turn on the ones
+    you want. Folio reads their instructions and text files, and never runs
+    their scripts.</span
   >
-  {#each others as [from, skills] (from)}
-    <span class="mt-3 text-[11px] font-medium tracking-[0.06em] text-text-3 uppercase" dir="auto"
-      >{from}</span
-    >
-    <div class="flex flex-col divide-y divide-line-subtle">
-      {#each skills as skill (skill.key)}
-        {@render row(skill, false)}
-      {/each}
-    </div>
-  {:else}
-    {#if view}
-      <span class="mt-2 text-[12px] text-text-3"
-        >No skills found in ~/.agents/skills, ~/.claude/skills or
-        ~/.codex/skills.</span
+  {#each view?.folders ?? [] as folder (folder)}
+    {@const skills = byFolder.get(folder) ?? []}
+    <div class="mt-3 flex items-center gap-2">
+      <span class="min-w-0 flex-1 truncate text-[12px] font-medium" dir="ltr">{folder}</span>
+      <button
+        class={iconButton}
+        aria-label="Stop reading {folder}"
+        title="Stop reading this folder"
+        onclick={() => void folio.changeSkills((api) => api.removeSkillFolder(folder))}
       >
+        <X size={14} strokeWidth={1.75} />
+      </button>
+    </div>
+    {#if skills.length}
+      <div class="flex flex-col divide-y divide-line-subtle">
+        {#each skills as skill (skill.key)}
+          {@render row(skill, false)}
+        {/each}
+      </div>
+    {:else}
+      <span class="text-[12px] text-text-3">No routines found in this folder.</span>
     {/if}
   {/each}
-  {#if view?.folders.length}
-    <span class="mt-3 text-[11px] font-medium tracking-[0.06em] text-text-3 uppercase"
-      >Folders you added</span
-    >
-    {#each view.folders as folder (folder)}
-      <div class="flex items-center gap-2 py-1">
-        <span class="min-w-0 flex-1 truncate text-[12px]" dir="ltr">{folder}</span>
-        <button
-          class={iconButton}
-          aria-label="Stop reading {folder}"
-          title="Stop reading this folder"
-          onclick={() => void folio.changeSkills((api) => api.removeSkillFolder(folder))}
-        >
-          <X size={14} strokeWidth={1.75} />
-        </button>
-      </div>
-    {/each}
-  {/if}
   <button
     class="{ghost} mt-2 self-start"
     onclick={() => void folio.changeSkills((api) => api.addSkillFolder())}

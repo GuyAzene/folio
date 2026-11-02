@@ -112,7 +112,7 @@ async function command(home: string, env: Record<string, string>) {
   // A packaged app runs its own executable and the code in its archive.
   const packaged = dir.endsWith(".app");
   const connection = await mkdtemp(resolve(tmpdir(), "folio-e2e-connection-"));
-  // Other agents' skill folders are read from here, never the developer's own home.
+  // An added routine folder's ~ is this folder, never the developer's own home.
   const skills = await mkdtemp(resolve(tmpdir(), "folio-e2e-skills-"));
   return {
     executablePath: packaged ? resolve(dir, "Contents/MacOS/Folio") : electronPath,

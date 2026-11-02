@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { after, describe, it } from "node:test";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { FolioApi, McpView } from "../../src/desktop/api.ts";
+import { startHttpServer } from "../fixtures/mcp-http.ts";
 import { launch, type Running } from "./app.ts";
 import { reply, seedHome } from "./seed.ts";
 
@@ -20,8 +21,10 @@ const FIXTURE = fileURLToPath(new URL("../fixtures/mcp-server.ts", import.meta.u
 const SECRET = "synthetic-secret-0123456789";
 
 const running: Running[] = [];
+const remotes: { close: () => Promise<void> }[] = [];
 after(async () => {
   await Promise.allSettled(running.map((app) => app.close()));
+  await Promise.allSettled(remotes.map((remote) => remote.close()));
 });
 
 declare global {
@@ -181,5 +184,38 @@ void describe("MCP servers", () => {
       (on) => !on,
       "the server to close with Folio",
     );
+  });
+
+  void it("reaches a remote server with its token, which never reaches the window", async () => {
+    const seeded = await seedHome("");
+    const remote = await startHttpServer(SECRET);
+    remotes.push(remote);
+    await writeFile(
+      resolve(seeded.home, "mcp.json"),
+      JSON.stringify({
+        version: 1,
+        mcpServers: {
+          remote: {
+            type: "http",
+            url: remote.url,
+            headers: { Authorization: `Bearer ${SECRET}` },
+            folio: { label: "Remote", enabled: true },
+          },
+        },
+      }),
+    );
+    const app = await launch(seeded.home);
+    running.push(app);
+    const { page } = app;
+    await page.waitForFunction(() => !!window.folio);
+    const ready = await eventually(
+      () => page.evaluate(() => window.folio.mcpServers()),
+      (view) => ["ready", "failed", "stopped"].includes(view.servers[0]?.status ?? ""),
+      "the remote server",
+    );
+    assert.equal(ready.servers[0]!.status, "ready", ready.servers[0]!.error ?? "");
+    assert.ok(ready.servers[0]!.tools.some((tool) => tool.name === "lookup"));
+    assert.ok(remote.headers.every((headers) => headers.authorization === `Bearer ${SECRET}`));
+    assert.ok(!JSON.stringify(ready).includes(SECRET));
   });
 });

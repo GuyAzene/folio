@@ -173,8 +173,8 @@ export interface SkillView {
   key: string;
   name: string;
   description: string;
-  source: "folio" | "agents" | "claude" | "codex" | "folder";
-  /** Where it came from: "Folio", "Claude Code", or a folder the student added. */
+  source: "folio" | "folder";
+  /** Where it came from: "Folio", or a folder the student added. */
   from: string;
   on: boolean;
   /** False when only the student starts it. */

@@ -11,12 +11,12 @@ import {
 } from "./skill-file.ts";
 
 /**
- * The student's routines: Agent Skills folders, from Folio's own folder and, once the student
- * turns them on, the folders other agents read. Folio reads a skill's instructions and its text
- * files; it never runs anything in it.
+ * The student's routines: Agent Skills folders, from Folio's own folder and from folders the
+ * student adds, whose routines start off. Folio never looks in other apps' skill folders. It reads
+ * a skill's instructions and its text files; it never runs anything in it.
  */
 
-export type SkillSource = "folio" | "agents" | "claude" | "codex" | "folder";
+export type SkillSource = "folio" | "folder";
 
 /** Which skills are on, keyed by folder (with ~ for the home folder), and folders added. */
 export interface SkillSwitches {
@@ -31,7 +31,7 @@ export interface Skill extends SkillMeta {
   /** The folder as found, with ~ for the home folder: the skill's key in config.json. */
   key: string;
   source: SkillSource;
-  /** Where it came from, for Settings: "Folio", "Claude Code", or the added folder. */
+  /** Where it came from, for Settings: "Folio", or the added folder. */
   from: string;
   on: boolean;
   /** Set when an earlier skill that is on has the same name, so this one isn't used. */
@@ -116,8 +116,8 @@ export class SkillLibrary {
   >();
 
   /**
-   * `home` is Folio's home (its own skills live in `skills/` there); `user` is the folder other
-   * agents' skill folders are found in, the student's home folder outside tests.
+   * `home` is Folio's home (its own skills live in `skills/` there); `user` is the home folder an
+   * added folder's ~ stands for, the student's own outside tests.
    */
   constructor(options: { home: string; user: string; switches: () => SkillSwitches }) {
     this.#folio = resolve(options.home, "skills");
@@ -142,12 +142,8 @@ export class SkillLibrary {
   }
 
   #roots(): { dir: string; source: SkillSource; from: string }[] {
-    const user = (part: string) => resolve(this.#user, part);
     return [
       { dir: this.#folio, source: "folio", from: "Folio" },
-      { dir: user(".agents/skills"), source: "agents", from: "Shared agent skills" },
-      { dir: user(".claude/skills"), source: "claude", from: "Claude Code" },
-      { dir: user(".codex/skills"), source: "codex", from: "Codex" },
       ...this.#switches().folders.map((key) => ({
         dir: this.path(key),
         source: "folder" as const,

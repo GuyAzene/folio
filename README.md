@@ -28,8 +28,9 @@ lectures into notes you can browse, and it never changes your files.
   this used later?" or "one step at a time": the tutor recognizes the request; there are no
   modes to pick.
 - **Your routines.** Write how you like to study as a routine (an Agent Skills `SKILL.md`), or
-  turn on skills you already keep for Claude Code or Codex. The tutor follows one when it fits,
-  or start it yourself with `/name`. Folio reads their instructions and never runs their scripts.
+  add a folder of your own routines and turn on the ones you want. The tutor follows one when it
+  fits, or start it yourself with `/name`. Folio reads their instructions and never runs their
+  scripts.
 - **Your services.** Connect MCP servers, such as one for your university's Moodle: the tutor can
   use their tools and you can start their prompts with `/`. Folio asks before each call, showing
   exactly what it will send, until you allow a tool.

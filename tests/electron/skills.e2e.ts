@@ -12,9 +12,9 @@ import { launch, type Running } from "./app.ts";
 import { reply, seedHome } from "./seed.ts";
 
 /**
- * The student's routines in a real window: Settings lists Folio's own and another agent's (off
- * until turned on), a switch writes config.json, and a chat started with /quiz-me shows it.
- * Synthetic skills only; nothing here talks to a model.
+ * The student's routines in a real window: Settings lists Folio's own and those in a folder the
+ * student added (off until turned on), never another app's, a switch writes config.json, and a
+ * chat started with /quiz-me shows it. Synthetic skills only; nothing here talks to a model.
  */
 
 const running: Running[] = [];
@@ -37,11 +37,16 @@ async function writeSkill(root: string, name: string, description: string): Prom
 }
 
 void describe("routines", () => {
-  void it("lists routines, turns another agent's on, and shows a started one in its chat", async () => {
+  void it("lists routines, turns an added folder's on, and shows a started one in its chat", async () => {
     const seeded = await seedHome("A synthetic reply.", "lecture");
     await writeSkill(resolve(seeded.home, "skills"), "quiz-me", "Quiz me one question at a time.");
     const user = await mkdtemp(resolve(tmpdir(), "folio-e2e-user-"));
-    await writeSkill(resolve(user, ".claude/skills"), "feynman", "Teach it back in plain words.");
+    await writeSkill(resolve(user, "study"), "feynman", "Teach it back in plain words.");
+    await writeSkill(resolve(user, ".claude/skills"), "pdf", "Fill PDF forms.");
+    await writeFile(
+      resolve(seeded.home, "config.json"),
+      JSON.stringify({ version: 1, skills: { folders: ["~/study"] } }),
+    );
     const sessions = await createSessionStore({ home: seeded.home });
     await sessions.create({
       modelId: DEFAULT_MODEL,
@@ -71,7 +76,7 @@ void describe("routines", () => {
       listed.skills.map((each) => [each.name, each.from, each.on]),
       [
         ["quiz-me", "Folio", true],
-        ["feynman", "Claude Code", false],
+        ["feynman", "~/study", false],
       ],
     );
 
@@ -83,11 +88,11 @@ void describe("routines", () => {
       const config = JSON.parse(
         await readFile(resolve(seeded.home, "config.json"), "utf8").catch(() => "{}"),
       );
-      if (config.skills?.on?.includes("~/.claude/skills/feynman")) break;
+      if (config.skills?.on?.includes("~/study/feynman")) break;
       await new Promise((ready) => setTimeout(ready, 100));
     }
     const config = JSON.parse(await readFile(resolve(seeded.home, "config.json"), "utf8"));
-    assert.deepEqual(config.skills.on, ["~/.claude/skills/feynman"]);
+    assert.deepEqual(config.skills.on, ["~/study/feynman"]);
     await page.keyboard.press("Escape");
 
     await page.keyboard.press("Meta+k");

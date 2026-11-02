@@ -52,6 +52,10 @@ export async function startHttpServer(token: string): Promise<{
   return {
     url: `http://127.0.0.1:${port}/mcp`,
     headers,
-    close: () => new Promise((done) => server.close(() => done())),
+    close: () =>
+      new Promise((done) => {
+        server.close(() => done());
+        server.closeAllConnections();
+      }),
   };
 }

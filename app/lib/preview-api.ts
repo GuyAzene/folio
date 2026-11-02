@@ -1715,7 +1715,7 @@ const PREVIEW_GROUPS: {
   { connection: "openrouter", name: "OpenRouter", kind: "key", models: [] },
 ];
 
-/** Synthetic routines: two of Folio's own, and other agents' skills that start off. */
+/** Synthetic routines: two of Folio's own, and two in a folder the student added, which start off. */
 const previewSkills: (SkillView & { body: string })[] = [
   {
     key: "~/.folio/skills/quiz-me",
@@ -1741,22 +1741,22 @@ const previewSkills: (SkillView & { body: string })[] = [
     body: "List the course's topics, ask which ones feel weakest, then plan seven days.",
   },
   {
-    key: "~/.claude/skills/feynman",
+    key: "~/Study/routines/feynman",
     name: "feynman",
     description: "Explain a concept in plain words, then find the gaps by teaching it back.",
-    source: "claude",
-    from: "Claude Code",
+    source: "folder",
+    from: "~/Study/routines",
     on: false,
     model: true,
     user: true,
     body: "Explain it simply, then ask the student to teach it back.",
   },
   {
-    key: "~/.claude/skills/pdf",
+    key: "~/Study/routines/pdf",
     name: "pdf",
     description: "Fill, merge and split PDF files with Python scripts.",
-    source: "claude",
-    from: "Claude Code",
+    source: "folder",
+    from: "~/Study/routines",
     on: false,
     model: true,
     user: true,
@@ -1764,21 +1764,25 @@ const previewSkills: (SkillView & { body: string })[] = [
     body: "Run scripts/fill.py with the form's fields.",
   },
 ];
-let previewSkillFolders: string[] = [];
+let previewSkillFolders: string[] = ["~/Study/routines"];
 const skillRevision = (skill: { body: string; description: string }) =>
   `${skill.description.length}-${skill.body.length}-${skill.body.slice(0, 8)}`;
 const skillFile = (skill: { name: string; description: string; body: string }) =>
   `---\nname: ${skill.name}\ndescription: ${JSON.stringify(skill.description)}\n---\n\n${skill.body}\n`;
 function previewSkillsView(): SkillsView {
   return {
-    skills: previewSkills.map(({ body: _body, ...skill }) => structuredClone(skill)),
-    skipped: [
-      {
-        key: "~/.claude/skills/scratch",
-        from: "Claude Code",
-        reason: "it has no description",
-      },
-    ],
+    skills: previewSkills
+      .filter((skill) => skill.source === "folio" || previewSkillFolders.includes(skill.from))
+      .map(({ body: _body, ...skill }) => structuredClone(skill)),
+    skipped: previewSkillFolders.includes("~/Study/routines")
+      ? [
+          {
+            key: "~/Study/routines/scratch",
+            from: "~/Study/routines",
+            reason: "it has no description",
+          },
+        ]
+      : [],
     folders: [...previewSkillFolders],
     folder: "~/.folio/skills",
   };

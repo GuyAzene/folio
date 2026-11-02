@@ -346,7 +346,7 @@ export class FolioConfig {
 
   /**
    * Turns one routine on or off, by its folder's key. `usual` is whether it is on with no entry:
-   * Folio's own routines are, other agents' are not.
+   * Folio's own routines are, those in folders the student added are not.
    */
   setSkill(key: string, on: boolean, usual: boolean): Promise<void> {
     if (typeof key !== "string" || !key) return Promise.reject(new Error("Unknown routine."));

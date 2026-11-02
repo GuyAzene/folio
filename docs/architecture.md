@@ -190,9 +190,10 @@ full list, apart from course sources. Links open in the system browser.
 A routine is the student's own instruction for how the tutor works, such as a way of quizzing
 or explaining: a folder with a `SKILL.md` in the open Agent Skills format (a name, a description,
 then the instructions), plus any files it refers to (`src/skills/`). Folio reads its own routines
-in `~/.folio/skills/`, which are on, and skills the student keeps for other agents in
-`~/.agents/skills`, `~/.claude/skills`, `~/.codex/skills` or a folder they add, which stay off
-until turned on in Settings. Switches and added folders are in `config.json` under `skills`. A
+in `~/.folio/skills/`, which are on, and routines in folders the student adds, which stay off
+until turned on in Settings. It never looks in other apps' skill folders (`~/.claude/skills` and
+the like) unless the student adds one. Switches and added folders are in `config.json` under
+`skills`. A
 skill without a description, with YAML that doesn't read or a name that isn't lowercase letters,
 digits and hyphens is skipped, and Settings says why; among routines that are on, the first of a
 name is used.

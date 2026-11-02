@@ -81,7 +81,7 @@ export interface McpServersOptions {
   path: () => Promise<string>;
   /** Called when a server's state or tools change. */
   changed: () => void;
-  /** Requests to remote servers; Electron's, so system proxies apply. */
+  /** Requests to remote servers: Node's fetch unless given. */
   fetch?: McpFetch;
   /** How long to wait between restarts; shorter in tests. */
   backoff?: readonly number[];
