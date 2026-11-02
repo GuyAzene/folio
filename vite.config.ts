@@ -45,6 +45,8 @@ export default defineConfig({
         command: "node scripts/package.ts && node scripts/install.ts",
         cache: false,
       },
+      // The README's pictures, light and dark, from the browser preview in a hidden window.
+      screenshots: { command: "node scripts/screenshots.ts", cache: false },
       // Commits the version and tags it for a release: `vp run release 0.2.0`, then push both.
       release: { command: "node scripts/release.ts", cache: false },
       // Where each study's time went, from jobs.sqlite opened read-only (--job, --since).

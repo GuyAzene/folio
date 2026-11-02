@@ -1,4 +1,5 @@
-import { deflateSync, inflateSync } from "node:zlib";
+/** Node's zlib, loaded only for pictures, so slides without one build in the browser preview too. */
+const zlib = () => process.getBuiltinModule("node:zlib");
 
 /**
  * A dependency-free builder for synthetic lecture slides: positioned text, vector drawings
@@ -327,7 +328,7 @@ export function syntheticSlides(slides: SyntheticSlide[]): Uint8Array {
         : { size: image.pixels ?? [32, 24], rgb: gradient(image.pixels ?? [32, 24]), alpha: null };
       const [pixelWidth, pixelHeight] = picture.size;
       const raster = (colorSpace: string, samples: Uint8Array, extra = "") => {
-        const data = deflateSync(samples);
+        const data = zlib().deflateSync(samples);
         return add(
           `<< /Type /XObject /Subtype /Image /Width ${pixelWidth} /Height ${pixelHeight} ` +
             `/ColorSpace /${colorSpace} /BitsPerComponent 8 /Filter /FlateDecode${extra} /Length ${data.length} >>`,
@@ -426,7 +427,7 @@ function decodePng(png: Uint8Array): {
     throw new Error("Only 8-bit RGB or RGBA PNGs that are not interlaced can be embedded.");
   const channels = color === 6 ? 4 : 3;
   const stride = width * channels;
-  const filtered = inflateSync(concat(data));
+  const filtered = zlib().inflateSync(concat(data));
   const pixels = new Uint8Array(height * stride);
   for (let row = 0; row < height; row++) {
     const filter = filtered[row * (stride + 1)]!;
