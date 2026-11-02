@@ -1,0 +1,24 @@
+name: Idea or request
+description: Something Folio could do, or do better.
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Issues are public, so leave out anything private: course material, notes, chats, or
+        names that identify you.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What you were trying to do, and what got in the way.
+    validations:
+      required: true
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Your suggestion
+      description: What Folio could do instead. Leave it empty if you're not sure.
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else
