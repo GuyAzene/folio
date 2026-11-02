@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { Type } from "typebox";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import { piComplete, type PiModels } from "../src/ingest/pi-complete.ts";
+import { piComplete, withEnums, type PiModels } from "../src/ingest/pi-complete.ts";
+import { readerSchema } from "../src/ingest/prompts.ts";
 
 const schema = Type.Object({ page: Type.Integer() });
 
@@ -45,6 +46,45 @@ describe("Pi bridge", () => {
       constrainedSampling: { type: "json_schema", strict: "prefer" },
     });
     expect(options.toolChoice).toBe("required");
+  });
+
+  it("sends a choice of fixed strings as an enum, which Gemini through OpenRouter keeps to", async () => {
+    const choices = Type.Object({
+      pages: Type.Array(
+        Type.Object({
+          type: Type.Union([Type.Literal("text"), Type.Literal("image")], {
+            description: "What it is.",
+          }),
+          count: Type.Union([Type.Integer(), Type.Null()]),
+        }),
+      ),
+    });
+    const { models, completeSimple } = fakeModels([
+      { type: "toolCall", id: "1", name: "submit", arguments: { pages: [] } },
+    ]);
+    const complete = piComplete(
+      async () => models,
+      (id) => ({ id, api: "openai-completions" }) as never,
+    );
+    await complete({
+      model: "google/gemini-4-argon",
+      system: "s",
+      content: [],
+      maxTokens: 10,
+      answer: { name: "submit", description: "d", schema: choices },
+    });
+    const [, context] = completeSimple.mock.calls[0] as unknown as [
+      unknown,
+      { tools: { parameters: { properties: { pages: { items: { properties: object } } } } }[] },
+    ];
+    const page = context.tools[0]!.parameters.properties.pages.items.properties;
+    expect(page).toMatchObject({
+      type: { type: "string", enum: ["text", "image"], description: "What it is." },
+      count: { anyOf: [{ type: "integer" }, { type: "null" }] },
+    });
+    expect(JSON.stringify(withEnums(readerSchema))).not.toContain('"const"');
+    // The schema Folio checks answers against is left as it was.
+    expect(JSON.stringify(choices)).toContain('"const":"text"');
   });
 
   it("forces the answer tool as each API names it, and drops thinking where Anthropic refuses it", async () => {

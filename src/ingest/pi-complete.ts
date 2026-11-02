@@ -6,6 +6,7 @@ import type {
   ThinkingLevel,
   ToolChoice,
 } from "@earendil-works/pi-ai";
+import type { TSchema } from "typebox";
 import { DROPPED } from "../dropped.ts";
 import type { CompleteFn, ModelReply, ModelRequest } from "./models.ts";
 
@@ -78,7 +79,7 @@ export function piComplete(
                   {
                     name: request.answer.name,
                     description: request.answer.description,
-                    parameters: request.answer.schema,
+                    parameters: withEnums(request.answer.schema),
                     // "prefer": strict where the provider supports it, a plain tool elsewhere.
                     constrainedSampling: { type: "json_schema", strict: "prefer" },
                   },
@@ -137,6 +138,41 @@ export function piComplete(
  * Anthropic and Gemini call it "any". Anthropic refuses a forced tool while the model thinks, so
  * those requests go without thinking.
  */
+/**
+ * The answer's schema as providers are sent it: a choice between fixed strings (TypeBox's union
+ * of literals, `anyOf` of `const`s) becomes an `enum`. OpenAI holds the model to either; Gemini
+ * through OpenRouter never sees the values of the first and invents its own (measured on
+ * 2026-11-02: "paragraph", "picture", "footer" for a region's type), while every model tried kept
+ * to an `enum`. The answer is still checked against the original schema.
+ */
+export function withEnums(schema: TSchema): TSchema {
+  const visit = (node: unknown): unknown => {
+    if (Array.isArray(node)) return node.map(visit);
+    if (typeof node !== "object" || node === null) return node;
+    const record = node as Record<string, unknown>;
+    const choices = record.anyOf;
+    if (
+      Array.isArray(choices) &&
+      choices.length > 0 &&
+      choices.every(
+        (choice) =>
+          typeof choice === "object" &&
+          choice !== null &&
+          typeof (choice as { const?: unknown }).const === "string",
+      )
+    ) {
+      const { anyOf: _anyOf, ...rest } = record;
+      return {
+        ...rest,
+        type: "string",
+        enum: choices.map((choice) => (choice as { const: string }).const),
+      };
+    }
+    return Object.fromEntries(Object.entries(record).map(([key, value]) => [key, visit(value)]));
+  };
+  return visit(schema) as TSchema;
+}
+
 export function forcedTool(model: Model<Api>): { choice: ToolChoice; thinks: boolean } {
   if (model.api === "anthropic-messages") return { choice: "any" as ToolChoice, thinks: false };
   if (model.api === "google-generative-ai") return { choice: "any" as ToolChoice, thinks: true };
