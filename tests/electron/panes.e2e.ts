@@ -51,7 +51,11 @@ void describe("panes", () => {
     await page.getByRole("button", { name: "Ask Folio" }).click();
     const box = page.getByRole("textbox", { name: "Message Folio" });
     await box.waitFor();
-    assert.equal((await widths(page)).length, 2);
+    await eventually(
+      () => widths(page),
+      (open) => open.length === 2,
+      "the chat beside the lecture",
+    );
     await box.fill("A half-written question");
 
     // The chat takes more than half the window.

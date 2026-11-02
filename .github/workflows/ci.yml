@@ -137,6 +137,10 @@ jobs:
         run: vp node node_modules/electron/install.js
       - name: Package Folio.app
         run: vp run desktop:package
+        env:
+          # electron-builder skips signing on pull requests, ad-hoc signing included, and the
+          # install check verifies the signature. Ad-hoc signing uses no secret.
+          CSC_FOR_PULL_REQUEST: "true"
       # On the packaged app, the checks of what packaging can break: its protocols, permissions
       # and pages, pdf.js with canvas, one Folio per home, demos in their own processes, the
       # diagram renderer's workers, and `desktop:install` into temporary folders.
