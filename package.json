@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "description": "A local-first desktop study workspace with a course-aware AI tutor.",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "type": "module",
   "dependencies": {
     "@earendil-works/pi-agent-core": "1.4.0",
