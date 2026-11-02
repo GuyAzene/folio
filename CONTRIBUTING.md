@@ -26,3 +26,20 @@ Report a security problem privately instead, as [SECURITY.md](SECURITY.md) descr
 
 [AGENTS.md](AGENTS.md) has the engineering conventions and
 [docs/architecture.md](docs/architecture.md) how the pieces fit together.
+
+## Releases
+
+Versions are `0.MINOR.PATCH` while Folio is early: the minor number for new features, the patch
+number for fixes only. Each upcoming version has a milestone, and a version ships when its
+milestone is done.
+
+1. On an up-to-date `main`, run `vp run release 0.2.0`. It sets the version, commits
+   "Release 0.2.0" and tags it `v0.2.0`.
+2. Push `main` and the tag. The release workflow runs every check on that commit, builds the disk
+   image, and drafts the release with a checksum and a build attestation.
+3. Read the draft: its notes list the pull requests merged since the last release, grouped as
+   New, Improved and Fixed by their labels. Add anything merged without a pull request, then
+   publish it.
+
+The [nightly build](https://github.com/GuyAzene/folio/releases/tag/nightly) is rebuilt from `main`
+after every change, for anyone who wants the newest Folio.

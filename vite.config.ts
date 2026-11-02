@@ -45,6 +45,8 @@ export default defineConfig({
         command: "node scripts/package.ts && node scripts/install.ts",
         cache: false,
       },
+      // Commits the version and tags it for a release: `vp run release 0.2.0`, then push both.
+      release: { command: "node scripts/release.ts", cache: false },
       // Where each study's time went, from jobs.sqlite opened read-only (--job, --since).
       "study:report": { command: "node scripts/study-report.ts", cache: false },
       // Studies synthetic decks with planted facts and scores them: FOLIO_BENCH=1 spends the
