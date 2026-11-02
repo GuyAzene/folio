@@ -411,6 +411,57 @@ const assignments = new Map<string, AssignmentView>(
       ],
       grade: { score: 88, max: 100, text: "" },
     }),
+    // Computational Models' coursework, so each column of the board has some.
+    assignment(84, "Problem set 1: DFAs and their languages", {
+      courseId: id(2),
+      status: "doing",
+      dueAt: ago(-50),
+      steps: [
+        { id: id(121), text: "Question 1: a DFA for even numbers of 1s", done: true },
+        { id: id(122), text: "Question 2: the product construction", done: true },
+        { id: id(123), text: "Question 3: prove the language is regular", done: false },
+      ],
+    }),
+    assignment(85, "Read the notes on nondeterminism", {
+      courseId: id(2),
+      kind: "reading",
+      dueAt: ago(-30),
+    }),
+    assignment(86, "Prepare for the midterm", {
+      courseId: id(2),
+      kind: "exam_prep",
+      dueAt: ago(-24 * 12),
+    }),
+    assignment(87, "Lab 1: a DFA simulator", {
+      courseId: id(2),
+      kind: "lab",
+      status: "submitted",
+      dueAt: ago(10),
+      attempts: [
+        {
+          id: id(124),
+          submittedAt: ago(14),
+          files: [
+            {
+              id: id(125),
+              name: "dfa.py",
+              size: 3_200,
+              sha256: "0".repeat(64),
+              addedAt: ago(14),
+            },
+          ],
+          note: "",
+        },
+      ],
+    }),
+    assignment(88, "Quiz 0: sets and strings", {
+      courseId: id(2),
+      kind: "quiz",
+      status: "done",
+      dueAt: ago(200),
+      finishedAt: ago(190),
+      grade: { score: 9, max: 10, text: "" },
+    }),
   ].map((item) => [item.id, item]),
 );
 /** Each note's earlier versions in the preview, newest first. */

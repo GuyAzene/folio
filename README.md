@@ -90,10 +90,10 @@ lectures into notes you can browse, and it never changes your files.
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/board-dark.png">
   <img src="docs/images/board-light.png" alt="The assignments board with columns To do, Doing, Submitted and Done">
 </picture></td>
-    <td width="50%"><b>Add context with +</b>, a lecture from any course<br><br>
+    <td width="50%"><b>Add context with +</b>: the page you're on, or any lecture<br><br>
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/add-context-dark.png">
-  <img src="docs/images/add-context-light.png" alt="The + menu in the composer finding lectures across two courses">
+  <img src="docs/images/add-context-light.png" alt="The + menu in the chat beside a lecture, offering the page on screen, an image, a file, or a search for any lecture or course">
 </picture></td>
   </tr>
 </table>

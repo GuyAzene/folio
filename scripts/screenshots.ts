@@ -21,31 +21,33 @@ interface Scene {
   name: string;
   /** Brings the preview from Home to the scene. */
   show(page: Page): Promise<void>;
+  /** Only the main view, without the sidebar, for the README's smaller pictures. */
+  main?: true;
 }
 
 const sidebar = (page: Page, name: string) =>
   page.locator("aside").getByText(name, { exact: true }).first();
 
+/**
+ * The automaton lecture at its slide, with the chat about it beside: a chat reopens beside the
+ * page it was about. The question is scrolled to the top of the chat.
+ */
+async function besideLecture(page: Page): Promise<void> {
+  await sidebar(page, "Computational Models").click();
+  await page.getByText("Why the start state is accepting", { exact: true }).click();
+  await page.locator(".prose-folio svg").first().waitFor();
+  const slide = page.locator('[data-page="3"]');
+  await slide.locator("canvas").waitFor();
+  await slide.evaluate((element) => element.scrollIntoView({ block: "start" }));
+  await page.getByText("Why is the start state also accepting here?").evaluate((element) => {
+    let chat = element.parentElement;
+    while (chat && !/auto|scroll/.test(getComputedStyle(chat).overflowY)) chat = chat.parentElement;
+    chat?.scrollTo({ top: 0 });
+  });
+}
+
 const SCENES: Scene[] = [
-  {
-    // A lecture with the tutor beside it: a chat reopens beside the page it was about.
-    name: "reader",
-    async show(page) {
-      await sidebar(page, "Computational Models").click();
-      await page.getByText("Why the start state is accepting", { exact: true }).click();
-      await page.locator(".prose-folio svg").first().waitFor();
-      // The slide the answer is about, and the question at the top of the chat.
-      const slide = page.locator('[data-page="3"]');
-      await slide.locator("canvas").waitFor();
-      await slide.evaluate((element) => element.scrollIntoView({ block: "start" }));
-      await page.getByText("Why is the start state also accepting here?").evaluate((element) => {
-        let chat = element.parentElement;
-        while (chat && !/auto|scroll/.test(getComputedStyle(chat).overflowY))
-          chat = chat.parentElement;
-        chat?.scrollTo({ top: 0 });
-      });
-    },
-  },
+  { name: "reader", show: besideLecture },
   {
     name: "study-notes",
     async show(page) {
@@ -53,6 +55,7 @@ const SCENES: Scene[] = [
       await page.getByRole("tab", { name: "Study notes" }).click();
       await page.getByText("Breadth-first search", { exact: true }).first().click();
     },
+    main: true,
   },
   {
     name: "notebook",
@@ -61,20 +64,23 @@ const SCENES: Scene[] = [
       await page.getByText("Regular languages", { exact: true }).first().click();
       await page.locator(".cm-editor").getByText("Closure").waitFor();
     },
+    main: true,
   },
   {
     name: "board",
     async show(page) {
       await sidebar(page, "Assignments").click();
     },
+    main: true,
   },
   {
-    // The + in the composer, finding lectures across courses.
+    // The + in the chat beside a lecture: the page on screen, an image, another lecture or course.
     name: "add-context",
     async show(page) {
-      await page.getByRole("button", { name: "Add to your question" }).click();
-      await page.keyboard.type("lecture");
+      await besideLecture(page);
+      await page.getByRole("button", { name: "Add to your question" }).last().click();
     },
+    main: true,
   },
 ];
 
@@ -159,7 +165,11 @@ try {
         await page.getByPlaceholder("Ask about any of your courses").waitFor();
         await scene.show(page);
         await stillness(page);
-        await page.screenshot({ path: resolve(ROOT, `docs/images/${scene.name}-${colors}.png`) });
+        const clip = scene.main ? await page.locator("main").boundingBox() : null;
+        await page.screenshot({
+          path: resolve(ROOT, `docs/images/${scene.name}-${colors}.png`),
+          ...(clip && { clip }),
+        });
         console.log(`docs/images/${scene.name}-${colors}.png`);
       }
   } finally {
