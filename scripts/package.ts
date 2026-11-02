@@ -7,11 +7,13 @@
 // notarized when APPLE_API_KEY, APPLE_API_KEY_ID and APPLE_API_ISSUER (or APPLE_ID,
 // APPLE_APP_SPECIFIC_PASSWORD and APPLE_TEAM_ID) are set too.
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { createCanvas, loadImage } from "@napi-rs/canvas";
 import { Arch, build, Platform, type Configuration } from "electron-builder";
+import { importedPackages, notices, withDependencies } from "./notices.ts";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const SOURCES = [
@@ -39,6 +41,24 @@ async function stage(dir: string): Promise<void> {
   execFileSync("vp", ["pack"], { cwd: dir, stdio: "inherit" });
 }
 
+/**
+ * THIRD_PARTY_NOTICES.txt: the licenses of the production dependencies and of what the interface
+ * and the main process import, with what those depend on. Electron's ship on their own.
+ */
+async function thirdPartyNotices(dir: string): Promise<string> {
+  const manifest = JSON.parse(await readFile(resolve(ROOT, "package.json"), "utf8")) as {
+    dependencies: Record<string, string>;
+  };
+  const packages = new Set([
+    ...Object.keys(manifest.dependencies),
+    ...importedPackages(ROOT, ["app", "src"]),
+  ]);
+  packages.delete("electron");
+  const path = resolve(dir, "THIRD_PARTY_NOTICES.txt");
+  await writeFile(path, notices(ROOT, withDependencies(ROOT, packages)));
+  return path;
+}
+
 /** The app icon at every size macOS asks for, drawn from resources/icon.svg. */
 async function icon(dir: string): Promise<string> {
   const svg = await readFile(resolve(ROOT, "resources/icon.svg"), "utf8");
@@ -58,7 +78,7 @@ async function icon(dir: string): Promise<string> {
   return icns;
 }
 
-function config(dir: string, icns: string): Configuration {
+function config(dir: string, icns: string, licenses: string): Configuration {
   return {
     appId: "io.github.guyazene.folio",
     productName: "Folio",
@@ -81,6 +101,8 @@ function config(dir: string, icns: string): Configuration {
       "!**/node_modules/pdfjs-dist/legacy/{web,image_decoders}/**",
     ],
     asar: true,
+    // Beside Electron's LICENSE.electron.txt and Chromium's LICENSES.chromium.html.
+    extraResources: [{ from: licenses, to: "THIRD_PARTY_NOTICES.txt" }],
     // Folio's interface is English; Hebrew keeps Chromium's own strings for a Hebrew system.
     electronLanguages: ["en", "he"],
     electronFuses: {
@@ -121,13 +143,17 @@ const dir = await mkdtemp(resolve(tmpdir(), "folio-package-"));
 try {
   await stage(dir);
   const icns = await icon(dir);
+  const licenses = await thirdPartyNotices(dir);
   await rm(resolve(ROOT, "release"), { recursive: true, force: true });
   const artifacts = await build({
     projectDir: ROOT,
     targets: Platform.MAC.createTarget("dmg", Arch.arm64),
-    config: config(dir, icns),
+    config: config(dir, icns, licenses),
     publish: "never",
   });
+  const app = resolve(ROOT, "release/mac-arm64/Folio.app/Contents/Resources");
+  for (const file of ["THIRD_PARTY_NOTICES.txt", "LICENSE.electron.txt", "LICENSES.chromium.html"])
+    if (!existsSync(resolve(app, file))) throw new Error(`Folio.app has no ${file}.`);
   console.log(`\nBuilt ${resolve(ROOT, "release/mac-arm64/Folio.app")}`);
   for (const artifact of artifacts.filter((path) => path.endsWith(".dmg")))
     console.log(`  and ${artifact}`);
