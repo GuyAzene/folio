@@ -22,8 +22,8 @@
 </p>
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/images/reader-dark.png">
-  <img src="docs/images/reader-light.png" alt="A lecture open at a slide with an automaton, and beside it the tutor answering why the start state is accepting, with a formula, the automaton drawn again and the pages it read">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/tutor-dark.webp">
+  <img src="docs/images/tutor-light.webp" alt="A lecture open at a slide with an automaton. Beside it, a question about why the start state is accepting is typed and sent, and the tutor's answer arrives with a formula, the automaton drawn again and the pages it read">
 </picture>
 
 Folio keeps a course in one place on your computer: lecture slides, recitations, assignments and
@@ -218,7 +218,7 @@ vp run desktop:package # Folio.app and its disk image, in release/
 vp run desktop:install # the same, then Folio.app into /Applications
 vp build && vp pack # renderer, CLI and Electron bundles
 vp dev              # the interface alone, in a browser, with synthetic data
-vp run screenshots  # the README's pictures, light and dark, from that preview
+vp run screenshots  # the README's pictures and clip, light and dark, from that preview
 ```
 
 The benchmark spends your ChatGPT plan, so it runs only with `FOLIO_BENCH=1` and never in `vp

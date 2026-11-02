@@ -164,6 +164,40 @@ const documents: DocumentView[] = [
     revision: 1,
   },
 ];
+/**
+ * The tutor on why the automaton's start state accepts: the saved chat beside Lecture 1 Finite
+ * automata, and the preview's answer when asked about the start state again, as in the README's
+ * clip.
+ */
+const START_STATE_ANSWER = [
+  "Because it accepts the words with an **even number of 1s**, and before reading anything it has seen none. Zero is even, so the empty word is accepted:",
+  "",
+  "$$",
+  "\\delta^*(\\textsf{even}, \\varepsilon) = \\textsf{even} \\in F",
+  "$$",
+  "",
+  "```mermaid",
+  "stateDiagram-v2",
+  "  direction LR",
+  "  [*] --> even",
+  "  even --> odd: 1",
+  "  odd --> even: 1",
+  "  even --> even: 0",
+  "  odd --> odd: 0",
+  "```",
+  "",
+  "So `1011` ends in odd and is rejected.",
+].join("\n");
+const START_STATE_STEP = {
+  label: "Read Lecture 1 Finite automata, pages 3 and 4",
+  state: "done" as const,
+};
+const START_STATE_SOURCES = [3, 4].map((page) => ({
+  documentId: id(21),
+  title: "Lecture 1 Finite automata",
+  page,
+}));
+
 const chats = new Map<string, ChatView>([
   [
     id(31),
@@ -317,31 +351,10 @@ const chats = new Map<string, ChatView>([
         { role: "user", text: "Why is the start state also accepting here?", state: "complete" },
         {
           role: "assistant",
-          text: [
-            "Because it accepts the words with an **even number of 1s**, and before reading anything it has seen none. Zero is even, so the empty word is accepted:",
-            "",
-            "$$",
-            "\\delta^*(\\textsf{even}, \\varepsilon) = \\textsf{even} \\in F",
-            "$$",
-            "",
-            "```mermaid",
-            "stateDiagram-v2",
-            "  direction LR",
-            "  [*] --> even",
-            "  even --> odd: 1",
-            "  odd --> even: 1",
-            "  even --> even: 0",
-            "  odd --> odd: 0",
-            "```",
-            "",
-            "So `1011` ends in odd and is rejected.",
-          ].join("\n"),
+          text: START_STATE_ANSWER,
           state: "complete",
-          steps: [{ label: "Read Lecture 1 Finite automata, pages 3 and 4", state: "done" }],
-          sources: [
-            { documentId: id(21), title: "Lecture 1 Finite automata", page: 3 },
-            { documentId: id(21), title: "Lecture 1 Finite automata", page: 4 },
-          ],
+          steps: [{ ...START_STATE_STEP }],
+          sources: START_STATE_SOURCES,
         },
       ],
     },
@@ -2188,27 +2201,30 @@ export const previewApi: FolioApi = {
     });
     chats.set(key, chat);
     // Asking for a diagram or a drawing shows one being written and then drawn.
-    const reply = /diagram|draw|flow|תרשים/i.test(text)
-      ? [
-          "Here is how breadth-first search moves through the queue:",
-          "",
-          "```mermaid",
-          "flowchart TD",
-          "  A[Put s in the queue and mark it] --> B{Is the queue empty?}",
-          "  B -->|yes| C[Done]",
-          "  B -->|no| D[Take u; mark and enqueue its unmarked neighbours]",
-          "  D --> B",
-          "```",
-          "",
-          "Each vertex enters the queue once, because it is marked as it enters.",
-        ].join("\n")
-      : /visual|demo|הדגמה/i.test(text)
-        ? "Here is the queue as it changes, and a demo you can step through:"
-        : routine
-          ? `Following your routine **${routine.name}**. First question: what does breadth-first search keep in its queue?`
-          : command?.kind === "prompt"
-            ? `Here is a week of exam preparation for **${command.args.course ?? "your course"}**${command.args.topic ? `, starting with ${command.args.topic}` : ""}.`
-            : "This is the **preview bridge**. In the app, Folio reads your course pages and answers from them.";
+    const startState = /start state|accepting/i.test(text);
+    const reply = startState
+      ? START_STATE_ANSWER
+      : /diagram|draw|flow|תרשים/i.test(text)
+        ? [
+            "Here is how breadth-first search moves through the queue:",
+            "",
+            "```mermaid",
+            "flowchart TD",
+            "  A[Put s in the queue and mark it] --> B{Is the queue empty?}",
+            "  B -->|yes| C[Done]",
+            "  B -->|no| D[Take u; mark and enqueue its unmarked neighbours]",
+            "  D --> B",
+            "```",
+            "",
+            "Each vertex enters the queue once, because it is marked as it enters.",
+          ].join("\n")
+        : /visual|demo|הדגמה/i.test(text)
+          ? "Here is the queue as it changes, and a demo you can step through:"
+          : routine
+            ? `Following your routine **${routine.name}**. First question: what does breadth-first search keep in its queue?`
+            : command?.kind === "prompt"
+              ? `Here is a week of exam preparation for **${command.args.course ?? "your course"}**${command.args.topic ? `, starting with ${command.args.topic}` : ""}.`
+              : "This is the **preview bridge**. In the app, Folio reads your course pages and answers from them.";
     // Asking for a visual shows a drawing written piece by piece, then a demo's card.
     const visuals: VisualView[] = /visual|demo|הדגמה/i.test(text)
       ? [
@@ -2245,7 +2261,9 @@ export const previewApi: FolioApi = {
       await new Promise((resolve) => setTimeout(resolve, 500));
       // A question about Moodle uses the synthetic Moodle server, asking first unless allowed.
       let answer = reply;
-      let steps: { label: string; state: "running" | "done" | "failed" }[] = [];
+      let steps: { label: string; state: "running" | "done" | "failed" }[] = startState
+        ? [{ ...START_STATE_STEP }]
+        : [];
       const moodle = previewServers.find((server) => server.id === "moodle" && server.enabled);
       if (moodle && !command && /moodle|deadline|due/i.test(text)) {
         const tool = moodle.tools.find((candidate) => candidate.name === "get_deadlines")!;
@@ -2333,7 +2351,7 @@ export const previewApi: FolioApi = {
         text: answer,
         state: "complete",
         steps,
-        sources: [],
+        sources: startState ? START_STATE_SOURCES : [],
         ...(visuals.length ? { visuals } : {}),
       });
       chat.status = "idle";
