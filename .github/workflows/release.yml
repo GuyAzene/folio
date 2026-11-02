@@ -1,0 +1,98 @@
+name: Release
+
+# Pushing a tag such as v0.2.0 (`vp run release 0.2.0` makes the commit and the tag) runs every
+# check on the tagged commit, builds Folio for others, and drafts the release with its disk
+# image, a checksum and a build attestation. The draft is published by hand.
+on:
+  push:
+    tags: ["v*"]
+  # A rehearsal on any branch: the checks and the build, without attesting or drafting anything.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    name: Checks
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      # Only what CI's nightly job asks for, which never runs for a tag.
+      contents: write
+
+  release:
+    name: Build and draft the release
+    needs: checks
+    runs-on: macos-15
+    timeout-minutes: 30
+    permissions:
+      # Drafts the release and uploads its files.
+      contents: write
+      # The build attestation: a Sigstore certificate, then its record on GitHub.
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The previous release's tag, where the notes start.
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: voidzero-dev/setup-vp@cab1ab9eaff52d4857875f4f2c016e36af8f2c76 # v1.22.0
+        with:
+          node-version-file: .node-version
+          sfw: true
+          cache: true
+          cache-toolchain: true
+          cache-save: false
+      - name: The version, which the tag must name
+        run: |
+          version=$(vp node -p 'require("./package.json").version')
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::The tag is $GITHUB_REF_NAME, but package.json says $version."
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+      - name: Electron
+        run: vp node node_modules/electron/install.js
+      - name: Package Folio for others
+        run: vp run desktop:package
+        env:
+          FOLIO_DISTRIBUTE: "1"
+      - name: Open and quit the packaged app
+        run: .github/scripts/open-and-quit.sh
+      - name: Checksum
+        working-directory: release
+        run: shasum -a 256 "Folio-$VERSION-arm64.dmg" > "Folio-$VERSION-arm64.dmg.sha256"
+      - name: Attest where the disk image was built
+        if: github.ref_type == 'tag'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: release/Folio-${{ env.VERSION }}-arm64.dmg
+      - name: Draft the release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          dmg="Folio-$VERSION-arm64.dmg"
+          # The notes cover the pull requests since the previous release, not the nightly.
+          previous=$(git describe --tags --abbrev=0 --match 'v*' "$GITHUB_REF_NAME^" 2>/dev/null || true)
+          range=(-f tag_name="$GITHUB_REF_NAME")
+          if [ -n "$previous" ]; then range+=(-f previous_tag_name="$previous"); fi
+          generated=$(gh api -X POST "repos/$GITHUB_REPOSITORY/releases/generate-notes" "${range[@]}" --jq .body)
+          cat > notes.md <<EOF
+          **Install:** download \`$dmg\` (Apple silicon Macs), open it and drag Folio to Applications.
+
+          **First open:** Folio is not signed with an Apple Developer ID yet, so macOS says it could not verify it. Open **System Settings → Privacy & Security**, scroll down to the line about Folio, and choose **Open Anyway**.
+
+          **Check the download:** \`gh attestation verify $dmg --repo $GITHUB_REPOSITORY\` confirms that this repository's release workflow built it from \`$GITHUB_REF_NAME\`, and \`shasum -a 256 -c $dmg.sha256\` that it arrived whole.
+
+          $generated
+          EOF
+          gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "Folio $VERSION" \
+            --notes-file notes.md "release/$dmg" "release/$dmg.sha256"
+          echo "Drafted [Folio $VERSION]($(gh release view "$GITHUB_REF_NAME" --json url --jq .url)): read the notes, then publish it." >> "$GITHUB_STEP_SUMMARY"

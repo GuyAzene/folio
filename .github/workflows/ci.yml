@@ -4,13 +4,16 @@ on:
   push:
     branches: [main]
   pull_request:
+  # The release workflow runs every check on the tagged commit.
+  workflow_call:
 
 permissions:
   contents: read
 
-# A newer push makes an older run moot: it is cancelled, nightly build included.
+# A newer push makes an older run moot: it is cancelled, nightly build included. Runs the release
+# workflow starts are kept apart by their event.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 # The real-window checks run two files at a time: a macOS runner has three cores, and each file
@@ -198,19 +201,8 @@ jobs:
         run: vp run desktop:package
         env:
           FOLIO_DISTRIBUTE: "1"
-      # The app for others cannot be driven by the real-window checks, so it is opened on an
-      # empty home and asked to quit, which it must do on its own.
       - name: Open and quit the packaged app
-        run: |
-          home=$(mktemp -d) connection=$(mktemp -d)
-          FOLIO_HOME="$home" FOLIO_CONNECTION_HOME="$connection" \
-            release/mac-arm64/Folio.app/Contents/MacOS/Folio >/dev/null 2>&1 &
-          pid=$!
-          sleep 10
-          kill -0 "$pid"
-          kill -TERM "$pid"
-          for _ in $(seq 1 60); do kill -0 "$pid" 2>/dev/null || exit 0; sleep 0.5; done
-          echo "Folio did not quit within 30 seconds" && exit 1
+        run: .github/scripts/open-and-quit.sh
       - name: Publish the nightly build
         env:
           GH_TOKEN: ${{ github.token }}

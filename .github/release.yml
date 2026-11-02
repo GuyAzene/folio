@@ -1,0 +1,14 @@
+# GitHub's generated release notes: merged pull requests grouped by their kind label. Docs and
+# maintenance, Dependabot's updates included, stay out of the notes.
+changelog:
+  exclude:
+    labels: [docs, maintenance]
+  categories:
+    - title: New
+      labels: [feature]
+    - title: Improved
+      labels: [improvement]
+    - title: Fixed
+      labels: [bug]
+    - title: Other changes
+      labels: ["*"]
