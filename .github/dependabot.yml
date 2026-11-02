@@ -1,7 +1,31 @@
 version: 2
 updates:
-  # Keeps the pinned GitHub Actions current. npm packages are upgraded deliberately, by hand.
+  # The pinned GitHub Actions, and the npm packages, which stay pinned to exact versions: every
+  # update is a pull request that CI checks and that is merged by hand. An update is proposed a
+  # week after its release, so a bad or hijacked version has time to be caught; security fixes
+  # come at once.
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
+    labels: [maintenance]
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    labels: [maintenance]
+    groups:
+      # Minor and patch updates in one pull request. Electron, Pi and Vite+ (whose packages move
+      # together) each come in their own, as does every major version.
+      minor-and-patch:
+        update-types: [minor, patch]
+        exclude-patterns: ["electron", "@earendil-works/*", "vite-plus", "@voidzero-dev/*"]
+      pi:
+        patterns: ["@earendil-works/*"]
+      vite-plus:
+        patterns: ["vite-plus", "@voidzero-dev/*"]
