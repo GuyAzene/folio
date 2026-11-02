@@ -285,6 +285,8 @@ describe("servers", { timeout: 20_000 }, () => {
     expect(listed.some((name) => name.startsWith("FOLIO_") || name.startsWith("ELECTRON"))).toBe(
       false,
     );
+    // The list is saved in the background once the server is ready, and closing waits for it.
+    await servers.close();
     const saved = JSON.parse(await readFile(resolve(home, "mcp/synthetic/tools.json"), "utf8"));
     expect(saved.map((tool: { name: string }) => tool.name)).toContain("nested");
   });

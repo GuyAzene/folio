@@ -90,6 +90,8 @@ export interface McpServersOptions {
 export class McpServers {
   readonly #options: McpServersOptions;
   readonly #live = new Map<string, Live>();
+  /** Lists of tools being saved: closing waits for them, so none is written after it. */
+  readonly #saving = new Set<Promise<void>>();
   #closed = false;
 
   constructor(options: McpServersOptions) {
@@ -353,14 +355,18 @@ export class McpServers {
     }
   }
 
-  async #saveTools(id: string, tools: Tool[]): Promise<void> {
-    try {
-      const folder = this.#folder(id);
-      await mkdir(folder, { recursive: true, mode: 0o700 });
-      await writeAtomic(resolve(folder, "tools.json"), JSON.stringify(tools));
-    } catch (error) {
-      console.error(`Folio could not keep ${id}'s list of tools:`, error);
-    }
+  #saveTools(id: string, tools: Tool[]): Promise<void> {
+    const saving = (async () => {
+      try {
+        const folder = this.#folder(id);
+        await mkdir(folder, { recursive: true, mode: 0o700 });
+        await writeAtomic(resolve(folder, "tools.json"), JSON.stringify(tools));
+      } catch (error) {
+        console.error(`Folio could not keep ${id}'s list of tools:`, error);
+      }
+    })().finally(() => this.#saving.delete(saving));
+    this.#saving.add(saving);
+    return saving;
   }
 
   async #stop(live: Live): Promise<void> {
@@ -414,7 +420,9 @@ export class McpServers {
   async close(deadlineMs = 3_000): Promise<void> {
     this.#closed = true;
     await Promise.race([
-      Promise.all([...this.#live.values()].map((live) => this.#stop(live))),
+      Promise.all([...this.#live.values()].map((live) => this.#stop(live))).then(() =>
+        Promise.allSettled(this.#saving),
+      ),
       new Promise((done) => setTimeout(done, deadlineMs)),
     ]);
   }
