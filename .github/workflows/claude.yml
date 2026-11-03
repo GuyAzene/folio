@@ -1,9 +1,10 @@
 name: Claude
 
 # Claude reviews each pull request from this repository's own branches when it opens or is marked
-# ready for review, and answers @claude in issues and pull requests. Only people with write access
-# start it (the action checks), so nobody else spends the owner's Claude plan, which it runs on
-# through CLAUDE_CODE_OAUTH_TOKEN. It reads and comments; it never pushes.
+# ready for review (not on every later push, to spare the plan), and answers @claude in issues and
+# pull requests. Only people with write access start it (the action checks), so nobody else
+# spends the owner's Claude plan, which it runs on through CLAUDE_CODE_OAUTH_TOKEN. Both jobs may
+# only read and comment; neither can push.
 on:
   pull_request:
     types: [opened, ready_for_review]
@@ -15,8 +16,9 @@ on:
 permissions:
   contents: read
 
+# Reviews and answers queue apart: a comment arriving while a review waits must not replace it.
 concurrency:
-  group: claude-${{ github.event.pull_request.number || github.event.issue.number }}
+  group: claude-${{ github.event_name == 'pull_request' && 'review' || 'answer' }}-${{ github.event.pull_request.number || github.event.issue.number }}
   cancel-in-progress: false
 
 jobs:
@@ -77,3 +79,7 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
+          # Reading the code and the thread, and its own reply; nothing that edits or runs code.
+          claude_args: |
+            --allowedTools "Read,Grep,Glob,Bash(gh issue view:*),Bash(gh pr view:*),Bash(gh pr diff:*)"
+            --disallowedTools "Edit,Write,MultiEdit,NotebookEdit"
