@@ -192,13 +192,14 @@ export class ReleaseCheck {
    * is stopped, and an answer that still arrives is dropped.
    */
   async setOn(on: boolean): Promise<ReleaseView> {
-    await this.#load();
+    // Stopped before anything is awaited, so a check that has not reached GitHub never does. A
+    // check asked for once it is on again starts afresh, not waiting on the stopped one.
     if (!on) {
       this.#asking?.abort();
-      // A check asked for once it is on again starts afresh, not waiting on the stopped one.
       this.#checking = undefined;
     }
     this.#failedAt = undefined;
+    await this.#load();
     await this.#keep((kept) => ({ ...kept, on }));
     return this.view();
   }
@@ -219,16 +220,19 @@ export class ReleaseCheck {
   }
 
   async #ask(): Promise<void> {
-    await this.#load();
-    if (!this.#source || !this.#kept.on) return;
-    const now = this.#now();
-    const recent = (time: number | undefined, span: number) =>
-      time !== undefined && now >= time && now - time < span;
-    if (recent(this.#kept.answer?.checkedAt, CHECK_EVERY_MS) || recent(this.#failedAt, RETRY_MS))
-      return;
+    // Made before anything is awaited, so turning the check off at any point stops this one; a
+    // stopped check changes nothing, neither the answer nor when Folio asks next.
     const asking = new AbortController();
     this.#asking = asking;
+    const stopped = () => asking.signal.aborted;
+    const now = this.#now();
     try {
+      await this.#load();
+      if (!this.#source || !this.#kept.on || stopped()) return;
+      const recent = (time: number | undefined, span: number) =>
+        time !== undefined && now >= time && now - time < span;
+      if (recent(this.#kept.answer?.checkedAt, CHECK_EVERY_MS) || recent(this.#failedAt, RETRY_MS))
+        return;
       const response = await this.#fetch(this.#source, {
         headers: {
           accept: "application/vnd.github+json",
@@ -250,13 +254,13 @@ export class ReleaseCheck {
       // Stopped by the student while GitHub answered: the answer is dropped, even if the check
       // was turned on again since.
       await this.#keep((kept) =>
-        kept.on && !asking.signal.aborted ? { ...kept, answer: { checkedAt: now, tag } } : kept,
+        kept.on && !stopped() ? { ...kept, answer: { checkedAt: now, tag } } : kept,
       );
-      this.#failedAt = undefined;
+      if (!stopped()) this.#failedAt = undefined;
     } catch {
       // Offline, refused or unreadable: the kept answer stays, and Folio asks again in an hour.
       // Stopped by the student, it is no failure: turned on again, Folio asks at once.
-      if (!asking.signal.aborted) this.#failedAt = now;
+      if (!stopped()) this.#failedAt = now;
     } finally {
       if (this.#asking === asking) this.#asking = undefined;
     }
