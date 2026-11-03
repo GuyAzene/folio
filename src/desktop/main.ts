@@ -175,8 +175,8 @@ function folioVersion(): string {
   return (JSON.parse(manifest) as { version: string }).version;
 }
 
-// Whether a newer Folio is out: GitHub's latest release, asked at most once a day and only when
-// the window asks, which it does while the student leaves the check on. FOLIO_RELEASES names
+// Whether a newer Folio is out: GitHub's latest release, asked at most once a day when the window
+// asks, never while the student has the check off (kept in release.json). FOLIO_RELEASES names
 // another source (tests), or "off".
 const releases = new ReleaseCheck({
   home,
@@ -1407,6 +1407,10 @@ const handlers: Record<InvokeMethod, (...args: unknown[]) => Promise<unknown>> =
   },
   release: () => releases.view(),
   checkRelease: () => releases.check(),
+  async setUpdateChecks(on) {
+    if (typeof on !== "boolean") throw new Error("Updates are either on or off.");
+    return releases.setOn(on);
+  },
   async registerArtifact(input) {
     const { source } = (input ?? {}) as Record<string, unknown>;
     if (typeof source !== "string" || !source.trim()) throw new Error("There is no demo to show.");

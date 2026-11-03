@@ -104,6 +104,7 @@ const api: FolioApi = {
   emptyTrash: () => call("emptyTrash"),
   release: () => call("release"),
   checkRelease: () => call("checkRelease"),
+  setUpdateChecks: (on) => call("setUpdateChecks", on),
   registerArtifact: (input) => call("registerArtifact", input),
   saveFile: (file) => call("saveFile", file),
   loadWorkspace: () => call("loadWorkspace"),

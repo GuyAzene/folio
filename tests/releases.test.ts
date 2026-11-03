@@ -113,6 +113,7 @@ describe("a newer release", () => {
     const check = new ReleaseCheck({ home, version: "0.1.0", fetch });
     expect(await check.check()).toEqual({
       version: "0.1.0",
+      on: true,
       newer: { version: "0.2.0", url: PAGE },
     });
     expect(requests).toHaveLength(1);
@@ -169,7 +170,11 @@ describe("a newer release", () => {
     }).check();
     const file = resolve(home, "release.json");
     expect((await stat(file)).mode & 0o777).toBe(0o600);
-    expect(JSON.parse(await readFile(file, "utf8"))).toMatchObject({ version: 1, tag: "v0.2.0" });
+    expect(JSON.parse(await readFile(file, "utf8"))).toMatchObject({
+      version: 1,
+      on: true,
+      answer: { tag: "v0.2.0" },
+    });
 
     const offline = github(() => {
       throw new Error("offline");
@@ -239,7 +244,9 @@ describe("a newer release", () => {
       expect(requests).toHaveLength(asked + 1);
       now -= RETRY_MS - 1;
     }
-    expect(JSON.parse(await readFile(resolve(home, "release.json"), "utf8")).tag).toBe("v0.2.0");
+    expect(JSON.parse(await readFile(resolve(home, "release.json"), "utf8")).answer.tag).toBe(
+      "v0.2.0",
+    );
 
     answer = () => release("v0.3.0");
     now += RETRY_MS;
@@ -260,7 +267,7 @@ describe("a newer release", () => {
     now += RETRY_MS;
     await check.check();
     expect(requests).toHaveLength(2);
-    expect(JSON.parse(await readFile(resolve(home, "release.json"), "utf8")).tag).toBeNull();
+    expect(JSON.parse(await readFile(resolve(home, "release.json"), "utf8")).answer.tag).toBeNull();
   });
 
   it("is asked for once when checked twice at the same time", async () => {
@@ -273,11 +280,14 @@ describe("a newer release", () => {
   });
 
   it("is read back only as Folio wrote it: an edited or broken file is no answer", async () => {
+    const now = Date.now();
     for (const contents of [
       "{not json",
-      JSON.stringify({ version: 2, checkedAt: Date.now(), tag: "v0.2.0" }),
-      JSON.stringify({ version: 1, checkedAt: Date.now(), tag: "javascript:alert(1)" }),
-      JSON.stringify({ version: 1, checkedAt: Date.now(), tag: 7 }),
+      JSON.stringify({ version: 2, on: true, answer: { checkedAt: now, tag: "v0.2.0" } }),
+      JSON.stringify({ version: 1, answer: { checkedAt: now, tag: "javascript:alert(1)" } }),
+      JSON.stringify({ version: 1, answer: { checkedAt: now, tag: 7 } }),
+      JSON.stringify({ version: 1, answer: { checkedAt: "today", tag: "v0.2.0" } }),
+      JSON.stringify({ version: 1, answer: "v0.2.0" }),
     ]) {
       const home = await makeHome();
       await writeFile(resolve(home, "release.json"), contents);
@@ -290,11 +300,70 @@ describe("a newer release", () => {
     }
   });
 
+  it("is never asked for once the student turns the check off, across restarts", async () => {
+    const home = await makeHome();
+    const { fetch, requests } = github(() => release("v0.2.0"));
+    const check = new ReleaseCheck({ home, version: "0.1.0", fetch });
+    await check.check();
+    expect(requests).toHaveLength(1);
+    expect(await check.setOn(false)).toEqual({ version: "0.1.0", on: false, newer: null });
+    const file = resolve(home, "release.json");
+    expect(JSON.parse(await readFile(file, "utf8"))).toMatchObject({ version: 1, on: false });
+    expect((await stat(file)).mode & 0o777).toBe(0o600);
+
+    // A day later, and after a restart, nothing is asked and nothing is shown.
+    let now = Date.now() + 2 * CHECK_EVERY_MS;
+    const later = new ReleaseCheck({ home, version: "0.1.0", fetch, now: () => now });
+    expect(await later.view()).toEqual({ version: "0.1.0", on: false, newer: null });
+    expect((await later.check()).newer).toBeNull();
+    expect(requests).toHaveLength(1);
+
+    // Turned on again, the answer kept from before shows at once, and a day-old one is renewed.
+    expect((await later.setOn(true)).newer?.version).toBe("0.2.0");
+    await later.check();
+    expect(requests).toHaveLength(2);
+    now += 1;
+    await later.check();
+    expect(requests).toHaveLength(2);
+  });
+
+  it("stops a check under way when turned off, and drops an answer that still arrives", async () => {
+    const home = await makeHome();
+    const signals: AbortSignal[] = [];
+    let answer: (response: Response) => void = () => undefined;
+    // This GitHub answers only when told to, even after the request was stopped.
+    const fetch = (async (_input: string, init?: RequestInit) => {
+      signals.push(init!.signal!);
+      return new Promise<Response>((done) => (answer = done));
+    }) as typeof globalThis.fetch;
+    const check = new ReleaseCheck({ home, version: "0.1.0", fetch });
+    const checking = check.check();
+    while (!signals.length) await new Promise((ready) => setTimeout(ready, 1));
+    await check.setOn(false);
+    expect(signals[0]!.aborted).toBe(true);
+    answer(release("v0.2.0"));
+    expect(await checking).toEqual({ version: "0.1.0", on: false, newer: null });
+    const kept = JSON.parse(await readFile(resolve(home, "release.json"), "utf8"));
+    expect(kept).toEqual({ version: 1, on: false, answer: null });
+  });
+
+  it("keeps the student's choice even when the answer beside it doesn't read", async () => {
+    const home = await makeHome();
+    await writeFile(
+      resolve(home, "release.json"),
+      JSON.stringify({ version: 1, on: false, answer: { checkedAt: "today", tag: 7 } }),
+    );
+    const { fetch, requests } = github(() => release("v0.2.0"));
+    const check = new ReleaseCheck({ home, version: "0.1.0", fetch });
+    expect(await check.check()).toEqual({ version: "0.1.0", on: false, newer: null });
+    expect(requests).toHaveLength(0);
+  });
+
   it("is never asked for when off, and only an https address or this Mac may replace GitHub", async () => {
     const home = await makeHome();
     const { fetch, requests } = github(() => release("v0.2.0"));
     const check = new ReleaseCheck({ home, version: "0.1.0", source: null, fetch });
-    expect(await check.check()).toEqual({ version: "0.1.0", newer: null });
+    expect(await check.check()).toEqual({ version: "0.1.0", on: true, newer: null });
     expect(requests).toHaveLength(0);
     expect(releaseSource(undefined)).toBe(LATEST_RELEASE);
     expect(releaseSource("")).toBe(LATEST_RELEASE);

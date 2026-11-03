@@ -722,7 +722,9 @@ export interface ModelsView {
 /** This Folio's version, and GitHub's latest release when it is newer. */
 export interface ReleaseView {
   version: string;
-  /** The release's page opens in the browser; Folio never downloads it. */
+  /** Whether Folio asks GitHub; off only when the student turns it off. */
+  on: boolean;
+  /** None while the check is off. The release's page opens in the browser; Folio never downloads it. */
   newer: { version: string; url: string } | null;
 }
 
@@ -949,8 +951,10 @@ export interface FolioApi {
   emptyTrash(): Promise<void>;
   /** This Folio's version and the newer release last found; never asks GitHub. */
   release(): Promise<ReleaseView>;
-  /** Asks GitHub for the latest release when the last answer is a day old; never throws. */
+  /** Asks GitHub for the latest release when the check is on and the last answer is a day old; never throws. */
   checkRelease(): Promise<ReleaseView>;
+  /** Turns the check on or off, in Folio's home; off stops a check under way. */
+  setUpdateChecks(on: boolean): Promise<ReleaseView>;
   /** Hands a demo to the main process and returns the address its sealed frame loads. */
   registerArtifact(input: { source: string }): Promise<{ url: string }>;
   /** Saves a file the student made (a diagram as SVG) where they choose; false if they cancel. */

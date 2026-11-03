@@ -155,8 +155,8 @@ async function home(page: Page, theme: "light" | "dark"): Promise<void> {
   await page.evaluate((theme) => {
     localStorage.clear();
     localStorage.setItem("folio.theme", theme);
-    // The preview is a release behind; the README's pictures show Folio up to date.
-    localStorage.setItem("folio.updates", "0");
+    // The preview is a release behind, at 0.2.0; the README's pictures show Folio up to date.
+    localStorage.setItem("folio.dismissedRelease", "0.2.0");
   }, theme);
   await page.reload();
   await page.getByPlaceholder("Ask about any of your courses").waitFor();
