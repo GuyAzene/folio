@@ -1,0 +1,54 @@
+name: Claude review
+
+# Claude reviews each pull request from this repository's own branches when it opens or is marked
+# ready for review (not on every later push, to spare the plan). It runs on the owner's Claude
+# plan through CLAUDE_CODE_OAUTH_TOKEN, and may only read and comment; it cannot push. Answering
+# @claude is claude.yml, kept apart so that only a review shows among a pull request's checks.
+on:
+  pull_request:
+    types: [opened, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  review:
+    name: Review
+    if: >-
+      !github.event.pull_request.draft &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.user.login != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: anthropics/claude-code-action@4845bacbb38b3c4b15d948f035349786f678e068 # v1.0.267
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+
+            Review this pull request as Folio's maintainer would, against AGENTS.md and
+            docs/architecture.md: correctness, the hard cases AGENTS.md names (cancellation,
+            restart and resume, duplicate delivery, edit conflicts, scope boundaries), course
+            scope enforced in code rather than in prompts, and tests for what changed. Leave out
+            formatting and lint, which `vp check` enforces.
+
+            The pull request's branch is checked out. Post one top-level comment with
+            `gh pr comment`, and inline comments with
+            `mcp__github_inline_comment__create_inline_comment` (confirmed: true) for specific
+            lines. Only post GitHub comments. If nothing is worth changing, say so in one line.
+          claude_args: |
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
