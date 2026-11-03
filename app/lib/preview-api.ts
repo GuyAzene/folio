@@ -1770,10 +1770,16 @@ function take<T>(list: T[], match: (item: T) => boolean): T[] {
 // ── Connections and models: ChatGPT and an OpenRouter key, synthetic ─────
 
 /** The preview's Folio is a release behind, so the sidebar's line and Settings show one. */
-const PREVIEW_RELEASE: ReleaseView = {
-  version: "0.1.0",
-  newer: { version: "0.2.0", url: "https://github.com/GuyAzene/folio/releases/latest" },
-};
+let previewUpdates = true;
+function previewRelease(): ReleaseView {
+  return {
+    version: "0.1.0",
+    on: previewUpdates,
+    newer: previewUpdates
+      ? { version: "0.2.0", url: "https://github.com/GuyAzene/folio/releases/latest" }
+      : null,
+  };
+}
 
 const previewConnected = new Set(["chatgpt", "openrouter"]);
 const previewRoles: ModelsView["roles"] = {
@@ -3035,10 +3041,14 @@ export const previewApi: FolioApi = {
   },
   // Demos run only in Folio's window; the preview shows a card instead.
   async release() {
-    return structuredClone(PREVIEW_RELEASE);
+    return previewRelease();
   },
   async checkRelease() {
-    return structuredClone(PREVIEW_RELEASE);
+    return previewRelease();
+  },
+  async setUpdateChecks(on) {
+    previewUpdates = on;
+    return previewRelease();
   },
   async registerArtifact() {
     return { url: "" };

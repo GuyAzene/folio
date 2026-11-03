@@ -111,6 +111,8 @@ void describe("a newer Folio", () => {
     assert.equal(github.requests.length, 1);
     assert.equal(await third.page.getByText(`Folio ${next} is out`).count(), 0);
     const file = JSON.parse(await readFile(resolve(seeded.home, "release.json"), "utf8"));
-    assert.equal(file.tag, `v${next}`);
+    // The choice is kept by the main process, beside what was found.
+    assert.equal(file.on, false);
+    assert.equal(file.answer.tag, `v${next}`);
   });
 });

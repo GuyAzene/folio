@@ -184,7 +184,7 @@
                     >{folio.release ? `Folio ${folio.release.version}. ` : ""}Checks
                     GitHub once a day for a newer release; nothing about you is sent.</span
                   >
-                  {#if folio.updates && folio.release?.newer}
+                  {#if folio.release?.newer}
                     {@const newer = folio.release.newer}
                     <a
                       href={newer.url}
@@ -204,7 +204,7 @@
                   type="single"
                   value={folio.updates ? "on" : "off"}
                   onValueChange={(value) =>
-                    value && folio.setUpdates(value === "on")}
+                    value && void folio.setUpdates(value === "on")}
                   aria-label="Check for updates"
                   class="flex shrink-0 rounded-lg border border-line-subtle bg-bg p-0.5"
                 >

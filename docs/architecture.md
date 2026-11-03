@@ -500,7 +500,7 @@ Everything lives in `~/.folio/` (or `FOLIO_HOME`), with directories `0700` and f
 | `keys.json` | API keys, each checked with its provider before it was kept |
 | `config.json` | Which model does what, the OpenRouter models the composer offers, the student's categories and naming patterns, and which routines are on; never a key |
 | `catalog/openrouter.json` | Pi's live list of OpenRouter's models, as last checked, with its ETag |
-| `release.json` | GitHub's latest release of Folio, as last checked |
+| `release.json` | Whether Folio checks for a newer release, and GitHub's latest release as last checked |
 | `skills/<name>/SKILL.md` | The student's own routines |
 | `mcp.json` | The student's MCP servers, with their settings and headers, and which tools run without asking |
 | `mcp/<name>/` | Each local server's working folder, and its last list of tools |
@@ -556,10 +556,12 @@ on a Mac much faster than GitHub's virtual ones.
 A quit signal (SIGTERM, as the installer sends) quits Folio as ⌘Q does: chats settle first.
 
 Without a Developer ID Folio cannot update itself, so it says when a newer release is out
-(`src/releases.ts`). While **Updates** is on in Settings → General, the window asks the main
-process a moment after it opens and then every hour; the main process asks GitHub's public API
-for the repository's latest release only when its last answer, kept in `release.json`, is a day
-old, or an hour after a check that failed. The request has no account and carries nothing about
+(`src/releases.ts`). The window asks the main process a moment after it opens and then every
+hour; the main process asks GitHub's public API for the repository's latest release only while
+**Updates** is on in Settings → General and its last answer is a day old, or an hour after a
+check that failed. The switch and the answer are kept together in `release.json`, so the choice
+is the main process's, not the window's: turned off, a request under way is stopped and an
+answer that still arrives is dropped. The request has no account and carries nothing about
 the student. The answer's tag must be a semantic version, and is compared with the app's own,
 from `package.json` (a packaged app reports it; a run from the checkout reads the file). The
 sidebar's line links to the release's page on GitHub, built from the tag, and opens in the

@@ -82,13 +82,13 @@ export function releaseSource(value: string | undefined): string | null {
   return value;
 }
 
-/** The answer as kept on disk. */
+/** What is kept on disk: the student's switch and GitHub's last answer. */
 interface Kept {
   version: 1;
-  /** When GitHub last answered. */
-  checkedAt: number;
-  /** The latest release's tag; null when the repository has no release. */
-  tag: string | null;
+  /** Off only when the student turns the check off in Settings. */
+  on: boolean;
+  /** When GitHub last answered, and the latest release's tag: null when there is none. */
+  answer: { checkedAt: number; tag: string | null } | null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -113,9 +113,12 @@ export class ReleaseCheck {
   readonly #fetch: typeof fetch;
   readonly #now: () => number;
   #loaded: Promise<void> | undefined;
-  #kept: Kept | undefined;
+  #kept: Kept = { version: 1, on: true, answer: null };
+  #writing: Promise<void> = Promise.resolve();
   #failedAt: number | undefined;
   #checking: Promise<void> | undefined;
+  /** Stops the request under way, when the student turns the check off. */
+  #asking: AbortController | undefined;
 
   constructor(options: {
     home: string;
@@ -134,29 +137,48 @@ export class ReleaseCheck {
     this.#now = options.now ?? Date.now;
   }
 
-  /** Reads the kept answer once; one that is missing or unreadable is none. */
+  /**
+   * Reads what was kept once. A missing or unreadable file is the default: on, never asked. The
+   * student's switch holds even when the answer beside it does not read; that answer is none.
+   */
   #load(): Promise<void> {
     this.#loaded ??= (async () => {
+      let raw: unknown;
       try {
-        const raw: unknown = JSON.parse(await readFile(this.#file, "utf8"));
-        if (!isRecord(raw) || raw.version !== 1 || (raw.tag !== null && !isTag(raw.tag))) return;
-        const checkedAt = Number.isFinite(raw.checkedAt) ? (raw.checkedAt as number) : 0;
-        this.#kept = { version: 1, checkedAt, tag: raw.tag };
+        raw = JSON.parse(await readFile(this.#file, "utf8"));
       } catch {
-        // Never checked, or the file was edited into something else: Folio asks again.
+        return;
       }
+      if (!isRecord(raw) || raw.version !== 1) return;
+      const answer = raw.answer;
+      const usable =
+        isRecord(answer) &&
+        Number.isFinite(answer.checkedAt) &&
+        (answer.tag === null || isTag(answer.tag));
+      this.#kept = {
+        version: 1,
+        on: raw.on !== false,
+        answer: usable
+          ? { checkedAt: answer.checkedAt as number, tag: answer.tag as string | null }
+          : null,
+      };
     })();
     return this.#loaded;
   }
 
-  /** This Folio's version, and the kept latest release when it is newer. Never asks GitHub. */
+  /**
+   * This Folio's version, whether the check is on, and the kept latest release when it is newer
+   * and the check is on. Never asks GitHub.
+   */
   async view(): Promise<ReleaseView> {
     await this.#load();
-    const tag = this.#kept?.tag;
+    const { on, answer } = this.#kept;
+    const tag = on ? answer?.tag : null;
     const latest = tag ? parseVersion(tag) : null;
     const newer = !!latest && !!this.#current && compareVersions(latest, this.#current) > 0;
     return {
       version: this.#version,
+      on,
       newer:
         newer && tag
           ? { version: tag.replace(/^v/, ""), url: RELEASE_PAGE + encodeURIComponent(tag) }
@@ -165,8 +187,20 @@ export class ReleaseCheck {
   }
 
   /**
-   * Asks GitHub when the kept answer is a day old, an hour after a check that failed, then
-   * returns the view. It never throws: offline or refused, the kept answer stays.
+   * Turns the check on or off, kept in Folio's home. Off, nothing is asked: a request under way
+   * is stopped, and an answer that still arrives is dropped.
+   */
+  async setOn(on: boolean): Promise<ReleaseView> {
+    await this.#load();
+    if (!on) this.#asking?.abort();
+    this.#failedAt = undefined;
+    await this.#keep((kept) => ({ ...kept, on }));
+    return this.view();
+  }
+
+  /**
+   * Asks GitHub when the check is on and the kept answer is a day old, or an hour after a check
+   * that failed, then returns the view. It never throws: offline or refused, the kept answer stays.
    */
   async check(): Promise<ReleaseView> {
     this.#checking ??= this.#ask().finally(() => {
@@ -178,11 +212,14 @@ export class ReleaseCheck {
 
   async #ask(): Promise<void> {
     await this.#load();
-    if (!this.#source) return;
+    if (!this.#source || !this.#kept.on) return;
     const now = this.#now();
     const recent = (time: number | undefined, span: number) =>
       time !== undefined && now >= time && now - time < span;
-    if (recent(this.#kept?.checkedAt, CHECK_EVERY_MS) || recent(this.#failedAt, RETRY_MS)) return;
+    if (recent(this.#kept.answer?.checkedAt, CHECK_EVERY_MS) || recent(this.#failedAt, RETRY_MS))
+      return;
+    const asking = new AbortController();
+    this.#asking = asking;
     try {
       const response = await this.#fetch(this.#source, {
         headers: {
@@ -190,30 +227,38 @@ export class ReleaseCheck {
           "x-github-api-version": "2022-11-28",
           "user-agent": "Folio",
         },
-        signal: AbortSignal.timeout(TIMEOUT_MS),
+        signal: AbortSignal.any([asking.signal, AbortSignal.timeout(TIMEOUT_MS)]),
       });
-      // No published release yet.
-      if (response.status === 404) {
-        await response.body?.cancel();
-        await this.#keep({ version: 1, checkedAt: now, tag: null });
-        return;
-      }
-      if (!response.ok) {
+      let tag: string | null = null;
+      // A 404 is an answer: no published release yet.
+      if (response.status === 404) await response.body?.cancel();
+      else if (!response.ok) {
         await response.body?.cancel();
         throw new Error(`GitHub answered ${response.status}.`);
+      } else {
+        tag = releaseTag(JSON.parse(await capped(response, MAX_BYTES)));
+        if (!tag) throw new Error("GitHub's answer names no release.");
       }
-      const tag = releaseTag(JSON.parse(await capped(response, MAX_BYTES)));
-      if (!tag) throw new Error("GitHub's answer names no release.");
-      await this.#keep({ version: 1, checkedAt: now, tag });
+      // Turned off while GitHub answered: the answer is dropped.
+      await this.#keep((kept) => (kept.on ? { ...kept, answer: { checkedAt: now, tag } } : kept));
       this.#failedAt = undefined;
     } catch {
       // Offline, refused or unreadable: the kept answer stays, and Folio asks again in an hour.
       this.#failedAt = now;
+    } finally {
+      if (this.#asking === asking) this.#asking = undefined;
     }
   }
 
-  async #keep(kept: Kept): Promise<void> {
-    await writeAtomic(this.#file, `${JSON.stringify(kept)}\n`);
-    this.#kept = kept;
+  /** Writes one change at a time, each to what the last one kept, so a late answer never undoes Off. */
+  #keep(change: (kept: Kept) => Kept): Promise<void> {
+    const written = this.#writing.then(async () => {
+      const kept = change(this.#kept);
+      if (kept === this.#kept) return;
+      await writeAtomic(this.#file, `${JSON.stringify(kept)}\n`);
+      this.#kept = kept;
+    });
+    this.#writing = written.catch(() => undefined);
+    return written;
   }
 }

@@ -144,9 +144,7 @@ class FolioState {
   fast = $state(false);
   /** The tutor may search the web; off only when the student turns it off in Settings. */
   webSearch = $state(true);
-  /** Folio asks GitHub once a day whether a newer release is out; off only when turned off. */
-  updates = $state(true);
-  /** This Folio's version, and a newer release when one was found. */
+  /** This Folio's version, whether it checks for a newer release, and one when it was found. */
   release = $state<ReleaseView | null>(null);
   /** The release whose line the student closed in the sidebar; a newer one shows again. */
   dismissedRelease = $state<string | null>(null);
@@ -337,7 +335,6 @@ class FolioState {
       this.thinking = this.#savedThinking() ?? DEFAULT_THINKING;
       this.fast = this.#savedFast();
       this.webSearch = this.#savedFlag("folio.webSearch") ?? true;
-      this.updates = this.#savedFlag("folio.updates") ?? true;
       this.dismissedRelease = this.#savedDismissal();
       this.chats = boot.chats;
       this.unavailableChats = boot.unavailableChats;
@@ -356,8 +353,8 @@ class FolioState {
   }
 
   /**
-   * Shows the release last found at once, then asks a moment after start and every hour while
-   * the check is on; the main process asks GitHub only when its answer is a day old.
+   * Shows the release last found at once, then asks a moment after start and every hour; the
+   * main process asks GitHub only while the check is on and its answer is a day old.
    */
   async #watchReleases(): Promise<void> {
     try {
@@ -370,7 +367,6 @@ class FolioState {
   }
 
   async checkRelease(): Promise<void> {
-    if (!this.updates) return;
     try {
       this.release = await this.#api!.checkRelease();
     } catch {
@@ -378,9 +374,14 @@ class FolioState {
     }
   }
 
+  /** Folio asks GitHub once a day whether a newer release is out; off only when turned off. */
+  get updates(): boolean {
+    return this.release?.on !== false;
+  }
+
   /** The newer release the sidebar mentions: none while the check is off or its line is closed. */
   get announcedRelease(): ReleaseView["newer"] {
-    const newer = this.updates ? this.release?.newer : null;
+    const newer = this.release?.newer;
     return newer && newer.version !== this.dismissedRelease ? newer : null;
   }
 
@@ -1823,14 +1824,15 @@ class FolioState {
     }
   }
 
-  setUpdates(on: boolean): void {
-    this.updates = on;
+  /** Kept by the main process, which asks nothing while it is off. */
+  async setUpdates(on: boolean): Promise<void> {
     try {
-      localStorage.setItem("folio.updates", on ? "1" : "0");
-    } catch {
-      // A per-device convenience; Folio checks until it is set again.
+      this.release = await this.#api!.setUpdateChecks(on);
+    } catch (error) {
+      this.error = message(error);
+      return;
     }
-    if (on) void this.checkRelease();
+    if (on) await this.checkRelease();
   }
 
   dismissRelease(version: string): void {
