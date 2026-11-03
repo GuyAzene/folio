@@ -10,6 +10,7 @@
 
 <p align="center">
   <a href="https://github.com/GuyAzene/folio/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/GuyAzene/folio/ci.yml?branch=main&label=CI&labelColor=1f2328"></a>
+  <a href="https://github.com/GuyAzene/folio/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/GuyAzene/folio?label=release&color=ffe433&labelColor=1f2328"></a>
   <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-ffe433?labelColor=1f2328"></a>
   <img alt="macOS on Apple silicon" src="https://img.shields.io/badge/macOS-Apple%20silicon-ffe433?labelColor=1f2328">
 </p>
@@ -100,10 +101,15 @@ lectures into notes you can browse, and it never changes your files.
 
 ## Try Folio
 
-Download **[Folio-arm64.dmg](https://github.com/GuyAzene/folio/releases/download/nightly/Folio-arm64.dmg)**
-from the [nightly build](https://github.com/GuyAzene/folio/releases/tag/nightly), open it and
-drag Folio to Applications. It needs a Mac with Apple silicon and a ChatGPT plan or an API key,
-and is rebuilt after every change, so the link always gives the newest Folio.
+Download the disk image from the **[latest release](https://github.com/GuyAzene/folio/releases/latest)**,
+open it and drag Folio to Applications. It needs a Mac with Apple silicon and a ChatGPT plan or an
+API key. Each release lists what changed and how to check that the download is the one this
+repository built.
+
+For the newest Folio between releases, the
+[nightly build](https://github.com/GuyAzene/folio/releases/tag/nightly) is rebuilt after every
+change to `main`:
+**[Folio-arm64.dmg](https://github.com/GuyAzene/folio/releases/download/nightly/Folio-arm64.dmg)**.
 
 Folio is not signed with an Apple Developer ID, so the first time you open it macOS says it could
 not verify it. Open **System Settings → Privacy & Security**, scroll down to the line about Folio
