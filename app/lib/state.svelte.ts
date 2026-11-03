@@ -34,6 +34,7 @@ import type {
   ProposalAction,
   PendingView,
   ProposalView,
+  ReleaseView,
   StudyNotesView,
   Thinking,
   TrashEntryView,
@@ -143,6 +144,12 @@ class FolioState {
   fast = $state(false);
   /** The tutor may search the web; off only when the student turns it off in Settings. */
   webSearch = $state(true);
+  /** Folio asks GitHub once a day whether a newer release is out; off only when turned off. */
+  updates = $state(true);
+  /** This Folio's version, and a newer release when one was found. */
+  release = $state<ReleaseView | null>(null);
+  /** The release whose line the student closed in the sidebar; a newer one shows again. */
+  dismissedRelease = $state<string | null>(null);
   error = $state<string | null>(null);
   notice = $state<string | null>(null);
   /** A button on the notice, such as Undo after moving something to the Trash. */
@@ -330,6 +337,8 @@ class FolioState {
       this.thinking = this.#savedThinking() ?? DEFAULT_THINKING;
       this.fast = this.#savedFast();
       this.webSearch = this.#savedFlag("folio.webSearch") ?? true;
+      this.updates = this.#savedFlag("folio.updates") ?? true;
+      this.dismissedRelease = this.#savedDismissal();
       this.chats = boot.chats;
       this.unavailableChats = boot.unavailableChats;
       await this.refreshLibrary();
@@ -339,10 +348,40 @@ class FolioState {
       void this.refreshMcp();
       this.approvals = await api.listApprovals();
       await this.#restoreWorkspace();
+      void this.#watchReleases();
     } catch (error) {
       this.error = message(error);
     }
     this.ready = true;
+  }
+
+  /**
+   * Shows the release last found at once, then asks a moment after start and every hour while
+   * the check is on; the main process asks GitHub only when its answer is a day old.
+   */
+  async #watchReleases(): Promise<void> {
+    try {
+      this.release = await this.#api!.release();
+    } catch {
+      // Without its version, Settings leaves the line out; the check below may still find it.
+    }
+    setTimeout(() => void this.checkRelease(), 2_000);
+    setInterval(() => void this.checkRelease(), 3_600_000);
+  }
+
+  async checkRelease(): Promise<void> {
+    if (!this.updates) return;
+    try {
+      this.release = await this.#api!.checkRelease();
+    } catch {
+      // The main process answers even offline; the next check is an hour away.
+    }
+  }
+
+  /** The newer release the sidebar mentions: none while the check is off or its line is closed. */
+  get announcedRelease(): ReleaseView["newer"] {
+    const newer = this.updates ? this.release?.newer : null;
+    return newer && newer.version !== this.dismissedRelease ? newer : null;
   }
 
   // ── Lookups ─────────────────────────────────────────────────────────────
@@ -1781,6 +1820,33 @@ class FolioState {
       localStorage.setItem("folio.webSearch", on ? "1" : "0");
     } catch {
       // A per-device convenience; the tutor may search until it is set again.
+    }
+  }
+
+  setUpdates(on: boolean): void {
+    this.updates = on;
+    try {
+      localStorage.setItem("folio.updates", on ? "1" : "0");
+    } catch {
+      // A per-device convenience; Folio checks until it is set again.
+    }
+    if (on) void this.checkRelease();
+  }
+
+  dismissRelease(version: string): void {
+    this.dismissedRelease = version;
+    try {
+      localStorage.setItem("folio.dismissedRelease", version);
+    } catch {
+      // A per-device convenience; the line comes back on the next start.
+    }
+  }
+
+  #savedDismissal(): string | null {
+    try {
+      return localStorage.getItem("folio.dismissedRelease");
+    } catch {
+      return null;
     }
   }
 

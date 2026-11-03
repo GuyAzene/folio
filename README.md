@@ -113,7 +113,8 @@ change to `main`:
 
 Folio is not signed with an Apple Developer ID, so the first time you open it macOS says it could
 not verify it. Open **System Settings → Privacy & Security**, scroll down to the line about Folio
-and choose **Open Anyway**. A newer download may ask again.
+and choose **Open Anyway**. A newer download may ask again. For the same reason Folio can't update itself:
+when a newer release is out, a line in the sidebar links to its page.
 
 ## Getting started
 
@@ -193,7 +194,9 @@ open tabs. Only what a question needs goes to the service its model runs on: you
 pages and images the tutor reads, and what you added. Signing out, or removing a key, removes it
 and keeps everything else. API keys stay in `keys.json`, apart from `config.json`, which never
 holds one. MCP servers you connect get only what the tutor writes into a call, which you see
-before you allow it; their settings and keys stay in `mcp.json`. See [docs/architecture.md](docs/architecture.md#on-disk) for the layout.
+before you allow it; their settings and keys stay in `mcp.json`. Once a day Folio asks GitHub
+whether a newer release is out; the request carries nothing about you, Folio only links to the
+release and never downloads it, and **Settings → General** turns it off. See [docs/architecture.md](docs/architecture.md#on-disk) for the layout.
 
 ## Roadmap
 

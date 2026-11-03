@@ -163,10 +163,10 @@ export function liveSource(value: string | undefined): string | null {
 }
 
 /** A response's body as text, refused once it is larger than `max` bytes. */
-async function capped(response: Response, max: number): Promise<string> {
+export async function capped(response: Response, max: number): Promise<string> {
   if (Number(response.headers.get("content-length")) > max) {
     await response.body?.cancel();
-    throw new Error("The model list is too large.");
+    throw new Error("The answer is too large.");
   }
   const reader = response.body?.getReader();
   if (!reader) return "";
@@ -178,7 +178,7 @@ async function capped(response: Response, max: number): Promise<string> {
     size += value.byteLength;
     if (size > max) {
       await reader.cancel();
-      throw new Error("The model list is too large.");
+      throw new Error("The answer is too large.");
     }
     chunks.push(value);
   }
