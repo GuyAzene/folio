@@ -202,7 +202,7 @@
                 </div>
                 <ToggleGroup.Root
                   type="single"
-                  value={folio.updates ? "on" : "off"}
+                  value={folio.release ? (folio.release.on ? "on" : "off") : ""}
                   onValueChange={(value) =>
                     value && void folio.setUpdates(value === "on")}
                   aria-label="Check for updates"

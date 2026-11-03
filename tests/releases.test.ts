@@ -347,6 +347,51 @@ describe("a newer release", () => {
     expect(kept).toEqual({ version: 1, on: false, answer: null });
   });
 
+  it("asks afresh when turned off and on again during a check, dropping the stopped one's answer", async () => {
+    const home = await makeHome();
+    const asked: { signal: AbortSignal; answer: (response: Response) => void }[] = [];
+    // Each request waits to be answered, even after it was stopped.
+    const fetch = (async (_input: string, init?: RequestInit) =>
+      new Promise<Response>((answer) =>
+        asked.push({ signal: init!.signal!, answer }),
+      )) as typeof globalThis.fetch;
+    const check = new ReleaseCheck({ home, version: "0.1.0", fetch });
+    const first = check.check();
+    while (asked.length < 1) await new Promise((ready) => setTimeout(ready, 1));
+    await check.setOn(false);
+    await check.setOn(true);
+    const second = check.check();
+    while (asked.length < 2) await new Promise((ready) => setTimeout(ready, 1));
+    expect(asked[0]!.signal.aborted).toBe(true);
+    expect(asked[1]!.signal.aborted).toBe(false);
+    asked[0]!.answer(release("v0.2.0"));
+    asked[1]!.answer(release("v0.3.0"));
+    await first;
+    expect((await second).newer?.version).toBe("0.3.0");
+    const kept = JSON.parse(await readFile(resolve(home, "release.json"), "utf8"));
+    expect(kept).toMatchObject({ on: true, answer: { tag: "v0.3.0" } });
+  });
+
+  it("reads a file in the shape written before the switch was kept there as no answer, on", async () => {
+    const home = await makeHome();
+    await writeFile(
+      resolve(home, "release.json"),
+      JSON.stringify({ version: 1, checkedAt: Date.now(), tag: "v0.2.0" }),
+    );
+    const { fetch, requests } = github(() => release("v0.2.0"));
+    const check = new ReleaseCheck({ home, version: "0.1.0", fetch });
+    expect(await check.view()).toEqual({ version: "0.1.0", on: true, newer: null });
+    // Folio asks once, and keeps the answer in today's shape.
+    expect((await check.check()).newer?.version).toBe("0.2.0");
+    await check.check();
+    expect(requests).toHaveLength(1);
+    expect(JSON.parse(await readFile(resolve(home, "release.json"), "utf8"))).toMatchObject({
+      version: 1,
+      on: true,
+      answer: { tag: "v0.2.0" },
+    });
+  });
+
   it("keeps the student's choice even when the answer beside it doesn't read", async () => {
     const home = await makeHome();
     await writeFile(

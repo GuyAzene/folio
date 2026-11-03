@@ -139,7 +139,8 @@ export class ReleaseCheck {
 
   /**
    * Reads what was kept once. A missing or unreadable file is the default: on, never asked. The
-   * student's switch holds even when the answer beside it does not read; that answer is none.
+   * student's switch holds even when the answer beside it does not read; that answer is none, as
+   * is one in the shape written before the switch was kept here (a nightly's), so Folio asks again.
    */
   #load(): Promise<void> {
     this.#loaded ??= (async () => {
@@ -192,7 +193,11 @@ export class ReleaseCheck {
    */
   async setOn(on: boolean): Promise<ReleaseView> {
     await this.#load();
-    if (!on) this.#asking?.abort();
+    if (!on) {
+      this.#asking?.abort();
+      // A check asked for once it is on again starts afresh, not waiting on the stopped one.
+      this.#checking = undefined;
+    }
     this.#failedAt = undefined;
     await this.#keep((kept) => ({ ...kept, on }));
     return this.view();
@@ -203,9 +208,12 @@ export class ReleaseCheck {
    * that failed, then returns the view. It never throws: offline or refused, the kept answer stays.
    */
   async check(): Promise<ReleaseView> {
-    this.#checking ??= this.#ask().finally(() => {
-      this.#checking = undefined;
-    });
+    if (!this.#checking) {
+      const checking = this.#ask().finally(() => {
+        if (this.#checking === checking) this.#checking = undefined;
+      });
+      this.#checking = checking;
+    }
     await this.#checking;
     return this.view();
   }
@@ -239,12 +247,16 @@ export class ReleaseCheck {
         tag = releaseTag(JSON.parse(await capped(response, MAX_BYTES)));
         if (!tag) throw new Error("GitHub's answer names no release.");
       }
-      // Turned off while GitHub answered: the answer is dropped.
-      await this.#keep((kept) => (kept.on ? { ...kept, answer: { checkedAt: now, tag } } : kept));
+      // Stopped by the student while GitHub answered: the answer is dropped, even if the check
+      // was turned on again since.
+      await this.#keep((kept) =>
+        kept.on && !asking.signal.aborted ? { ...kept, answer: { checkedAt: now, tag } } : kept,
+      );
       this.#failedAt = undefined;
     } catch {
       // Offline, refused or unreadable: the kept answer stays, and Folio asks again in an hour.
-      this.#failedAt = now;
+      // Stopped by the student, it is no failure: turned on again, Folio asks at once.
+      if (!asking.signal.aborted) this.#failedAt = now;
     } finally {
       if (this.#asking === asking) this.#asking = undefined;
     }

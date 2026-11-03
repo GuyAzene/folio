@@ -374,11 +374,6 @@ class FolioState {
     }
   }
 
-  /** Folio asks GitHub once a day whether a newer release is out; off only when turned off. */
-  get updates(): boolean {
-    return this.release?.on !== false;
-  }
-
   /** The newer release the sidebar mentions: none while the check is off or its line is closed. */
   get announcedRelease(): ReleaseView["newer"] {
     const newer = this.release?.newer;
