@@ -17,6 +17,7 @@ import type {
   NoteView,
   PageCoverageView,
   ProposalView,
+  ReleaseView,
   SendInput,
   ApprovalDecision,
   ApprovalView,
@@ -1768,6 +1769,12 @@ function take<T>(list: T[], match: (item: T) => boolean): T[] {
 
 // ── Connections and models: ChatGPT and an OpenRouter key, synthetic ─────
 
+/** The preview's Folio is a release behind, so the sidebar's line and Settings show one. */
+const PREVIEW_RELEASE: ReleaseView = {
+  version: "0.1.0",
+  newer: { version: "0.2.0", url: "https://github.com/GuyAzene/folio/releases/latest" },
+};
+
 const previewConnected = new Set(["chatgpt", "openrouter"]);
 const previewRoles: ModelsView["roles"] = {
   teaching: "chatgpt/gpt-6.1-sol",
@@ -3027,6 +3034,12 @@ export const previewApi: FolioApi = {
     return false;
   },
   // Demos run only in Folio's window; the preview shows a card instead.
+  async release() {
+    return structuredClone(PREVIEW_RELEASE);
+  },
+  async checkRelease() {
+    return structuredClone(PREVIEW_RELEASE);
+  },
   async registerArtifact() {
     return { url: "" };
   },

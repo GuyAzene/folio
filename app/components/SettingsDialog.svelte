@@ -1,5 +1,14 @@
 <script lang="ts">
-  import { Cpu, KeyRound, Plug, ScrollText, SlidersHorizontal, Tags, X } from "@lucide/svelte";
+  import {
+    ArrowUpRight,
+    Cpu,
+    KeyRound,
+    Plug,
+    ScrollText,
+    SlidersHorizontal,
+    Tags,
+    X,
+  } from "@lucide/svelte";
   import { Dialog, ToggleGroup } from "bits-ui";
   import {
     folio,
@@ -152,7 +161,7 @@
 
               <div class="h-px bg-line-subtle"></div>
 
-              <section class="flex items-center justify-between gap-4 pt-4">
+              <section class="flex items-center justify-between gap-4 py-4">
                 <div class="flex flex-col gap-0.5">
                   <span class="font-medium">New chats use</span>
                   <span class="text-[12px] text-text-3"
@@ -164,6 +173,47 @@
                   onclick={() => (folio.settingsSection = "models")}
                   >{folio.modelName(folio.modelChoice)}</button
                 >
+              </section>
+
+              <div class="h-px bg-line-subtle"></div>
+
+              <section class="flex items-center justify-between gap-4 pt-4">
+                <div class="flex min-w-0 flex-col gap-0.5">
+                  <span class="font-medium">Updates</span>
+                  <span class="text-[12px] text-text-3"
+                    >{folio.release ? `Folio ${folio.release.version}. ` : ""}Checks
+                    GitHub once a day for a newer release; nothing about you is sent.</span
+                  >
+                  {#if folio.updates && folio.release?.newer}
+                    {@const newer = folio.release.newer}
+                    <a
+                      href={newer.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      class="mt-1 flex w-fit items-center gap-2 text-[12px] font-medium text-text no-underline hover:underline"
+                    >
+                      <span
+                        class="size-1.5 shrink-0 rounded-full bg-highlight ring-2 ring-highlight/30"
+                      ></span>
+                      Folio {newer.version} is out. See what's new
+                      <ArrowUpRight size={12} strokeWidth={2} class="text-text-3" />
+                    </a>
+                  {/if}
+                </div>
+                <ToggleGroup.Root
+                  type="single"
+                  value={folio.updates ? "on" : "off"}
+                  onValueChange={(value) =>
+                    value && folio.setUpdates(value === "on")}
+                  aria-label="Check for updates"
+                  class="flex shrink-0 rounded-lg border border-line-subtle bg-bg p-0.5"
+                >
+                  {#each [{ value: "on", label: "On" }, { value: "off", label: "Off" }] as option (option.value)}
+                    <ToggleGroup.Item value={option.value} class={toggle}>
+                      {option.label}
+                    </ToggleGroup.Item>
+                  {/each}
+                </ToggleGroup.Root>
               </section>
             {/if}
           </div>

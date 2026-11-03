@@ -32,6 +32,7 @@ src/desktop/main.ts           the main process
 | `src/cli.ts` | A terminal client with a small synthetic demo course. |
 | `tests/` | Deterministic test suites; `tests/fixtures/` builds synthetic PDFs and courses; `tests/electron/` checks Folio in a real window (`vp run test:electron`). |
 | `scripts/desktop.ts` | Runs the app from the dev server or from the production build. |
+| `src/releases.ts` | Whether a newer Folio is out: GitHub's latest release, asked at most once a day. |
 | `scripts/package.ts`, `scripts/install.ts`, `resources/` | Builds `Folio.app` and its disk image (`vp run desktop:package`) and installs it (`vp run desktop:install`); the app icon. |
 
 ## What the window may do
@@ -499,6 +500,7 @@ Everything lives in `~/.folio/` (or `FOLIO_HOME`), with directories `0700` and f
 | `keys.json` | API keys, each checked with its provider before it was kept |
 | `config.json` | Which model does what, the OpenRouter models the composer offers, the student's categories and naming patterns, and which routines are on; never a key |
 | `catalog/openrouter.json` | Pi's live list of OpenRouter's models, as last checked, with its ETag |
+| `release.json` | GitHub's latest release of Folio, as last checked |
 | `skills/<name>/SKILL.md` | The student's own routines |
 | `mcp.json` | The student's MCP servers, with their settings and headers, and which tools run without asking |
 | `mcp/<name>/` | Each local server's working folder, and its last list of tools |
@@ -552,6 +554,19 @@ real-window job reports on its own and does not hold the nightly back: those che
 on a Mac much faster than GitHub's virtual ones.
 
 A quit signal (SIGTERM, as the installer sends) quits Folio as ⌘Q does: chats settle first.
+
+Without a Developer ID Folio cannot update itself, so it says when a newer release is out
+(`src/releases.ts`). While **Updates** is on in Settings → General, the window asks the main
+process a moment after it opens and then every hour; the main process asks GitHub's public API
+for the repository's latest release only when its last answer, kept in `release.json`, is a day
+old, or an hour after a check that failed. The request has no account and carries nothing about
+the student. The answer's tag must be a semantic version, and is compared with the app's own,
+from `package.json` (a packaged app reports it; a run from the checkout reads the file). The
+sidebar's line links to the release's page on GitHub, built from the tag, and opens in the
+system browser; nothing is downloaded. GitHub's latest release is never a pre-release, so the
+nightly, which carries the version of the release it follows, hears of the next release and never
+of newer nightlies. `FOLIO_RELEASES` names another source, or `off`, as the real-window checks
+set it.
 
 The packaged app keeps its data where the development build does, in `~/.folio` (or `FOLIO_HOME`).
 One Folio runs on a home at a time: opened while another runs there, Folio quits before it opens

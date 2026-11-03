@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { lstat, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
@@ -19,6 +20,7 @@ import { createFolioModels, readConnections } from "../auth.ts";
 import { FolioConfig, studyRoles } from "../config.ts";
 import { checkKey, cleanKey, modelCatalog } from "../connections.ts";
 import { LiveCatalog, liveSource } from "../live-catalog.ts";
+import { ReleaseCheck, releaseSource } from "../releases.ts";
 import { privateDirectory, writeAtomic } from "../files.ts";
 import { IngestRunner, trialRoles } from "../ingest/pipeline.ts";
 import { piComplete } from "../ingest/pi-complete.ts";
@@ -163,6 +165,24 @@ const emit = (event: DesktopEvent) => window?.webContents.send(CHANNELS.event, e
 const live = new LiveCatalog({ home, source: liveSource(process.env.FOLIO_MODEL_CATALOG) });
 const liveLoaded = live.load();
 const catalog = modelCatalog(live);
+/**
+ * Folio's version, from package.json: a packaged Folio reports its own. Run from the checkout,
+ * Electron reports its own version instead, so the checkout's package.json is read.
+ */
+function folioVersion(): string {
+  if (app.isPackaged) return app.getVersion();
+  const manifest = readFileSync(resolve(here, "..", "package.json"), "utf8");
+  return (JSON.parse(manifest) as { version: string }).version;
+}
+
+// Whether a newer Folio is out: GitHub's latest release, asked at most once a day and only when
+// the window asks, which it does while the student leaves the check on. FOLIO_RELEASES names
+// another source (tests), or "off".
+const releases = new ReleaseCheck({
+  home,
+  version: folioVersion(),
+  source: releaseSource(process.env.FOLIO_RELEASES),
+});
 const resolveModel = (id: string, provider = "openai") => {
   const model = folioModel(catalog, id, provider);
   if (!model) throw new Error(`Model '${id}' is not in Pi's catalog.`);
@@ -1385,6 +1405,8 @@ const handlers: Record<InvokeMethod, (...args: unknown[]) => Promise<unknown>> =
     for (const entry of await trash.list()) await trash.discard(entry.id);
     emit({ type: "trash" });
   },
+  release: () => releases.view(),
+  checkRelease: () => releases.check(),
   async registerArtifact(input) {
     const { source } = (input ?? {}) as Record<string, unknown>;
     if (typeof source !== "string" || !source.trim()) throw new Error("There is no demo to show.");

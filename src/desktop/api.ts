@@ -719,6 +719,13 @@ export interface ModelsView {
   naming: string | null;
 }
 
+/** This Folio's version, and GitHub's latest release when it is newer. */
+export interface ReleaseView {
+  version: string;
+  /** The release's page opens in the browser; Folio never downloads it. */
+  newer: { version: string; url: string } | null;
+}
+
 export interface DesktopBootstrap {
   models: ModelsView;
   chats: ChatSummary[];
@@ -940,6 +947,10 @@ export interface FolioApi {
   /** Moves it on to the Mac's Trash, out of Folio. */
   deleteFromTrash(id: string): Promise<void>;
   emptyTrash(): Promise<void>;
+  /** This Folio's version and the newer release last found; never asks GitHub. */
+  release(): Promise<ReleaseView>;
+  /** Asks GitHub for the latest release when the last answer is a day old; never throws. */
+  checkRelease(): Promise<ReleaseView>;
   /** Hands a demo to the main process and returns the address its sealed frame loads. */
   registerArtifact(input: { source: string }): Promise<{ url: string }>;
   /** Saves a file the student made (a diagram as SVG) where they choose; false if they cancel. */

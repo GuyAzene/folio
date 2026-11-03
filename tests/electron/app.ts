@@ -123,8 +123,10 @@ async function command(home: string, env: Record<string, string>) {
       FOLIO_HOME: home,
       FOLIO_CONNECTION_HOME: connection,
       FOLIO_SKILL_HOME: skills,
-      // Pi's live model list is never fetched; a test that wants one serves its own.
+      // Pi's live model list and GitHub's latest release are never fetched; a test that wants
+      // one serves its own.
       FOLIO_MODEL_CATALOG: "off",
+      FOLIO_RELEASES: "off",
       ...env,
     },
   };

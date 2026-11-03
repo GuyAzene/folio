@@ -13,6 +13,7 @@
     Settings,
     SquarePen,
     Trash2,
+    X,
   } from "@lucide/svelte";
   import type { Component } from "svelte";
   import { PENCIL } from "../lib/labels.ts";
@@ -324,6 +325,33 @@
           >Connect {folio.connectionFor(folio.modelChoice)?.name ?? "a model"}</span
         >
       </button>
+    {/if}
+    {#if folio.announcedRelease}
+      {@const release = folio.announcedRelease}
+      <!-- Links to the release's page, which opens in the browser; Folio never downloads it. -->
+      <div
+        class="group relative flex h-8 items-center rounded-md transition-colors hover:bg-hover"
+      >
+        <a
+          href={release.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          title="See what's new, in your browser"
+          class="flex h-full min-w-0 flex-1 items-center gap-2.5 rounded-md px-2 pr-8 font-medium text-text no-underline"
+        >
+          <span
+            class="mx-[4.5px] size-1.5 shrink-0 rounded-full bg-highlight ring-2 ring-highlight/30"
+          ></span>
+          <span class="min-w-0 flex-1 truncate">Folio {release.version} is out</span>
+        </a>
+        <IconButton
+          label="Hide until the next release"
+          onclick={() => folio.dismissRelease(release.version)}
+          class="absolute right-1 size-6 opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+        >
+          <X size={13} strokeWidth={2} />
+        </IconButton>
+      </div>
     {/if}
     <button
       class="flex h-8 items-center gap-2.5 rounded-md border px-2 transition-colors {here.view ===
