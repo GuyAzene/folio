@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Search, SquarePen, Trash2, X } from "@lucide/svelte";
+  import { ChevronLeft, Search, SquarePen, Trash2, X } from "@lucide/svelte";
   import { tick } from "svelte";
   import CourseFilter from "../components/CourseFilter.svelte";
   import IconButton from "../components/IconButton.svelte";
@@ -12,7 +12,8 @@
   /**
    * Chats: every chat on the left, newest first under Today, Yesterday and so on, and the open
    * chat on the right; with none chosen, a new one. The list stays while a chat is read. A chat
-   * about a lecture opens beside it from its own header. In a narrow window only the chat shows.
+   * about a lecture opens beside it from its own header. In a narrow window it is one or the
+   * other, as in a phone's mail app: the list, or the chosen chat with a way back to the list.
    */
   let {
     paneId,
@@ -21,7 +22,10 @@
 
   const LIST = 280;
   const pane = getPane();
+  /** Wide enough for the list beside the chat. */
   const listed = $derived((pane?.width ?? 1000) >= 720);
+  const showList = $derived(listed || location.view === "chats");
+  const showChat = $derived(listed || location.view === "chat");
   const courseId = $derived(folio.chatsCourse);
   const filterCourse = $derived(folio.course(courseId));
   const chatId = $derived(location.view === "chat" ? location.chatId : null);
@@ -83,7 +87,8 @@
   }
 
   function newChat(): void {
-    if (location.view !== "chats") folio.navigate({ view: "chats" }, { paneId });
+    if (location.view === "chat" && location.chatId === null) return;
+    folio.navigate({ view: "chat", chatId: null, courseId }, { paneId });
   }
 
   /** ↑ and ↓ move through the list, as in a mail app. */
@@ -102,10 +107,10 @@
 </script>
 
 <div class="flex h-full min-h-0">
-  {#if listed}
+  {#if showList}
     <aside
-      class="flex shrink-0 flex-col border-r border-line-subtle"
-      style:width="{LIST}px"
+      class="flex flex-col {listed ? 'shrink-0 border-r border-line-subtle' : 'min-w-0 flex-1'}"
+      style:width={listed ? `${LIST}px` : null}
       aria-label="Chats"
     >
       <div class="flex h-12 shrink-0 items-center gap-1 pr-2 pl-4">
@@ -203,14 +208,26 @@
               ? `No chats match “${query.trim()}”.`
               : filterCourse
                 ? "No chats in this course yet."
-                : "No chats yet. Ask on the right to start one."}
+                : "No chats yet."}
           </p>
         {/each}
       </div>
     </aside>
   {/if}
 
-  <section class="relative flex min-w-0 flex-1 flex-col">
-    <ChatView {paneId} location={shown} />
-  </section>
+  {#if showChat}
+    <section class="relative flex min-w-0 flex-1 flex-col">
+      {#if !listed}
+        <div class="flex h-9 shrink-0 items-center px-2">
+          <button
+            class="flex h-7 items-center gap-1 rounded-md pr-2 pl-1 text-[12.5px] text-text-3 transition-colors hover:bg-hover hover:text-text"
+            onclick={() => folio.navigate({ view: "chats" }, { paneId })}
+          >
+            <ChevronLeft size={14} strokeWidth={1.75} /> All chats
+          </button>
+        </div>
+      {/if}
+      <ChatView {paneId} location={shown} />
+    </section>
+  {/if}
 </div>
