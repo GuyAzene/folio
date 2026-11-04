@@ -3,7 +3,8 @@ import { parseArgs } from "node:util";
 import type { AgentEvent, AgentMessage, StreamFn } from "@earendil-works/pi-agent-core";
 import { createModels, type AuthInteraction, type AuthPrompt } from "@earendil-works/pi-ai";
 import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
-import { createFolioModels, readConnectionStatus } from "./auth.ts";
+import { createFolioModels, readConnectionStatus, signOutOfChatGPT } from "./auth.ts";
+import { SIGN_OUT_UNCONFIRMED } from "./chatgpt-sign-in.ts";
 import { cacheTable, requestsOf, requestTable } from "./cache-report.ts";
 import { Conversation } from "./conversation.ts";
 import { folioModel } from "./model-catalog.ts";
@@ -25,7 +26,7 @@ const HELP = `Folio · terminal client
   vp run cache [--chat <id>]   How much of each request the provider reused from its cache
   vp run start --prompt "..."   Send one prompt and exit
   vp run models                Show Pi's bundled model catalog
-  vp run logout                Remove Folio's local credentials
+  vp run logout                Sign out of ChatGPT
   vp run start --page 1         Read the synthetic page offline
 
 Options: --model <id> (new-session default: ${DEFAULT_MODEL}), --new, --resume <id>, --help
@@ -314,8 +315,11 @@ async function main(): Promise<void> {
       return;
     }
     if (command === "logout") {
-      await models.logout("openai");
-      console.log("Folio's local ChatGPT credentials removed.");
+      console.log(
+        (await signOutOfChatGPT(store))
+          ? "Signed out of ChatGPT. Signing in again reuses Folio's registration."
+          : SIGN_OUT_UNCONFIRMED,
+      );
       return;
     }
     if (command === "login") {
@@ -341,10 +345,7 @@ async function main(): Promise<void> {
         },
       };
       try {
-        await models.login("openai", "oauth", interaction, {
-          getDeviceId: store.getDeviceId,
-          agentName: "Folio",
-        });
+        await models.login("openai", "oauth", interaction);
         console.log("ChatGPT connected. Run vp run demo to test a real reply.");
       } catch (error) {
         if (!controller.signal.aborted) throw error;

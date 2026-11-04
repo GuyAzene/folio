@@ -16,7 +16,8 @@ import {
   shell,
   type IpcMainInvokeEvent,
 } from "electron";
-import { createFolioModels, readConnections } from "../auth.ts";
+import { createFolioModels, readConnections, signOutOfChatGPT } from "../auth.ts";
+import { SIGN_OUT_UNCONFIRMED } from "../chatgpt-sign-in.ts";
 import { FolioConfig, studyRoles } from "../config.ts";
 import { checkKey, cleanKey, modelCatalog } from "../connections.ts";
 import { LiveCatalog, liveSource } from "../live-catalog.ts";
@@ -692,7 +693,7 @@ async function startSignIn(): Promise<void> {
   const controller = new AbortController();
   signIn = controller;
   emit({ type: "models", models: await modelsView() });
-  const { models, store } = await connection;
+  const { models } = await connection;
   const interaction: AuthInteraction = {
     signal: controller.signal,
     // The browser callback completes sign-in; the manual-paste fallback waits until cancelled.
@@ -713,10 +714,7 @@ async function startSignIn(): Promise<void> {
     },
   };
   try {
-    await models.login("openai", "oauth", interaction, {
-      getDeviceId: store.getDeviceId,
-      agentName: "Folio",
-    });
+    await models.login("openai", "oauth", interaction);
   } catch (error) {
     if (!controller.signal.aborted)
       emit({ type: "error", chatId: null, message: errorMessage(error) });
@@ -917,8 +915,9 @@ const handlers: Record<InvokeMethod, (...args: unknown[]) => Promise<unknown>> =
   },
   async signOut() {
     signIn?.abort();
-    await (await connection).models.logout("openai");
+    const ended = await signOutOfChatGPT((await connection).store);
     await modelsChanged();
+    if (!ended) emit({ type: "error", chatId: null, message: SIGN_OUT_UNCONFIRMED });
   },
   async saveKey(id, key) {
     const target = connectionById(id);

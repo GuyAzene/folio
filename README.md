@@ -150,7 +150,8 @@ until builds are signed with a Developer ID and notarized; `scripts/package.ts` 
 environment variables that turn both on.
 
 To connect, choose **Connect ChatGPT** in the composer or in Settings (⌘,). Your browser opens
-ChatGPT's sign-in. To use your own API key for OpenAI, Anthropic, Google Gemini or OpenRouter,
+ChatGPT's sign-in. Folio registers with your ChatGPT account once; signing out and in again reuses
+that registration, so ChatGPT's settings list one Folio. To use your own API key for OpenAI, Anthropic, Google Gemini or OpenRouter,
 add it in **Settings → Connections**: Folio checks it with the provider before keeping it, and
 each provider bills its key for what Folio asks. ChatGPT is the only plan Folio can sign in to.
 Folio never reads a key from the environment or another app's saved accounts.

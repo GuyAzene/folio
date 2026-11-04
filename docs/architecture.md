@@ -22,7 +22,7 @@ src/desktop/main.ts           the main process
 | `app/` | The renderer: `views/` (Home, course, reader, notes, study notes, chats, Studying, Trash), `components/`, and `lib/` (app state, Markdown and math rendering, text direction, the note editor in `lib/editor/`). |
 | `src/desktop/` | The Electron main process, the preload bridge, the IPC contract (`api.ts`) and the chat service. |
 | `src/conversation.ts`, `src/session-store.ts`, `src/transcript.ts`, `src/agents.ts` | Conversations on Pi: saving and resuming, cancellation, leases, and what history the model sees. |
-| `src/auth.ts`, `src/connections.ts`, `src/model-refs.ts`, `src/model-choices.ts`, `src/live-catalog.ts`, `src/config.ts` | Connections and models: the ChatGPT sign-in and API keys, the models each connection offers, Pi's live list of OpenRouter's models, and which model does what (`config.json`). |
+| `src/auth.ts`, `src/chatgpt-sign-in.ts`, `src/connections.ts`, `src/model-refs.ts`, `src/model-choices.ts`, `src/live-catalog.ts`, `src/config.ts` | Connections and models: the ChatGPT sign-in and API keys, the models each connection offers, Pi's live list of OpenRouter's models, and which model does what (`config.json`). |
 | `src/library/` | Courses and documents with their categories, numbers and names, the operations that change them, PDF pages and page images, notes with their history, the Trash, the tutor's tools and teaching rules, and attachments. |
 | `src/ingest/` | Studying a lecture: page inventory, reading, drafting, reconciling and publishing study notes. |
 | `src/kb/` | Each course's knowledge base: immutable published versions, a search index and the tutor's study-note tools. |
@@ -261,6 +261,16 @@ app's files or a provider's own sign-in. A key is checked with its provider befo
 it, by a request that lists models or describes the key, and the provider's answer is never
 shown; it then goes in `keys.json`, apart from the ChatGPT sign-in, and never back to the window.
 
+Folio signs in to ChatGPT itself (`src/chatgpt-sign-in.ts`), as OpenAI asks open-source apps to.
+The first sign-in registers Folio with the student's account; OpenAI issues a client ID, which
+Folio keeps with the account's verified identity in `connection.json` and reuses for every later
+sign-in, sending the installation ID as the agent host. Signing out ends the renewable session at
+OpenAI (when OpenAI doesn't confirm it, Folio says so) and forgets the tokens but keeps the
+registration, so ChatGPT's settings list one Folio however often the student signs out and in.
+The ID token is checked against OpenAI's keys before anything is saved, a returning sign-in must
+come back for the same registration and the same account, and one that comes back without use
+of the plan makes the next sign-in ask for consent. Pi renews the tokens.
+
 A model is named by a reference, `connection/model` (`chatgpt/gpt-6.1-sol`,
 `openrouter/deepseek/deepseek-v4-pro`), and a chat saves its provider and model and keeps them.
 The composer offers, per connection, the plan's checked models, a short list of current models
@@ -496,7 +506,7 @@ Everything lives in `~/.folio/` (or `FOLIO_HOME`), with directories `0700` and f
 
 | Path | Contents |
 | --- | --- |
-| `connection.json` | The ChatGPT connection and installation ID |
+| `connection.json` | The ChatGPT sign-in, Folio's registration with ChatGPT, and the installation ID |
 | `keys.json` | API keys, each checked with its provider before it was kept |
 | `config.json` | Which model does what, the OpenRouter models the composer offers, the student's categories and naming patterns, and which routines are on; never a key |
 | `catalog/openrouter.json` | Pi's live list of OpenRouter's models, as last checked, with its ETag |

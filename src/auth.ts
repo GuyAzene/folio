@@ -15,6 +15,12 @@ import {
   type OAuthCredential,
 } from "@earendil-works/pi-ai";
 import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
+import {
+  endChatGPTSession,
+  signInWithChatGPT,
+  SignInError,
+  type ChatGPTRegistration,
+} from "./chatgpt-sign-in.ts";
 import { keyProviders } from "./connections.ts";
 import { folioHome } from "./home.ts";
 import { CONNECTIONS, connectionOf, type ConnectionId } from "./model-refs.ts";
@@ -23,10 +29,15 @@ const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const LOCK_WAIT_MS = 30_000;
 
+/**
+ * `registration` was added within version 1: an older Folio reads past it, and its sign-out
+ * drops it, which costs only a second registration on the next sign-in.
+ */
 interface SavedConnection {
   version: 1;
   deviceId: string;
   credential?: OAuthCredential;
+  registration?: ChatGPTRegistration;
 }
 
 interface SavedKey {
@@ -68,6 +79,31 @@ function validateCredential(value: unknown): asserts value is OAuthCredential {
   ) {
     throw new Error("Invalid Folio ChatGPT connection; reconnect with the login command.");
   }
+}
+
+function validateRegistration(value: unknown): asserts value is ChatGPTRegistration {
+  const optional = (field: unknown) =>
+    field === undefined || (typeof field === "string" && field.length > 0);
+  if (
+    !isRecord(value) ||
+    typeof value.clientId !== "string" ||
+    !value.clientId ||
+    value.clientId === "dynamic_agent_client" ||
+    !optional(value.subject) ||
+    !optional(value.email) ||
+    (value.askConsent !== undefined && value.askConsent !== true)
+  )
+    throw new Error("Unsupported or invalid Folio connection format.");
+}
+
+/**
+ * The registration a sign-in reuses. A connection saved before Folio kept registrations has
+ * one in its credential.
+ */
+function registrationOf(saved: SavedConnection): ChatGPTRegistration | undefined {
+  if (saved.registration) return saved.registration;
+  const clientId = saved.credential?.clientId;
+  return typeof clientId === "string" && clientId ? { clientId } : undefined;
 }
 
 function validateKey(value: unknown): asserts value is ApiKeyCredential & { key: string } {
@@ -160,6 +196,7 @@ export class FolioCredentialStore implements CredentialStore {
       throw new Error("Unsupported or invalid Folio connection format.");
     }
     if (saved.credential !== undefined) validateCredential(saved.credential);
+    if (saved.registration !== undefined) validateRegistration(saved.registration);
     return saved as unknown as SavedConnection;
   }
 
@@ -313,15 +350,63 @@ export class FolioCredentialStore implements CredentialStore {
       return;
     }
     if (providerId !== "openai") return;
+    await this.signOut(async () => false, options);
+  }
+
+  /** Folio's ChatGPT registration, which outlives sign-out so a later sign-in reuses it. */
+  async registration(): Promise<ChatGPTRegistration | undefined> {
+    const saved = await this.#load();
+    return saved && registrationOf(saved);
+  }
+
+  /** Saves the registration; undefined forgets it, and the sign-in made through it. */
+  async saveRegistration(
+    registration: ChatGPTRegistration | undefined,
+    options?: AuthOperationOptions,
+  ): Promise<void> {
+    if (registration) validateRegistration(registration);
     await this.#locked(async () => {
       const saved = await this.#load();
-      if (saved) await this.#save({ version: 1, deviceId: saved.deviceId });
+      if (!saved) throw new Error("Folio's installation record disappeared; restart Folio.");
+      // Forgetting a registration ChatGPT no longer knows drops its sign-in with it.
+      await this.#save(
+        registration ? { ...saved, registration } : { version: 1, deviceId: saved.deviceId },
+      );
+    }, options);
+  }
+
+  /**
+   * Signs out of ChatGPT: `end` ends the session at OpenAI, under the lock so no refresh rotates
+   * the token meanwhile, then the tokens go and the registration stays. True when `end` confirmed
+   * it, or when there was no sign-in to end.
+   */
+  async signOut(
+    end: (credential: OAuthCredential) => Promise<boolean>,
+    options?: AuthOperationOptions,
+  ): Promise<boolean> {
+    return this.#locked(async () => {
+      const saved = await this.#load();
+      if (!saved) return true;
+      const ended = saved.credential ? await end(saved.credential) : true;
+      const registration = registrationOf(saved);
+      await this.#save({
+        version: 1,
+        deviceId: saved.deviceId,
+        ...(registration ? { registration } : {}),
+      });
+      return ended;
     }, options);
   }
 }
 
+/** Signs out of ChatGPT, ending the session at OpenAI; false when OpenAI didn't confirm it. */
+export function signOutOfChatGPT(store: FolioCredentialStore): Promise<boolean> {
+  return store.signOut((credential) => endChatGPTSession(credential));
+}
+
+/** `callbackPort` is for tests: the port the browser returns to after signing in. */
 export async function createFolioModels(
-  options: { home?: string } = {},
+  options: { home?: string; callbackPort?: number } = {},
 ): Promise<{ models: MutableModels; store: FolioCredentialStore }> {
   const store = await FolioCredentialStore.create(options.home ?? folioHome());
   const models = createModels({
@@ -337,14 +422,15 @@ export async function createFolioModels(
     auth: {
       oauth: {
         ...oauth,
-        async login(interaction, loginOptions) {
+        // Folio's own sign-in, which reuses its registration (`chatgpt-sign-in.ts`).
+        async login(interaction) {
           try {
-            return await oauth.login(interaction, loginOptions);
-          } catch {
-            // Some upstream error messages include token-endpoint response bodies.
-            // Never expose the original error or attach it as a diagnostic cause.
+            return await signInWithChatGPT(interaction, store, { port: options.callbackPort });
+          } catch (error) {
+            // Only messages written for the student leave; others may carry endpoint details.
             if (interaction.signal.aborted)
               throw new DOMException("ChatGPT sign-in canceled.", "AbortError");
+            if (error instanceof SignInError) throw new SignInError(error.message);
             throw new Error("ChatGPT sign-in failed. Retry the login command.");
           }
         },
