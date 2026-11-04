@@ -132,6 +132,30 @@ export function openBeside(
   return { panes, recent: order(layout.recent), sizes, maximized: null };
 }
 
+/** What can share a tab: a document, and the tutor, a note or another document beside it. */
+export function besideDocument(location: Location): boolean {
+  return location.view === "document" || location.view === "chat" || location.view === "notes";
+}
+
+/**
+ * Side by side means a document with what the student keeps beside it. Any other place (a
+ * course, Home, a list) fills the tab, and a split with no document left in it gives way to
+ * its active pane.
+ */
+export function tidy(layout: Layout): Layout {
+  if (layout.panes.length === 1) return layout;
+  const active = activePane(layout);
+  if (!besideDocument(active.location)) return single(active.location, active.id);
+  let kept = layout;
+  for (const pane of layout.panes)
+    if (!besideDocument(pane.location)) kept = closePane(kept, pane.id);
+  if (kept.panes.length > 1 && !kept.panes.some((pane) => pane.location.view === "document")) {
+    const last = activePane(kept);
+    return single(last.location, last.id);
+  }
+  return kept;
+}
+
 /** The layout without the pane; its neighbor takes its width. The last pane stays. */
 export function closePane(layout: Layout, paneId: string): Layout {
   const at = layout.panes.findIndex((pane) => pane.id === paneId);
@@ -297,7 +321,8 @@ export function readWorkspace(
         : restoreLayout(tab.layout, valid, newId);
     if (!layout) continue;
     const id = typeof tab.id === "string" && !tabs.some((kept) => kept.id === tab.id);
-    tabs.push({ id: id ? (tab.id as string) : newId(), layout });
+    // A tab saved with a course or a list beside a lecture (until 2026-11-04) opens tidied.
+    tabs.push({ id: id ? (tab.id as string) : newId(), layout: tidy(layout) });
   }
   if (!tabs.length) return null;
   return {

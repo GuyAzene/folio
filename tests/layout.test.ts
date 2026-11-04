@@ -12,6 +12,7 @@ import {
   resize,
   restoreLayout,
   single,
+  tidy,
   validSizes,
   withLocation,
   withoutPanes,
@@ -23,6 +24,7 @@ const lecture: Location = { view: "document", documentId: "lecture", page: 3 };
 const homework: Location = { view: "document", documentId: "homework", page: 1 };
 const chat: Location = { view: "chat", chatId: "chat-1", courseId: "course" };
 const note: Location = { view: "notes", noteId: "note-1", courseId: "course" };
+const course: Location = { view: "course", courseId: "course", tab: "materials" };
 
 let next = 0;
 const newId = () => `pane-${++next}`;
@@ -140,6 +142,45 @@ describe("panes", () => {
     close(validSizes([3, 1], 2), [0.75, 0.25]);
     for (const saved of [[0.5], [0.5, -1], ["x", 1], null, [0.5, Number.NaN]])
       close(validSizes(saved, 2), [0.5, 0.5]);
+  });
+});
+
+describe("only a document shares its tab", () => {
+  const reading = openBeside(single(lecture, "a"), chat, "a", "b");
+
+  it("keeps a document with the tutor, a note or another document beside it", () => {
+    expect(tidy(reading)).toBe(reading);
+    const three = openBeside(openBeside(reading, note, "a", "c"), homework, "a", "d");
+    expect(tidy(three)).toBe(three);
+  });
+
+  it("gives the whole tab to a course or a list opened in either pane", () => {
+    // The tutor was active, and a course was opened in it: the course fills the tab.
+    const swapped = withLocation(reading, "b", course);
+    expect(tidy(swapped)).toEqual(single(course, "b"));
+    // The same from the document side.
+    const fromPage = activate(withLocation(reading, "a", { view: "chats" }), "a");
+    expect(tidy(fromPage)).toEqual(single({ view: "chats" }, "a"));
+  });
+
+  it("drops a page waiting beside, and a split left without a document", () => {
+    // Saved before 2026-11-04: a course beside a lecture, the lecture active.
+    const saved = activate(openBeside(single(lecture, "a"), course, "a", "b"), "a");
+    expect(tidy(saved)).toEqual(single(lecture, "a"));
+    // The lecture replaced by a note: the note and the chat no longer share a document.
+    const noDocument = activate(withLocation(reading, "a", note), "a");
+    expect(tidy(noDocument)).toEqual(single(note, "a"));
+  });
+
+  it("tidies a saved workspace as it opens", () => {
+    const saved = openBeside(single(lecture, "a"), { view: "home" }, "a", "b");
+    const workspace = readWorkspace(
+      { version: 2, tabs: [{ id: "t1", layout: saved }], active: "t1" },
+      valid,
+      () => "course",
+      newId,
+    )!;
+    expect(workspace.tabs[0]!.layout).toEqual(single({ view: "home" }, "b"));
   });
 });
 

@@ -1,12 +1,8 @@
 import type { DocumentRole } from "../../src/desktop/api.ts";
 import { categoryOf, type Category } from "../../src/library/categories.ts";
 
-/**
- * A course page's tabs: where things stand, its files, Folio's study notes, the student's
- * notes, and its chats.
- */
+/** A course page's tabs: its files, Folio's study notes, the student's notes, and its chats. */
 export const COURSE_TABS = [
-  { tab: "overview", label: "Overview" },
   { tab: "materials", label: "Materials" },
   { tab: "study", label: "Study notes" },
   { tab: "notes", label: "Notes" },
@@ -51,13 +47,10 @@ export function materialSections<
 }
 
 /**
- * A saved course tab as one of today's. Workspaces saved before 2026-10-29 may hold the old
- * per-role tabs (lectures, recitations, assignments, files), which all live in Materials now;
- * anything else opens on the Overview.
+ * A saved course tab as one of today's. Anything else opens on Materials: the per-role tabs
+ * saved before 2026-10-29 (lectures, recitations, assignments, files), and the Overview, which
+ * a course opened on until 2026-11-04.
  */
 export function courseTab(value: unknown): CourseTab {
-  if (COURSE_TABS.some((entry) => entry.tab === value)) return value as CourseTab;
-  return ["lectures", "recitations", "assignments", "files"].includes(value as string)
-    ? "materials"
-    : "overview";
+  return COURSE_TABS.some((entry) => entry.tab === value) ? (value as CourseTab) : "materials";
 }

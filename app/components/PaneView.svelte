@@ -6,6 +6,7 @@
   import { folio } from "../lib/state.svelte.ts";
   import AssignmentsBoard from "../views/AssignmentsBoard.svelte";
   import ChatView from "../views/ChatView.svelte";
+  import ChatsHub from "../views/ChatsHub.svelte";
   import CourseView from "../views/CourseView.svelte";
   import DocumentView from "../views/DocumentView.svelte";
   import HomeView from "../views/HomeView.svelte";
@@ -38,6 +39,9 @@
     },
     get split() {
       return split;
+    },
+    get lead() {
+      return split && layout.panes[0]?.id === pane.id && !layout.maximized;
     },
     get maximized() {
       return layout.maximized === pane.id;
@@ -85,6 +89,9 @@
     <NotesHub paneId={pane.id} noteId={location.noteId} courseId={location.courseId} />
   {:else if location.view === "study"}
     <StudyView courseId={location.courseId} item={location.item} />
+  {:else if location.view === "chats" || (location.view === "chat" && !split)}
+    <!-- A chat on its own shows with the list of chats beside it. -->
+    <ChatsHub paneId={pane.id} {location} />
   {:else if location.view === "chat"}
     <ChatView paneId={pane.id} {location} />
   {:else if location.view === "jobs"}

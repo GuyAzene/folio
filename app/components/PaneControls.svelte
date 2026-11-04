@@ -4,11 +4,14 @@
   import { folio } from "../lib/state.svelte.ts";
   import IconButton from "./IconButton.svelte";
 
-  /** A pane's own buttons, at the end of its header, once its tab is split. */
+  /**
+   * A pane's own buttons, at the end of its header, once its tab is split: on what sits beside
+   * the document, not on the document itself, which closes with its tab.
+   */
   const pane = getPane();
 </script>
 
-{#if pane?.split}
+{#if pane?.split && !pane.lead}
   <span class="-mr-1 flex shrink-0 items-center">
     <IconButton
       label={pane.maximized ? "Show every pane" : "Maximize"}

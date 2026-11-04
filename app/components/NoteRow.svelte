@@ -64,7 +64,7 @@
         aria-label={note.title}
         data-note={note.id}
         class="flex min-w-0 cursor-default flex-col gap-0.5 rounded-lg border px-3 py-2 outline-none transition-colors duration-150 focus-visible:border-line-strong {selected
-          ? 'border-line-subtle bg-selected shadow-1'
+          ? 'border-transparent bg-press'
           : 'border-transparent hover:bg-hover'}"
         onclick={(event) => onopen(event.metaKey || event.ctrlKey)}
         onkeydown={(event) => {

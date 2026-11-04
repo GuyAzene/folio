@@ -9,14 +9,14 @@ describe("course tabs", () => {
     for (const { tab } of COURSE_TABS) expect(courseTab(tab)).toBe(tab);
   });
 
-  it("opens the per-role tabs saved before 2026-10-29 at Materials", () => {
-    for (const old of ["lectures", "recitations", "assignments", "files"])
+  it("opens the per-role tabs and the Overview saved before at Materials", () => {
+    for (const old of ["lectures", "recitations", "assignments", "files", "overview"])
       expect(courseTab(old)).toBe("materials");
   });
 
-  it("opens anything unknown at the Overview", () => {
+  it("opens anything unknown at Materials", () => {
     for (const value of [undefined, null, "", "practice", 3, { tab: "notes" }])
-      expect(courseTab(value)).toBe("overview");
+      expect(courseTab(value)).toBe("materials");
   });
 
   it("sort a section's files by number, then by name", () => {
