@@ -7,6 +7,8 @@ export interface PaneContext {
   readonly tabId: string;
   /** More than one pane in the tab: the pane shows its own Maximize and Close. */
   readonly split: boolean;
+  /** The first pane of a split: the document the others sit beside, with no Close of its own. */
+  readonly lead: boolean;
   readonly maximized: boolean;
   readonly active: boolean;
   /** The pane's width in pixels, for views that tighten when narrow. */

@@ -63,7 +63,7 @@
 
 <div class="scroll-quiet h-full overflow-y-auto">
   <div
-    class="mx-auto flex w-full max-w-[860px] flex-col px-8 pt-10 pb-16 max-sm:px-4"
+    class="mx-auto flex w-full max-w-[880px] flex-col px-10 pt-12 pb-16 max-sm:px-5"
   >
     <div class="flex items-start gap-4">
       <div class="flex min-w-0 flex-1 flex-col gap-1">

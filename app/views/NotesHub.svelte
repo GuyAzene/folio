@@ -3,12 +3,13 @@
   import { DropdownMenu } from "bits-ui";
   import { tick } from "svelte";
   import type { NoteView as Note } from "../../src/desktop/api.ts";
+  import CourseFilter from "../components/CourseFilter.svelte";
   import CourseTile from "../components/CourseTile.svelte";
   import IconButton from "../components/IconButton.svelte";
   import NotePicker from "../components/NotePicker.svelte";
   import NoteRow from "../components/NoteRow.svelte";
   import PaneControls from "../components/PaneControls.svelte";
-  import { noteGroup, PENCIL } from "../lib/labels.ts";
+  import { noteGroup } from "../lib/labels.ts";
   import { getPane } from "../lib/pane.ts";
   import { folio } from "../lib/state.svelte.ts";
   import NoteView from "./NoteView.svelte";
@@ -255,10 +256,10 @@
 {:else}
 <div class="flex h-full min-h-0">
   <aside
-    class="flex w-[300px] shrink-0 flex-col border-r border-line-subtle max-md:w-[232px]"
+    class="flex w-[280px] shrink-0 flex-col border-r border-line-subtle max-md:w-[232px]"
     aria-label="Notes"
   >
-    <div class="flex h-11 shrink-0 items-center gap-1 pr-2 pl-4">
+    <div class="flex h-12 shrink-0 items-center gap-1 pr-2 pl-4">
       <h1 class="min-w-0 flex-1 truncate font-semibold text-text" dir="auto">
         {filterCourse ? filterCourse.name : "Notes"}
       </h1>
@@ -295,12 +296,13 @@
           </DropdownMenu.Portal>
         </DropdownMenu.Root>
       {/if}
+      <CourseFilter value={courseId} onchange={setCourse} />
       {@render newNoteButton()}
     </div>
 
-    <div class="shrink-0 px-3 pb-2">
+    <div class="shrink-0 px-3 pb-3">
       <label
-        class="flex h-8 items-center gap-2 rounded-md border border-line-subtle bg-bg px-2 text-text-3 transition-colors focus-within:border-line-strong dark:bg-raised"
+        class="flex h-8 items-center gap-2 rounded-md bg-sunken px-2 text-text-3 transition-colors focus-within:bg-hover dark:bg-raised"
       >
         <Search size={14} strokeWidth={1.75} class="shrink-0" />
         <input
@@ -327,47 +329,17 @@
       </label>
     </div>
 
-    {#if folio.courses.length > 1 || tag}
-      <div
-        class="flex shrink-0 gap-1.5 overflow-x-auto px-3 pb-2.5 [scrollbar-width:none]"
-        role="toolbar"
-        aria-label="Filter notes"
-      >
-        {#if tag}
-          <button
-            type="button"
-            class="{chip} border-line-strong bg-selected text-text"
-            aria-label="Stop filtering by #{tag}"
-            onclick={() => (tag = null)}
-          >
-            <span class="max-w-[120px] truncate" dir="auto">#{tag}</span>
-            <X size={12} strokeWidth={2} />
-          </button>
-        {/if}
-        {#if folio.courses.length > 1}
-          <button
-            type="button"
-            class="{chip} {courseId === null
-              ? 'border-line-strong bg-selected text-text'
-              : 'border-line-subtle text-text-2 hover:bg-hover'}"
-            aria-pressed={courseId === null}
-            onclick={() => setCourse(null)}>All</button
-          >
-          {#each folio.courses as course (course.id)}
-            <button
-              type="button"
-              class="{chip} {courseId === course.id
-                ? 'border-line-strong bg-selected text-text'
-                : 'border-line-subtle text-text-2 hover:bg-hover'}"
-              aria-pressed={courseId === course.id}
-              onclick={() => setCourse(courseId === course.id ? null : course.id)}
-            >
-              <span class="size-2 shrink-0 rounded-full" style:background={PENCIL[course.color]}
-              ></span>
-              <span class="max-w-[140px] truncate" dir="auto">{course.name}</span>
-            </button>
-          {/each}
-        {/if}
+    {#if tag}
+      <div class="flex shrink-0 px-3 pb-2.5" role="toolbar" aria-label="Filter notes">
+        <button
+          type="button"
+          class="{chip} border-line-strong bg-press text-text"
+          aria-label="Stop filtering by #{tag}"
+          onclick={() => (tag = null)}
+        >
+          <span class="max-w-[200px] truncate" dir="auto">#{tag}</span>
+          <X size={12} strokeWidth={2} />
+        </button>
       </div>
     {/if}
 

@@ -49,12 +49,16 @@
       ] satisfies { view: Location["view"]; label: string; icon: Component }[]
     ).filter((place) => place.view !== "jobs" || studyingShown),
   );
+  /** A chat on its own shows in Chats, with the list beside it. */
+  const inChats = $derived(
+    here.view === "chats" || (here.view === "chat" && folio.layout.panes.length === 1),
+  );
   const openCourseId = $derived(
     here.view === "course" || here.view === "study"
       ? here.courseId
       : here.view === "document"
         ? (folio.document(here.documentId)?.courseId ?? null)
-        : here.view === "chat"
+        : here.view === "chat" && !inChats
           ? here.courseId
           : null,
   );
@@ -94,9 +98,9 @@
   );
   const shownNoteId = $derived(here.view === "notes" ? here.noteId : null);
 
-  /** ⌘-click opens a new tab, ⌥-click a pane beside the active one. */
+  /** A place fills the tab; ⌘-click opens it in a new tab. */
   function go(location: Location, event: MouseEvent): void {
-    folio.navigate(location, { newTab: event.metaKey || event.ctrlKey, beside: event.altKey });
+    folio.navigate(location, { newTab: event.metaKey || event.ctrlKey, fill: true });
   }
 </script>
 
@@ -114,7 +118,7 @@
 
   <div class="flex gap-1.5 px-2.5 pt-1">
     <button
-      class="flex h-8 flex-1 items-center gap-2 rounded-md border border-line-subtle bg-surface px-2 text-text-3 shadow-1 transition-colors hover:border-line hover:text-text-2"
+      class="flex h-8 flex-1 items-center gap-2 rounded-md bg-hover px-2 text-text-3 transition-colors hover:bg-press hover:text-text-2"
       onclick={() => (folio.paletteOpen = true)}
     >
       <Search size={14} strokeWidth={1.75} />
@@ -133,10 +137,10 @@
 
   <nav class="scroll-quiet mt-3 min-h-0 flex-1 overflow-y-auto px-2.5 pb-3">
     {#each places as place (place.view)}
-      {@const active = here.view === place.view}
+      {@const active = place.view === "chats" ? inChats : here.view === place.view}
       <button
         class="flex h-8 w-full items-center gap-2.5 rounded-md border px-2 transition-colors duration-150 {active
-          ? 'border-line-subtle bg-selected text-text shadow-1'
+          ? 'border-transparent bg-press text-text'
           : 'border-transparent text-text-2 hover:bg-hover hover:text-text'}"
         onclick={(event) =>
           go(
@@ -183,7 +187,7 @@
           class="flex h-8 w-full items-center gap-2.5 rounded-md px-2 text-text-2 transition-colors hover:bg-hover hover:text-text"
           title={proposal.reason || undefined}
           onclick={(event) =>
-            folio.openChat(proposal.chatId, { newTab: event.metaKey || event.ctrlKey })}
+            folio.openChat(proposal.chatId, { newTab: event.metaKey || event.ctrlKey, fill: true })}
         >
           <span class="relative shrink-0">
             <NotebookPen size={15} strokeWidth={1.75} />
@@ -202,7 +206,7 @@
           class="flex h-8 w-full items-center gap-2.5 rounded-md px-2 text-text-2 transition-colors hover:bg-hover hover:text-text"
           title="Folio waits for you to allow or deny this"
           onclick={(event) =>
-            folio.openChat(approval.chatId, { newTab: event.metaKey || event.ctrlKey })}
+            folio.openChat(approval.chatId, { newTab: event.metaKey || event.ctrlKey, fill: true })}
         >
           <span class="relative shrink-0">
             <Plug size={15} strokeWidth={1.75} />
@@ -220,7 +224,7 @@
           class="flex h-8 w-full items-center gap-2.5 rounded-md px-2 text-text-2 transition-colors hover:bg-hover hover:text-text"
           title={change.summary}
           onclick={(event) =>
-            folio.openChat(change.chatId, { newTab: event.metaKey || event.ctrlKey })}
+            folio.openChat(change.chatId, { newTab: event.metaKey || event.ctrlKey, fill: true })}
         >
           <span class="relative shrink-0">
             <Hand size={15} strokeWidth={1.75} />
@@ -247,10 +251,10 @@
         <button
           class="flex h-8 w-full items-center gap-2.5 rounded-md border px-2 transition-colors duration-150 {note.id ===
           shownNoteId
-            ? 'border-line-subtle bg-selected text-text shadow-1'
+            ? 'border-transparent bg-press text-text'
             : 'border-transparent text-text-2 hover:bg-hover hover:text-text'}"
           onclick={(event) =>
-            folio.openNote(note.id, { newTab: event.metaKey || event.ctrlKey })}
+            folio.openNote(note.id, { newTab: event.metaKey || event.ctrlKey, fill: true })}
         >
           <span class="flex size-[18px] shrink-0 items-center justify-center">
             <span
@@ -283,10 +287,10 @@
       {@const open = course.id === openCourseId}
       <button
         class="flex h-8 w-full items-center gap-2.5 rounded-md border px-2 transition-colors duration-150 {open
-          ? 'border-line-subtle bg-selected text-text shadow-1'
+          ? 'border-transparent bg-press text-text'
           : 'border-transparent text-text-2 hover:bg-hover hover:text-text'}"
         onclick={(event) =>
-          go({ view: "course", courseId: course.id, tab: "overview" }, event)}
+          go({ view: "course", courseId: course.id, tab: "materials" }, event)}
       >
         <CourseTile {course} />
         <span class="min-w-0 flex-1 truncate text-left font-medium" dir="auto"
@@ -356,7 +360,7 @@
     <button
       class="flex h-8 items-center gap-2.5 rounded-md border px-2 transition-colors {here.view ===
       'trash'
-        ? 'border-line-subtle bg-selected text-text shadow-1'
+        ? 'border-transparent bg-press text-text'
         : 'border-transparent text-text-2 hover:bg-hover hover:text-text'}"
       onclick={(event) => go({ view: "trash" }, event)}
     >

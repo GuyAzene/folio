@@ -26,7 +26,7 @@ async function stored(home: string, id: string): Promise<{ dueAt: string; role: 
 
 void describe("due dates", () => {
   void it("save the whole year typed, keeping the day and month, and a category change after it", async () => {
-    // The course's Materials list the assignment file with its card's due date.
+    // The course's Materials list the assignment file; its ··· menu opens its card's due date.
     const seeded = await seedLongNames((ids) => ({
       view: "course",
       courseId: ids.courseId,
@@ -36,15 +36,21 @@ void describe("due dates", () => {
     const app = await launch(seeded.home);
     running.push(app);
     const { page } = app;
-    const year = page.locator('[data-segment="year"]').first();
+    // Lectures, recitations, then assignments: the assignment's menu is the last one.
+    const more = page.getByRole("button", { name: /^More for / }).last();
+    await more.click();
+    await page.getByRole("menuitem", { name: "Due date and details" }).click();
+    const year = page.getByRole("dialog").locator('[data-segment="year"]').first();
     await year.waitFor();
     await year.click();
     for (const key of ["2", "0", "3", "1"]) await page.keyboard.press(key);
     await page.keyboard.press("Tab");
+    // Closed with its button: Escape would take the typing back.
+    await page.getByRole("dialog").getByRole("button", { name: "Close" }).click();
     // Right away, before the date has finished saving, the category changes too.
-    // Lectures, recitations, then assignments: the assignment's category menu is the last one.
-    await page.getByRole("combobox", { name: "Category" }).last().click();
-    await page.getByRole("option", { name: "Official solution" }).click();
+    await more.click();
+    await page.getByRole("menuitem", { name: /^Category/ }).click();
+    await page.getByRole("menuitem", { name: "Official solution" }).click();
     await page.waitForTimeout(800);
     const after = await stored(seeded.home, seeded.assignmentId);
     const [record] = await (await LibraryStore.open({ home: seeded.home })).listAssignments();

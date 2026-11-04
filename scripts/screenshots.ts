@@ -30,12 +30,13 @@ const sidebar = (page: Page, name: string) =>
   page.locator("aside").getByText(name, { exact: true }).first();
 
 /**
- * The automaton lecture at its slide, with the chat about it beside: a chat reopens beside the
- * page it was about. The question is scrolled to the top of the chat.
+ * The automaton lecture at its slide, with the chat about it beside: a chat opens beside the
+ * page it was about from Chats. The question is scrolled to the top of the chat.
  */
 async function besideLecture(page: Page): Promise<void> {
-  await sidebar(page, "Computational Models").click();
+  await sidebar(page, "Chats").click();
   await page.getByText("Why the start state is accepting", { exact: true }).click();
+  await page.getByRole("button", { name: /^Open beside/ }).click();
   await page.locator(".prose-folio svg").first().waitFor();
   const slide = page.locator('[data-page="3"]');
   await slide.locator("canvas").waitFor();
@@ -170,7 +171,7 @@ async function home(page: Page, theme: "light" | "dark"): Promise<void> {
 async function clip(page: Page, theme: "light" | "dark"): Promise<void> {
   await home(page, theme);
   await sidebar(page, "Computational Models").click();
-  await page.getByRole("button", { name: /^(Open|Resume)/ }).click();
+  await page.getByText("Lecture 1 Finite automata", { exact: true }).click();
   const slide = page.locator('[data-page="3"]');
   await slide.locator("canvas").waitFor();
   await slide.evaluate((element) => element.scrollIntoView({ block: "start" }));

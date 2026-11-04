@@ -95,15 +95,25 @@ the cursor is away, and waits for **Run** while its code is being written.
 
 ## Tabs and panes
 
-A tab holds one to three panes side by side, and each pane shows any place: a document, a chat,
-a note, study notes, a course or a list (`app/lib/layout.ts`, `app/components/Panes.svelte`). A
-tab's history is a history of these layouts, so Back undoes the last navigation, a pane opened
-or closed included; turning a page, resizing or maximizing a pane is no step of its own. Each
-pane's share of the width is part of the layout, held above each pane's minimum (more for a
-page than for a chat or a note); a window too narrow for every pane shows the active one, with
-the others as chips above it. The open tabs and their current layouts are saved in
-`workspace.json` (version 2; a version 1 file, from before panes, opens with the reader's old
-panel as a pane beside the document), and restoring them never starts model work.
+A tab holds one to three panes side by side (`app/lib/layout.ts`, `app/components/Panes.svelte`),
+and side by side always means a document with what the student keeps beside it: the tutor, a
+note or another document. Every other place (Home, a course, study notes, Chats, the Library,
+the board) fills its tab, and a split left with no document gives way to its active pane
+(`tidy`, applied to every navigation and to a restored workspace). The sidebar fills the tab
+whatever it opens; "Open beside" on a file puts it beside the document the tab was reading
+last. Only what sits beside the document has its own Close and Maximize; the document closes
+with its tab, and its header shows or hides the tutor (⌘J). A tab's history is a history of
+these layouts, so Back undoes the last navigation, a pane opened or closed included; turning a
+page, resizing or maximizing a pane is no step of its own. Each pane's share of the width is
+part of the layout, held above each pane's minimum (more for a page than for a chat or a note);
+a window too narrow for every pane shows the active one, with the others as chips above it. The
+open tabs and their current layouts are saved in `workspace.json` (version 2; a version 1 file,
+from before panes, opens with the reader's old panel as a pane beside the document), and
+restoring them never starts model work.
+
+A chat on its own shows in Chats, with every chat listed beside it, newest first; with none
+chosen, a new one. A chat about a lecture opens beside it again from its header ("Open beside"),
+or with ⌥-click in the list. Notes works the same way, with the open note beside its list.
 
 A chat follows the document pane in its tab used last. Each question carries that document's
 page, as long as the chat may read it, and the chat remembers the document and page as the
@@ -325,7 +335,7 @@ The student follows this, and nothing more: the Studying place lists what is bei
 each with one line of what Folio is doing and a bar, then what comes next in the order Folio will
 take it. One line appears only when something needs them (no connection, a used-up plan, a study
 that stopped). Finished studies leave the list, and no page counts what has been studied; a
-course's Overview shows a single "Studying …" line while Folio works on that course.
+course page shows a single "Studying …" line under its name while Folio works on that course.
 
 A study job plans the lecture and reads it at the same time. One request reads the lecture's whole
 text and the pages with the least of it, and returns the topics in teaching order with every page

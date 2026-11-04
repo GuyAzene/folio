@@ -104,12 +104,6 @@
         onpointerdowncapture={() => folio.activatePane(pane.id)}
         onfocusin={() => folio.activatePane(pane.id)}
       >
-        {#if shown.length > 1 && layout.recent[0] === pane.id}
-          <div
-            class="pointer-events-none absolute inset-x-0 top-0 z-10 h-[2px] bg-highlight"
-            aria-hidden="true"
-          ></div>
-        {/if}
         <PaneView tabId={tab.id} {pane} {layout} width={shown.length > 1 ? share * room : width} />
       </div>
     {/each}

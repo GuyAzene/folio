@@ -138,7 +138,9 @@ void describe("MCP servers", () => {
     // Settings: the server, its tools and a rule, and no secret anywhere on the page.
     await page.keyboard.press("Meta+,");
     await page.getByRole("button", { name: "MCP servers" }).click();
+    // In Settings: the chat list beside the open chat names a synthetic chat too.
     await page
+      .getByRole("dialog")
       .getByRole("button", { name: /Synthetic/ })
       .first()
       .click();

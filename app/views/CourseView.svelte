@@ -1,24 +1,16 @@
 <script lang="ts">
-  import {
-    Ellipsis,
-    History,
-    NotebookPen,
-    PencilLine,
-    Plus,
-    Trash2,
-    Upload,
-  } from "@lucide/svelte";
+  import { ArrowRight, Ellipsis, History, PencilLine, Plus, Trash2, Upload } from "@lucide/svelte";
   import { DropdownMenu } from "bits-ui";
   import ChatList from "../components/ChatList.svelte";
   import CourseDetailsDialog from "../components/CourseDetailsDialog.svelte";
-  import CourseOverview from "../components/CourseOverview.svelte";
   import Composer from "../components/Composer.svelte";
   import CourseTile from "../components/CourseTile.svelte";
   import DocumentTable from "../components/DocumentTable.svelte";
   import NoteRow from "../components/NoteRow.svelte";
   import StudyNotesList from "../components/StudyNotesList.svelte";
   import { COURSE_TABS, materialSections } from "../lib/course-tabs.ts";
-  import { formatDate } from "../lib/labels.ts";
+  import { relativeDue } from "../lib/labels.ts";
+  import { shortTitle } from "../lib/titles.ts";
   import { folio, type CourseTab } from "../lib/state.svelte.ts";
 
   let {
@@ -46,11 +38,38 @@
     course ? [course.code, course.term].filter(Boolean).join(" · ") : "",
   );
   const counts = $derived<Record<CourseTab, number>>({
-    overview: 0,
     materials: documents.length,
     study: knowledge?.pages ?? 0,
     notes: notes.length,
     chats: chats.length,
+  });
+
+  /** Work still to do in this course, soonest first. */
+  const due = $derived(
+    folio.assignments
+      .filter(
+        (item) =>
+          item.courseId === courseId &&
+          (item.status === "todo" || item.status === "doing") &&
+          !item.excused,
+      )
+      .sort((a, b) => (a.dueAt ?? "~").localeCompare(b.dueAt ?? "~")),
+  );
+  /** What Folio is studying in this course right now, and how much waits after it. */
+  const studying = $derived.by(() => {
+    const live = folio.jobs.filter(
+      (job) => job.courseId === courseId && (job.status === "running" || job.status === "queued"),
+    );
+    if (!live.length) return null;
+    const now = live.find((job) => job.status === "running" && job.kind === "ingest");
+    const document = folio.document(now?.documentIds[0]);
+    const waiting = live.filter((job) => job.status === "queued").length;
+    const what = document
+      ? `Studying ${shortTitle(document.title, course?.name)}`
+      : live.some((job) => job.kind === "regroup")
+        ? "Updating the study notes"
+        : "Studying soon";
+    return waiting ? `${what} · ${waiting} more after it` : what;
   });
 
   function ondrop(event: DragEvent): void {
@@ -106,11 +125,9 @@
     ondropcapture={() => (dragging = 0)}
     {ondrop}
   >
-    <div
-      class="mx-auto flex w-full max-w-[960px] flex-col px-8 pt-10 pb-16 max-sm:px-4"
-    >
+    <div class="mx-auto flex w-full max-w-[880px] flex-col px-10 pt-12 pb-16 max-sm:px-5">
       <div class="flex items-start gap-4">
-        <CourseTile {course} size={44} />
+        <CourseTile {course} size={40} />
         <div class="flex min-w-0 flex-1 flex-col gap-1">
           <h1
             class="truncate text-[24px] leading-8 font-semibold tracking-[-0.015em] text-text"
@@ -118,8 +135,42 @@
           >
             {course.name}
           </h1>
-          {#if details}
-            <span class="text-text-3">{details}</span>
+          {#if details || studying}
+            <p class="flex min-w-0 items-center gap-1.5 text-text-3">
+              {#if details}<span class="truncate" dir="auto">{details}</span>{/if}
+              {#if studying}
+                {#if details}<span aria-hidden="true">·</span>{/if}
+                <button
+                  class="inline-flex min-w-0 items-center gap-1.5 transition-colors hover:text-text"
+                  onclick={() => folio.navigate({ view: "jobs" })}
+                >
+                  <span class="size-1.5 shrink-0 animate-pulse rounded-full bg-highlight"></span>
+                  <span class="truncate" dir="auto">{studying}</span>
+                </button>
+              {/if}
+            </p>
+          {/if}
+          {#if due[0]}
+            {@const next = due[0]}
+            {@const late = !!next.dueAt && Date.parse(next.dueAt) < Date.now()}
+            <button
+              class="group mt-1 flex min-w-0 items-center gap-1.5 self-start text-left text-[13px] text-text-2 transition-colors hover:text-text"
+              onclick={() => folio.navigate({ view: "assignments" })}
+            >
+              <span class={late ? "font-medium text-danger" : "text-text-3"}
+                >{next.dueAt ? `Due ${relativeDue(next.dueAt, next.dueHasTime)}` : "To do"}</span
+              >
+              <span class="text-text-4" aria-hidden="true">·</span>
+              <span class="min-w-0 truncate" dir="auto">{next.title}</span>
+              {#if due.length > 1}
+                <span class="shrink-0 text-text-3">and {due.length - 1} more</span>
+              {/if}
+              <ArrowRight
+                size={12}
+                strokeWidth={2}
+                class="shrink-0 text-text-4 opacity-0 transition-opacity group-hover:opacity-100"
+              />
+            </button>
           {/if}
         </div>
         <div class="flex shrink-0 gap-1.5">
@@ -168,8 +219,20 @@
         </div>
       </div>
 
+      <div class="mt-7">
+        <Composer
+          bind:this={composer}
+          {paneId}
+          chatId={null}
+          {courseId}
+          slim
+          placeholder="Ask about {course.name}…"
+          onbeforesend={() => folio.navigate({ view: "chat", chatId: null, courseId })}
+        />
+      </div>
+
       <div
-        class="mt-7 flex items-end gap-6 overflow-x-auto border-b border-line-subtle [scrollbar-width:none]"
+        class="mt-9 flex items-end gap-6 overflow-x-auto border-b border-line-subtle [scrollbar-width:none]"
         role="tablist"
       >
         {#each COURSE_TABS as candidate (candidate.tab)}
@@ -183,35 +246,13 @@
             onclick={() => folio.update({ tab: candidate.tab }, paneId)}
           >
             {candidate.label}
-            {#if candidate.tab !== "overview"}
-              <span class="text-[12px] font-normal text-text-3"
-                >{counts[candidate.tab]}</span
-              >
-            {/if}
+            <span class="text-[12px] font-normal text-text-3">{counts[candidate.tab]}</span>
           </button>
         {/each}
       </div>
 
-      <div class="mt-6">
-        {#if tab === "overview"}
-          <CourseOverview
-            {courseId}
-            ontab={(next) => folio.update({ tab: next }, paneId)}
-          >
-            {#snippet ask()}
-              <Composer
-                bind:this={composer}
-                {paneId}
-                chatId={null}
-                {courseId}
-                slim
-                placeholder="Ask about {course.name}…"
-                onbeforesend={() =>
-                  folio.navigate({ view: "chat", chatId: null, courseId })}
-              />
-            {/snippet}
-          </CourseOverview>
-        {:else if tab === "study"}
+      <div class="mt-5">
+        {#if tab === "study"}
           <StudyNotesList {courseId} />
         {:else if tab === "notes"}
           {#if notes.length}
@@ -241,7 +282,7 @@
             empty="No chats in this course yet. Ask above to start one."
           />
         {:else if sections.length}
-          <div class="flex flex-col gap-4">
+          <div class="flex flex-col gap-6">
             {#each sections as section (section.category.id)}
               <DocumentTable
                 title={section.category.plural}
@@ -249,7 +290,6 @@
                 showStudy={section.category.kind === "lecture" ||
                   section.category.kind === "recitation"}
                 showDue={section.category.kind === "assignment"}
-                showNumber
               />
             {/each}
           </div>

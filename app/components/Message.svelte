@@ -193,8 +193,9 @@
   {@const whole = writtenDirection(estimateDirection(text)) ?? "ltr"}
   <div class="flex flex-col">
     {#each text.split("\n") as line, index (index)}
+      <!-- Spaces are kept as typed and wrap with the line, rather than hang past its edge. -->
       <span
-        class="min-h-6 whitespace-pre-wrap wrap-anywhere"
+        class="min-h-6 whitespace-break-spaces wrap-anywhere"
         dir={writtenDirection(estimateDirection(line)) ?? whole}>{line}</span
       >
     {/each}

@@ -239,8 +239,8 @@
 {/snippet}
 
 <div class="flex h-full min-h-0 flex-col">
-  <header class="flex flex-wrap items-center gap-2 px-8 pt-8 pb-4 max-sm:px-4">
-    <h1 class="mr-2 text-[22px] leading-8 font-semibold tracking-[-0.02em] text-text">
+  <header class="flex flex-wrap items-center gap-2 px-10 pt-12 pb-5 max-sm:px-5">
+    <h1 class="mr-2 text-[24px] leading-8 font-semibold tracking-[-0.015em] text-text">
       Assignments
     </h1>
     <div
@@ -323,7 +323,7 @@
   {#if view === "board"}
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div
-      class="scroll-quiet grid min-h-0 flex-1 auto-rows-min grid-cols-4 gap-5 overflow-y-auto px-8 pb-10 max-lg:grid-cols-2 max-sm:grid-cols-1 max-sm:px-4"
+      class="scroll-quiet grid min-h-0 flex-1 auto-rows-min grid-cols-4 gap-5 overflow-y-auto px-10 pb-10 max-lg:grid-cols-2 max-sm:grid-cols-1 max-sm:px-5"
       onkeydown={walk}
     >
       {#each columns as column (column.status)}
@@ -390,7 +390,7 @@
       {/each}
     </div>
   {:else}
-    <div class="scroll-quiet min-h-0 flex-1 overflow-y-auto px-8 pb-12 max-sm:px-4">
+    <div class="scroll-quiet min-h-0 flex-1 overflow-y-auto px-10 pb-12 max-sm:px-5">
       <div class="mx-auto flex max-w-[760px] flex-col gap-7">
         {#each groups as group (group.key)}
           <section class="flex flex-col gap-1">

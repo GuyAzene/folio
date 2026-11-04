@@ -29,13 +29,18 @@
     >
       <button
         class="flex h-10 min-w-0 flex-1 items-center gap-3 px-2 text-left"
-        onclick={(event) =>
-          event.altKey
-            ? folio.navigate(
-                { view: "chat", chatId: chat.id, courseId: chat.courseId },
-                { beside: true },
-              )
-            : folio.openChat(chat.id, { newTab: event.metaKey || event.ctrlKey })}
+        onclick={(event) => {
+          // A chat opens in Chats, with this list beside it; ⌥-click, beside its lecture.
+          if (event.altKey || event.metaKey || event.ctrlKey)
+            folio.openChat(chat.id, { newTab: event.metaKey || event.ctrlKey });
+          else {
+            folio.chatsCourse = showCourse ? null : chat.courseId;
+            folio.navigate(
+              { view: "chat", chatId: chat.id, courseId: chat.courseId },
+              { fill: true },
+            );
+          }
+        }}
       >
         {#if showCourse && course}<CourseTile
             {course}

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ChevronDown, FileText, MessageSquare, SquarePen } from "@lucide/svelte";
+  import { ChevronDown, FileText, MessageSquare, PanelLeft, SquarePen } from "@lucide/svelte";
   import { DropdownMenu } from "bits-ui";
   import ChatPane from "../components/ChatPane.svelte";
   import CourseTile from "../components/CourseTile.svelte";
@@ -170,9 +170,10 @@
       </DropdownMenu.Root>
       <span class="flex-1"></span>
       {#if focus && source && sourceDocument}
+        <!-- The document is right beside the chat: the page is what the chat starts from. -->
         <button
-          class="{pill} shrink text-[12px]"
-          title="Folio starts from the page you are on"
+          class="{pill} shrink-0 text-[12px]"
+          title="Folio starts from page {source.location.page} of {title(sourceDocument)}"
           onclick={() => {
             // Maximized, the chat gives the page its room back.
             if (place?.maximized) folio.toggleMaximized(paneId);
@@ -180,8 +181,7 @@
           }}
         >
           <FileText size={11} strokeWidth={1.75} class="shrink-0" />
-          <span class="min-w-0 truncate" dir="auto">{title(sourceDocument)}</span>
-          <span class="shrink-0 tabular-nums">· p. {source.location.page}</span>
+          <span class="shrink-0 tabular-nums">p. {source.location.page}</span>
         </button>
       {:else if elsewhere && sourceDocument}
         <span
@@ -195,41 +195,48 @@
       </IconButton>
       <PaneControls />
     </div>
-  {:else if course}
-    <div
-      class="flex min-h-9 shrink-0 flex-wrap items-center justify-center gap-x-2 gap-y-1 px-4 py-1.5 text-[12px] text-text-3"
-    >
-      <span>Folio reads</span>
-      {#each [course, ...addedCourses] as read (read.id)}
-        <button
-          class={pill}
-          onclick={() => folio.navigate({ view: "course", courseId: read.id, tab: "materials" })}
+  {:else}
+    <!-- A chat on its own: its name, what it may read, and the lecture it was about. -->
+    <div class="@container flex h-12 shrink-0 items-center gap-2 pr-3 pl-5 text-[12px] text-text-3">
+      <span class="min-w-[96px] flex-1 truncate text-[13px] font-medium text-text" dir="auto"
+        >{location.chatId ? (chat?.title ?? "") : "New chat"}</span
+      >
+      {#if course}
+        <span class="shrink-0 @max-[640px]:hidden" title="Folio reads these and nothing else"
+          >Reads</span
         >
-          <CourseTile course={read} size={12} /><span class="min-w-0 truncate" dir="auto"
-            >{read.name}</span
+        {#each [course, ...addedCourses] as read (read.id)}
+          <button
+            class="{pill} shrink-0"
+            title="Folio reads {read.name} and nothing else"
+            onclick={() => folio.navigate({ view: "course", courseId: read.id, tab: "materials" })}
           >
-        </button>
-      {/each}
-      {#each addedDocuments as document (document.id)}
-        <button
-          class={pill}
-          onclick={() => folio.openDocument(document.id, 1, { chatId: location.chatId })}
-        >
-          <FileText size={11} strokeWidth={1.75} class="shrink-0" /><span
-            class="min-w-0 truncate"
-            dir="auto">{title(document)}</span
+            <CourseTile course={read} size={12} /><span
+              class="max-w-[140px] min-w-0 truncate"
+              dir="auto">{read.name}</span
+            >
+          </button>
+        {/each}
+        {#each addedDocuments as document (document.id)}
+          <button
+            class="{pill} shrink-0"
+            onclick={() => folio.openDocument(document.id, 1, { chatId: location.chatId })}
           >
-        </button>
-      {/each}
-      <span>and nothing else</span>
+            <FileText size={11} strokeWidth={1.75} class="shrink-0" /><span
+              class="max-w-[140px] min-w-0 truncate"
+              dir="auto">{title(document)}</span
+            >
+          </button>
+        {/each}
+      {/if}
       {#if remembered}
         {@const page = folio.chats.find((summary) => summary.id === location.chatId)?.focus?.page}
         <button
-          class="{pill} ml-2"
-          title="Open the chat beside the document it was about"
+          class="ml-1 flex h-7 max-w-[240px] min-w-[112px] shrink items-center gap-1.5 rounded-md border border-line px-2 text-[12px] font-medium text-text-2 transition-colors hover:bg-hover hover:text-text"
+          title="Open the chat beside {remembered.title}, at the page it was on"
           onclick={() => folio.openDocument(remembered.id, page ?? 1, { chatId: location.chatId })}
         >
-          <FileText size={11} strokeWidth={1.75} class="shrink-0" /><span
+          <PanelLeft size={13} strokeWidth={1.75} class="shrink-0" /><span
             class="min-w-0 truncate"
             dir="auto">Open beside {title(remembered)}</span
           >

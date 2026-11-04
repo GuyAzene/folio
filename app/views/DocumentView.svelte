@@ -154,11 +154,15 @@
           <NotebookPen size={15} strokeWidth={1.75} />
         </IconButton>
       {/if}
-      {#if !chatOpen}
-        <IconButton label="Ask Folio" shortcut="⌘J" onclick={askFolio}>
-          <PanelRight size={15} strokeWidth={1.75} />
-        </IconButton>
-      {/if}
+      <!-- The tutor beside the document, shown or hidden; the same as ⌘J. -->
+      <IconButton
+        label={chatOpen ? "Hide Folio" : "Ask Folio"}
+        shortcut="⌘J"
+        class={chatOpen ? "bg-press text-text" : ""}
+        onclick={() => (chatOpen ? folio.toggleFolio() : askFolio())}
+      >
+        <PanelRight size={15} strokeWidth={1.75} />
+      </IconButton>
       <PaneControls />
     </div>
     <div class="relative min-h-0 flex-1">
