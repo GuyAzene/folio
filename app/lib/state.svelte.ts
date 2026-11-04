@@ -1194,19 +1194,34 @@ class FolioState {
       .catch(() => undefined);
   }
 
+  /**
+   * A first question's chat now exists, so the pane it was asked in shows it: in the tab as it
+   * is, and in the layouts Back returns to, since the pane may have given way meanwhile (a
+   * course opened from the sidebar while the answer was on its way). A question asked from the
+   * Chats list, before any chat was chosen, turns that pane into the chat. Only a pane still
+   * waiting for its question changes: a second call for the same question (its event and its
+   * reply both arrive) finds nothing left to do.
+   */
   #adopt(paneId: string, chatId: string): void {
-    const location = this.locationOf(paneId);
-    if (location.view === "chat" && location.chatId === null) this.update({ chatId }, paneId);
-    // A question asked from the Chats list, before any chat was chosen: the pane shows it now.
-    else if (location.view === "chats")
-      this.update(
-        {
-          view: "chat",
-          chatId,
-          courseId: this.pending[paneId]?.courseId ?? null,
-        } as Partial<Location>,
-        paneId,
-      );
+    const asked = this.pending[paneId];
+    const shown = (location: Location): Location | null =>
+      !asked
+        ? null
+        : location.view === "chat" && location.chatId === null
+          ? { ...location, chatId }
+          : location.view === "chats"
+            ? { view: "chat", chatId, courseId: asked.courseId }
+            : null;
+    let moved = false;
+    for (const tab of this.tabs)
+      tab.history = tab.history.map((layout) => {
+        const pane = layout.panes.find((candidate) => candidate.id === paneId);
+        const next = pane && shown(pane.location);
+        if (!next) return layout;
+        moved = true;
+        return withLocation(layout, paneId, next);
+      });
+    if (moved) this.#changed();
     if (!this.chatViews[chatId] && this.pending[paneId])
       this.chatViews[chatId] = { ...this.pending[paneId]!, id: chatId };
     delete this.pending[paneId];
