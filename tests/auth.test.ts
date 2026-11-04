@@ -42,7 +42,20 @@ describe("Folio ChatGPT connection", () => {
     expect((await stat(home)).mode & 0o777).toBe(0o700);
     expect((await stat(resolve(home, "connection.json"))).mode & 0o777).toBe(0o600);
     expect(JSON.parse(await readFile(resolve(home, "connection.json"), "utf8")).version).toBe(1);
+    // Logging out ends the session at OpenAI; here OpenAI is a stub that confirms it.
+    const revoked: string[] = [];
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/.well-known/openid-configuration"))
+        return Response.json({
+          issuer: "https://auth.openai.com",
+          jwks_uri: "https://auth.openai.com/.well-known/jwks.json",
+          revocation_endpoint: "https://auth.openai.com/api/accounts/oauth/revoke",
+        });
+      revoked.push(String(new URLSearchParams(init?.body as URLSearchParams).get("token")));
+      return new Response(null, { status: 200 });
+    });
     await restarted.models.logout("openai");
+    expect(revoked).toEqual(["synthetic-refresh"]);
     expect(await readConnectionStatus(first.store)).toEqual({ connected: false });
     expect((await createFolioModels({ home })).store.getDeviceId()).toBe(first.store.getDeviceId());
   });
