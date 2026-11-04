@@ -282,14 +282,24 @@ export async function signInWithChatGPT(
       url: url.toString(),
       instructions: "Finish signing in in your browser.",
     });
-    const pasted = interaction
-      .prompt({
-        type: "manual_code",
-        message: "Finish signing in in your browser, or paste the address it ends on here:",
-        placeholder: redirectUri,
-        signal: AbortSignal.any([pasting.signal, signal]),
-      })
-      .then((input) => pastedCallback(input, redirectUri, state));
+    // A pasted address that isn't this sign-in's is answered and asked for again, as a stray
+    // callback is ignored, so the browser can still finish the sign-in meanwhile.
+    const pasted = (async () => {
+      for (;;) {
+        const input = await interaction.prompt({
+          type: "manual_code",
+          message: "Finish signing in in your browser, or paste the address it ends on here:",
+          placeholder: redirectUri,
+          signal: AbortSignal.any([pasting.signal, signal]),
+        });
+        try {
+          return pastedCallback(input, redirectUri, state);
+        } catch (error) {
+          if (!(error instanceof SignInError)) throw error;
+          interaction.notify({ type: "info", message: error.message });
+        }
+      }
+    })();
     const aborted = new Promise<never>((_, reject) => {
       if (signal.aborted) reject(signal.reason);
       signal.addEventListener("abort", () => reject(signal.reason), { once: true });
@@ -299,10 +309,11 @@ export async function signInWithChatGPT(
     stopListening(callback.server);
 
     if ("error" in answer) {
-      if (!saved && answer.clientId && answer.clientId !== REGISTER)
-        await store.saveRegistration({ clientId: answer.clientId, askConsent: true });
       if (answer.error === "access_denied") {
+        // Declining still leaves a registered client; the next sign-in asks for consent with it.
         if (saved) await store.saveRegistration({ ...saved, askConsent: true });
+        else if (answer.clientId && answer.clientId !== REGISTER)
+          await store.saveRegistration({ clientId: answer.clientId, askConsent: true });
         throw new SignInError(
           "Folio isn't allowed to use your ChatGPT plan. Connect again when you want to allow it.",
         );
@@ -356,31 +367,30 @@ export async function signInWithChatGPT(
       clientId,
       scopes: token.scopes,
     };
-    let identity: { subject: string; email?: string };
+    // From here a session exists at OpenAI. Unless Folio keeps it, it is ended, without the
+    // sign-in's signal: a cancelled sign-in must not leave a live session behind.
     try {
-      identity = await verifyIdentity(token.idToken, clientId, nonce, signal);
+      const identity = await verifyIdentity(token.idToken, clientId, nonce, signal);
+      if (saved?.subject && identity.subject !== saved.subject)
+        throw new SignInError(
+          saved.email
+            ? `This Folio is connected to ${saved.email}. Choose that ChatGPT account to sign in.`
+            : "That is a different ChatGPT account from the one this Folio is connected to. Choose that account to sign in.",
+        );
+      const registration: ChatGPTRegistration = { clientId, ...identity };
+      if (!token.scopes.includes(PLAN_SCOPE)) {
+        await store.saveRegistration({ ...registration, askConsent: true });
+        throw new SignInError(
+          "ChatGPT didn't let Folio use your plan. Connect again and allow Folio to use it.",
+        );
+      }
+      await store.saveRegistration(registration);
+      signal.throwIfAborted();
+      return credential;
     } catch (error) {
-      await endChatGPTSession(credential, signal).catch(() => false);
+      await endChatGPTSession(credential).catch(() => false);
       throw error;
     }
-    if (saved?.subject && identity.subject !== saved.subject) {
-      await endChatGPTSession(credential, signal).catch(() => false);
-      throw new SignInError(
-        saved.email
-          ? `This Folio is connected to ${saved.email}. Choose that ChatGPT account to sign in.`
-          : "That is a different ChatGPT account from the one this Folio is connected to. Choose that account to sign in.",
-      );
-    }
-    const registration: ChatGPTRegistration = { clientId, ...identity };
-    if (!token.scopes.includes(PLAN_SCOPE)) {
-      await store.saveRegistration({ ...registration, askConsent: true });
-      await endChatGPTSession(credential, signal).catch(() => false);
-      throw new SignInError(
-        "ChatGPT didn't let Folio use your plan. Connect again and allow Folio to use it.",
-      );
-    }
-    await store.saveRegistration(registration);
-    return credential;
   } finally {
     pasting.abort();
     stopListening(callback.server);

@@ -350,7 +350,8 @@ export class FolioCredentialStore implements CredentialStore {
       return;
     }
     if (providerId !== "openai") return;
-    await this.signOut(async () => false, options);
+    // Pi's logout ends here; it signs out as `signOutOfChatGPT` does.
+    await this.signOut((credential) => endChatGPTSession(credential, options?.signal), options);
   }
 
   /** Folio's ChatGPT registration, which outlives sign-out so a later sign-in reuses it. */
@@ -376,9 +377,10 @@ export class FolioCredentialStore implements CredentialStore {
   }
 
   /**
-   * Signs out of ChatGPT: `end` ends the session at OpenAI, under the lock so no refresh rotates
-   * the token meanwhile, then the tokens go and the registration stays. True when `end` confirmed
-   * it, or when there was no sign-in to end.
+   * Signs out of ChatGPT: `end` ends the session at OpenAI, then the tokens go and the
+   * registration stays. `end` runs under the lock, which a refresh waits for (at most about 16 s
+   * of retries): a refresh in between would rotate the token being revoked and leave its
+   * replacement alive. True when `end` confirmed it, or when there was no sign-in to end.
    */
   async signOut(
     end: (credential: OAuthCredential) => Promise<boolean>,
@@ -400,8 +402,11 @@ export class FolioCredentialStore implements CredentialStore {
 }
 
 /** Signs out of ChatGPT, ending the session at OpenAI; false when OpenAI didn't confirm it. */
-export function signOutOfChatGPT(store: FolioCredentialStore): Promise<boolean> {
-  return store.signOut((credential) => endChatGPTSession(credential));
+export function signOutOfChatGPT(
+  store: FolioCredentialStore,
+  options?: AuthOperationOptions,
+): Promise<boolean> {
+  return store.signOut((credential) => endChatGPTSession(credential, options?.signal), options);
 }
 
 /** `callbackPort` is for tests: the port the browser returns to after signing in. */

@@ -34,6 +34,10 @@ class FakeOpenAI {
   email = "student@example.test";
   scope = PLAN;
   revokeStatus = 200;
+  /** Runs when Folio fetches OpenAI's keys, after the token exchange. */
+  onKeys: (() => void) | undefined;
+  /** Holds revocation answers until it resolves. */
+  revokeGate: Promise<void> | undefined;
   nonce: string | undefined;
   signer: CryptoKey | undefined;
   #key!: { privateKey: CryptoKey; jwk: Record<string, unknown> };
@@ -55,6 +59,9 @@ class FakeOpenAI {
   async #fetch(input: string | URL | Request, init?: RequestInit): Promise<Response> {
     const url = new URL(input instanceof Request ? input.url : input);
     if (url.hostname === "127.0.0.1") return realFetch(input, init);
+    if (url.href === `${ISSUER}/.well-known/jwks.json`) this.onKeys?.();
+    // As fetch does, a request whose signal is already aborted never reaches OpenAI.
+    init?.signal?.throwIfAborted();
     const json = (body: unknown, status = 200) => Response.json(body, { status });
     if (url.href === `${ISSUER}/.well-known/openid-configuration`)
       return json({
@@ -66,6 +73,7 @@ class FakeOpenAI {
     const form = Object.fromEntries(init?.body instanceof URLSearchParams ? init.body : []);
     if (url.href === `${ISSUER}/api/accounts/oauth/revoke`) {
       this.revoked.push(form);
+      await this.revokeGate;
       return new Response(null, { status: this.revokeStatus });
     }
     if (url.href === `${ISSUER}/api/accounts/oauth/token`) {
@@ -141,40 +149,59 @@ class FakeOpenAI {
 
 /**
  * A student at the browser. By default each authorization URL is visited as `visit` says;
- * "wait" leaves it to the test, and "paste" pastes the address instead of returning to Folio.
+ * "wait" leaves it to the test, and "paste" pastes `pastes` and then the address the browser
+ * ended on, instead of returning to Folio. `notes` collects what Folio told the student.
  */
 function student(
   fake: FakeOpenAI,
   visit?: Visit,
   mode: "visit" | "wait" | "paste" = "visit",
-): ProviderAuthInteraction & { controller: AbortController; opened: Promise<URL> } {
+  pastes: (callback: URL) => string[] = () => [],
+): ProviderAuthInteraction & {
+  controller: AbortController;
+  opened: Promise<URL>;
+  notes: string[];
+} {
   const controller = new AbortController();
   let opened!: (url: URL) => void;
   const openedPromise = new Promise<URL>((resolve) => {
     opened = resolve;
   });
-  let paste: ((value: string) => void) | undefined;
+  const queue: string[] = [];
+  const notes: string[] = [];
+  let waiting: ((value: string) => void) | undefined;
+  const offer = () => {
+    if (waiting && queue.length) {
+      const answer = waiting;
+      waiting = undefined;
+      setTimeout(() => answer(queue.shift()!), 0);
+    }
+  };
   return {
     controller,
     opened: openedPromise,
+    notes,
     signal: controller.signal,
     prompt: (prompt) =>
       new Promise<string>((resolve, reject) => {
-        paste = resolve;
+        waiting = resolve;
         prompt.signal?.addEventListener(
           "abort",
           () => reject(new DOMException("Prompt closed.", "AbortError")),
           { once: true },
         );
+        offer();
       }),
     notify(event) {
+      if (event.type === "info") notes.push(event.message);
       if (event.type !== "auth_url") return;
       const url = new URL(event.url);
       opened(url);
       if (mode === "visit") void fake.visit(url, visit);
       else if (mode === "paste") {
         const callback = fake.approve(url, visit);
-        setTimeout(() => paste?.(callback.href), 0);
+        queue.push(...pastes(callback), callback.href);
+        offer();
       }
     },
   };
@@ -378,5 +405,99 @@ describe("Signing in with ChatGPT", () => {
     await expect(signingIn).rejects.toThrow();
     await expect(realFetch(callback)).rejects.toThrow();
     expect(fake.registered).toEqual([]);
+  });
+  it("asks again after a pasted address that isn't this sign-in's", async () => {
+    const { fake, models, store } = await setup();
+    const pasting = student(fake, undefined, "paste", (callback) => {
+      const stranger = new URL(callback);
+      stranger.searchParams.set("state", "someone-elses");
+      return ["not an address", "https://example.test/auth/callback?code=x", stranger.href];
+    });
+    await models.login("openai", "oauth", pasting);
+    expect(await readConnectionStatus(store)).toMatchObject({ connected: true });
+    expect(pasting.notes).toEqual([
+      "Paste the whole address the browser ended on.",
+      expect.stringContaining("The address should start with http://127.0.0.1:"),
+      "That address is from another sign-in. Connect again.",
+    ]);
+  });
+
+  it("ends the session when the sign-in is cancelled after the token exchange", async () => {
+    const { fake, models, store, saved } = await setup();
+    const interaction = student(fake);
+    fake.onKeys = () => interaction.controller.abort();
+    await expect(models.login("openai", "oauth", interaction)).rejects.toThrow();
+    await vi.waitFor(() => expect(fake.revoked).toHaveLength(1));
+    expect(fake.revoked[0]).toMatchObject({ client_id: "oaiapp_1" });
+    expect(await readConnectionStatus(store)).toEqual({ connected: false });
+    expect((await saved()).registration).toEqual({ clientId: "oaiapp_1" });
+  });
+
+  it("keeps a client from a first sign-in only when the student declined", async () => {
+    const { fake, saved, signIn } = await setup();
+    await expect(signIn({ callback: { code: undefined, error: "server_error" } })).rejects.toThrow(
+      "ChatGPT didn't finish connecting Folio",
+    );
+    expect((await saved()).registration).toBeUndefined();
+
+    await expect(signIn({ callback: { code: undefined, error: "access_denied" } })).rejects.toThrow(
+      "Folio isn't allowed to use your ChatGPT plan",
+    );
+    expect((await saved()).registration).toEqual({ clientId: "oaiapp_2", askConsent: true });
+
+    expect((await signIn()).clientId).toBe("oaiapp_2");
+    expect(fake.authorizations[2]!.searchParams.get("prompt")).toBe("consent");
+    expect(fake.registered).toEqual(["oaiapp_1", "oaiapp_2"]);
+  });
+
+  it("records the account of a registration saved before Folio kept one", async () => {
+    const { fake, store, saved, signIn } = await setup();
+    await store.saveRegistration({ clientId: "oaiapp_earlier" });
+    // Nothing says which account it was, so the first verified sign-in decides it.
+    fake.subject = "whoever-signed-in";
+    await signIn();
+    expect((await saved()).registration).toEqual({
+      clientId: "oaiapp_earlier",
+      subject: "whoever-signed-in",
+      email: "student@example.test",
+    });
+    await signOutOfChatGPT(store);
+    fake.subject = "someone-else";
+    await expect(signIn()).rejects.toThrow("This Folio is connected to student@example.test.");
+  });
+
+  it("makes a refresh wait for sign-out, so the revoked session is never renewed", async () => {
+    const { fake, models, store, saved } = await setup();
+    await store.modify("openai", async () => ({
+      type: "oauth",
+      access: "synthetic-access",
+      refresh: "synthetic-refresh",
+      expires: 1,
+      clientId: "oaiapp_earlier",
+      scopes: PLAN.split(" "),
+    }));
+    let open!: () => void;
+    fake.revokeGate = new Promise((resolve) => {
+      open = resolve;
+    });
+    const signingOut = signOutOfChatGPT(store);
+    await vi.waitFor(() => expect(fake.revoked).toHaveLength(1));
+    const renewing = models.getAuth("openai").catch((error: unknown) => error);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    open();
+    expect(await signingOut).toBe(true);
+    expect(await renewing).toBeUndefined();
+    expect(fake.tokenRequests).toEqual([]);
+    expect((await saved()).credential).toBeUndefined();
+  });
+
+  it("ends the session at OpenAI through Pi's logout too", async () => {
+    const { fake, models, store, signIn } = await setup();
+    const credential = await signIn();
+    await models.logout("openai");
+    expect(fake.revoked).toEqual([
+      { token: credential.refresh, token_type_hint: "refresh_token", client_id: "oaiapp_1" },
+    ]);
+    expect(await readConnectionStatus(store)).toEqual({ connected: false });
   });
 });
