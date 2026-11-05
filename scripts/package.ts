@@ -21,6 +21,7 @@ const SOURCES = [
   "src",
   "tests/fixtures",
   "index.html",
+  "capture.html",
   "vite.config.ts",
   "svelte.config.js",
   "tsconfig.json",

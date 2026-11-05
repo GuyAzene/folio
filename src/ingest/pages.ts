@@ -200,6 +200,52 @@ export async function renderCrop(
   }
 }
 
+/**
+ * A region of a page, as fractions of it (`[left, top, right, bottom]` from the top-left), on
+ * white paper: a closer look at small notation, or a figure kept in a note. Up to about 400 DPI,
+ * capped so the long edge is at most maxEdge pixels.
+ */
+export async function renderRegion(
+  doc: SourceDocument,
+  pageNumber: number,
+  [left, top, right, bottom]: Box,
+  {
+    maxEdge = DEFAULT_MAX_EDGE,
+    format = "jpeg",
+    quality = 85,
+  }: { maxEdge?: number; format?: "jpeg" | "png"; quality?: number } = {},
+): Promise<{ data: Uint8Array; width: number; height: number }> {
+  const page = await doc.getPage(pageNumber);
+  try {
+    const { width, height } = pageViewport(page);
+    const box: Box = [left * width, top * height, right * width, bottom * height];
+    const scale = Math.min(CROP_DPI / 72, maxEdge / Math.max(box[2] - box[0], box[3] - box[1]));
+    const canvas = createCanvas(
+      Math.max(1, Math.min(maxEdge, Math.round((box[2] - box[0]) * scale))),
+      Math.max(1, Math.min(maxEdge, Math.round((box[3] - box[1]) * scale))),
+    );
+    const context = canvas.getContext("2d");
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    const viewport = page.getViewport({
+      scale,
+      offsetX: -box[0] * scale,
+      offsetY: -box[1] * scale,
+    });
+    const target = canvas as unknown as Parameters<PDFPageProxy["render"]>[0]["canvas"];
+    await page.render({ canvas: target, viewport }).promise;
+    const data =
+      format === "png" ? await canvas.encode("png") : await canvas.encode("jpeg", quality);
+    return {
+      data: new Uint8Array(data.buffer, data.byteOffset, data.byteLength),
+      width: canvas.width,
+      height: canvas.height,
+    };
+  } finally {
+    page.cleanup();
+  }
+}
+
 export interface PageTextItem {
   /** pdf.js's text for this run, in logical order within the run. */
   str: string;

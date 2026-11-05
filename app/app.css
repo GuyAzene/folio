@@ -4,6 +4,8 @@
 
 /* Folio design tokens (Paper: Folio — Design System). Light is the default theme. */
 :root {
+  /* Math in notes and long-form reading, against 17px serif text: KaTeX's own 1.21em reads large. */
+  --reading-math: 1.1em;
   --bg: #f3f3f4;
   --surface: #ffffff;
   --raised: #ffffff;
@@ -174,6 +176,9 @@
 /* Rendered Markdown in Folio's replies. */
 /* Long-form reading (notes, Markdown documents): larger headings than chat replies. */
 @utility prose-reading {
+  & .katex {
+    font-size: var(--reading-math);
+  }
   & h1 {
     font-size: 28px;
     line-height: 36px;
@@ -342,10 +347,13 @@
   & .math .katex-display {
     margin: 0.4em 0;
   }
-  /* An inline formula never breaks across lines: split inside Hebrew text, its pieces read
-     in the wrong order. */
+  /* An inline formula breaks across lines only between its terms, and only in a line that reads
+     left to right: split inside Hebrew text, its pieces read in the wrong order. */
   & .math[data-mode="inline"] {
     white-space: nowrap;
+  }
+  & [dir="ltr"] > .math[data-mode="inline"] {
+    white-space: normal;
   }
   /* Math that is still being written shows as its source until it closes. */
   & .math-pending {
@@ -424,6 +432,16 @@
     animation-iteration-count: 1 !important;
     transition-duration: 1ms !important;
   }
+}
+
+/* An inline formula wider than its line, such as a set-builder with rows of words, scrolls inside
+   itself instead of pushing the page sideways (markWideMath sets the class). */
+.math.math-wide {
+  display: inline-block;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  vertical-align: middle;
 }
 
 /* KaTeX's fonts have no Hebrew: Hebrew inside \text{} falls back to the Hebrew serif. */

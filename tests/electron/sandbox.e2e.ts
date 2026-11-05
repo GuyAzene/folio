@@ -140,6 +140,7 @@ void describe("Demos in Folio's window", () => {
       attempt("storage", () => localStorage.getItem("canary"));
       attempt("cookie", () => document.cookie);
       attempt("folio page", () => fetch("folio://app/index.html"));
+      attempt("note figure", () => fetch("folio-note://00000000-0000-4000-8000-000000000001/" + "a".repeat(64) + ".png"));
       attempt("folio api", () => parent.folio.bootstrap());
       attempt("rtc", () => new RTCPeerConnection());
       Promise.allSettled(pending).then(() => {
@@ -173,7 +174,7 @@ void describe("Demos in Folio's window", () => {
     for (const line of ["parent", "parent canary", "storage", "cookie", "folio api"])
       assert.match(tries, new RegExp(`^${line}: (SecurityError|TypeError)`, "m"), line);
     // Requests that return a promise must fail, not merely go unrecorded.
-    for (const line of ["fetch", "beacon", "folio page"])
+    for (const line of ["fetch", "beacon", "folio page", "note figure"])
       assert.doesNotMatch(tries, new RegExp(`^${line}: reached`, "m"), line);
     assert.doesNotMatch(tries, /: reached$/m);
     assert.equal(

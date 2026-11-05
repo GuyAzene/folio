@@ -1,5 +1,11 @@
 import type { ImageContent } from "@earendil-works/pi-ai";
-import { closeSource, openSource, renderPageJpeg, type SourceDocument } from "../ingest/pages.ts";
+import {
+  closeSource,
+  openSource,
+  renderPageJpeg,
+  renderRegion,
+  type SourceDocument,
+} from "../ingest/pages.ts";
 import { pdfPageText } from "./pdf.ts";
 import type { DocumentRecord, LibraryStore } from "./store.ts";
 
@@ -34,6 +40,30 @@ export class PageReader {
 
   fileImage(fileId: string, page: number, load: () => Promise<Uint8Array>): Promise<Uint8Array> {
     return this.#image(fileId, page, () => this.#source(`file:${fileId}`, load));
+  }
+
+  /**
+   * A region of a page, as fractions of it (`[left, top, right, bottom]` from the top-left): a
+   * JPEG for a closer look, or a PNG for a figure kept in a note.
+   */
+  async region(
+    document: DocumentRecord,
+    page: number,
+    region: RegionBox,
+    options?: RegionOptions,
+  ): Promise<Uint8Array> {
+    return (await renderRegion(await this.#document(document), page, region, options)).data;
+  }
+
+  async fileRegion(
+    fileId: string,
+    page: number,
+    load: () => Promise<Uint8Array>,
+    region: RegionBox,
+    options?: RegionOptions,
+  ): Promise<Uint8Array> {
+    const doc = await this.#source(`file:${fileId}`, load);
+    return (await renderRegion(doc, page, region, options)).data;
   }
 
   #image(hash: string, page: number, open: () => Promise<SourceDocument>): Promise<Uint8Array> {
@@ -77,6 +107,13 @@ export class PageReader {
     }
     return opening;
   }
+}
+
+/** `[left, top, right, bottom]`, each a fraction of the page from its top-left corner. */
+export type RegionBox = [number, number, number, number];
+export interface RegionOptions {
+  maxEdge?: number;
+  format?: "jpeg" | "png";
 }
 
 /** A page image as model input. */

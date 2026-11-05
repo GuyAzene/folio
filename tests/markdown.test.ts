@@ -250,3 +250,81 @@ describe("diagrams", () => {
     expect(rendered(`Before\n\n${tall}\n\nAfter`, { note: true })).toContain("note-drawing");
   });
 });
+
+describe("notes drawn for a picture", () => {
+  const withoutLines = (out: string) => out.replace(/ data-line="\d+"/g, "");
+
+  it("mark each block with the line it starts on, and change nothing else", () => {
+    const note = [
+      "# Title",
+      "",
+      "A line with $x$.",
+      "Its next line.",
+      "",
+      "$$",
+      "y^2",
+      "$$",
+      "",
+      "- one",
+      "- two",
+      "",
+      "| a | b |",
+      "| --- | --- |",
+      "| 1 | 2 |",
+      "",
+      '<div style="background:#eee">',
+      "",
+      "Inside.",
+      "",
+      "</div>",
+      "",
+      "```mermaid",
+      "graph LR",
+      "  A --> B",
+      "```",
+    ].join("\n");
+    const marked = html(note, { note: true, sourceLines: true });
+    expect([...marked.matchAll(/data-line="(\d+)"/g)].map((match) => Number(match[1]))).toEqual([
+      1, 3, 6, 10, 13, 17, 19,
+    ]);
+    // A closing tag alone, and a diagram, have no element of their own to mark.
+    expect(withoutLines(marked)).toBe(html(note, { note: true }));
+    // A formula keeps its line through filling in KaTeX.
+    expect(fillMath(marked)).toMatch(/<div class="math"[^>]* data-line="6">/);
+  });
+
+  it("change nothing but the marks, for any note", () => {
+    const piece = fc.constantFrom(
+      "# Heading",
+      "Text with $a+b$ in it.",
+      "שורה בעברית",
+      "- item",
+      "1. first",
+      "> quoted",
+      "$$\nx\n$$",
+      "| a |\n| - |\n| 1 |",
+      "<div>\n\nInside\n\n</div>",
+      "```\ncode\n```",
+      "",
+      "---",
+    );
+    fc.assert(
+      fc.property(fc.array(piece, { maxLength: 10 }), (pieces) => {
+        const note = pieces.join("\n\n");
+        expect(withoutLines(html(note, { note: true, sourceLines: true }))).toBe(
+          html(note, { note: true }),
+        );
+      }),
+      { numRuns: 200 },
+    );
+  });
+
+  it("size a figure written with a width, as Obsidian does", () => {
+    expect(html("![A gadget|360](assets/figure.png)", { note: true })).toContain(
+      '<img src="assets/figure.png" alt="A gadget" width="360">',
+    );
+    expect(html("![Plain](assets/figure.png)", { note: true })).toContain(
+      '<img src="assets/figure.png" alt="Plain">',
+    );
+  });
+});

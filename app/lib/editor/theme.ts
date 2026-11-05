@@ -84,7 +84,11 @@ export const noteTheme = EditorView.theme({
 
   // Math
   ".cm-math-source": { fontFamily: "var(--font-mono)", fontSize: "0.8em", color: "var(--text-2)" },
-  ".cm-math.cm-math": { whiteSpace: "nowrap" },
+  // As in the reading view: math at the reading size, and an inline formula breaks between its
+  // terms only in a line that reads left to right.
+  ".cm-math .katex, .cm-math-block .katex": { fontSize: "var(--reading-math)" },
+  ".cm-math.cm-math": { whiteSpace: "normal" },
+  ".cm-line[dir=rtl] .cm-math.cm-math": { whiteSpace: "nowrap" },
   ".cm-math-block": {
     display: "block",
     padding: "6px 0",

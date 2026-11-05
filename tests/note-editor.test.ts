@@ -251,6 +251,50 @@ describe("live preview", () => {
     ]);
   });
 
+  it("renders a heading written with HTML, such as a centered, underlined title", () => {
+    const title = '<span style="display:block;text-align:center"><u>Exercise 3</u></span>';
+    const doc = `# ${title}\n\nText`;
+    const state = note(doc, { cursor: doc.indexOf("Exercise") });
+    expect(widgets(state)).toEqual([["HtmlWidget", title]]);
+    expect(hidden(state)).toEqual(["# "]);
+    // Being edited, it shows as written.
+    expect(widgets(state, true)).toEqual([]);
+  });
+
+  it("draws a container opened on its own, its Markdown and its closing tag as one block", () => {
+    const block = '<div style="background-color:#ffb9bb">\n\n**Bold** and $x$\n\n</div>';
+    const doc = `Before\n\n${block}\n\nAfter $y$`;
+    expect(widgets(note(doc))).toEqual([
+      ["HtmlWidget", block],
+      ["MathWidget", "$y$"],
+    ]);
+    // Nothing inside it is decorated on its own.
+    const start = doc.indexOf("<div");
+    const end = start + block.length;
+    expect(
+      preview(note(doc)).filter(
+        (item) => item.from > start && item.to <= end && item.kind !== "line",
+      ),
+    ).toEqual([]);
+  });
+
+  it("closes a container at its own closing tag, inside or around others", () => {
+    const nested = "<div>\n\n<div>\n\ninner\n\n</div>\n\nouter\n\n</div>";
+    expect(widgets(note(`${nested}\n\nAfter`))).toEqual([["HtmlWidget", nested]]);
+    // Never closed: the opening tag alone, as before.
+    expect(widgets(note("<div>\n\ntext"))).toEqual([["HtmlWidget", "<div>"]]);
+  });
+
+  it("shows a container's source while the cursor is in it", () => {
+    const doc = '<div style="background:#eee">\n\ninside\n\n</div>';
+    const state = note(doc, { cursor: doc.indexOf("inside") });
+    expect(widgets(state, true)).toEqual([]);
+    const sources = preview(state, true)
+      .filter((item) => item.className === "cm-html-source")
+      .map((item) => state.doc.lineAt(item.from).number);
+    expect(sources).toEqual([1, 5]);
+  });
+
   it("renders links as their text and keeps the address for opening", () => {
     const state = note("see [the page](https://example.com) now");
     expect(hidden(state)).toEqual(["[", "](https://example.com)"]);

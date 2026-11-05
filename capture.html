@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- A note drawn for a picture: it loads only Folio's own files and the note's figures. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: folio-note:; font-src 'self' data:; connect-src 'self' ws://127.0.0.1:5173"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Folio note</title>
+  </head>
+  <!-- Notes sit on the pane's surface, not the app's background. -->
+  <body style="background: var(--surface)">
+    <div id="capture"></div>
+    <script type="module" src="/app/capture.ts"></script>
+  </body>
+</html>

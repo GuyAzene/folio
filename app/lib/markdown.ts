@@ -9,7 +9,9 @@ import {
   type DirectionEstimate,
 } from "./direction.ts";
 import { diagramHtml } from "./diagrams.ts";
+import { assetUrl, imageSize } from "../../src/library/asset-names.ts";
 import { BLOCK_MATH, INLINE_MATH, MATH_SPAN } from "./math-syntax.ts";
+import { readableText, styleColors } from "./readable-text.ts";
 import { escapeHtml, renderTex } from "./tex.ts";
 
 /**
@@ -31,11 +33,18 @@ export interface RenderOptions {
    * data images, so a note cannot call out).
    */
   note?: boolean;
+  /** A note's course: its figures, written `assets/<file>`, load from that course's folder. */
+  assets?: string | null;
+  /** Marks each top-level block with the source line it starts on (`data-line`), for pictures. */
+  sourceLines?: boolean;
 }
 
 const REPLY_FORBIDS = ["style", "form", "input", "button", "img", "iframe"];
 // Notes keep GitHub task boxes (disabled inputs) and images.
 const NOTE_FORBIDS = ["style", "form", "button", "iframe"];
+
+/** What is being sanitized, for the hook below: a note, and which course's figures it may show. */
+let sanitizing: { note: boolean; assets: string | null } = { note: false, assets: null };
 
 // Without a DOM (tests in Node), DOMPurify has no hooks; the app always has one.
 if (DOMPurify.isSupported)
@@ -45,17 +54,37 @@ if (DOMPurify.isSupported)
       node.setAttribute("target", "_blank");
       node.setAttribute("rel", "noopener noreferrer");
     }
+    if (!sanitizing.note) return;
+    // A figure written `assets/<file>` loads from this note's own course, after DOMPurify has
+    // checked the address it was given: a note can never name another course's figures.
+    if (node.tagName === "IMG" && sanitizing.assets) {
+      const url = assetUrl(sanitizing.assets, node.getAttribute("src") ?? "");
+      if (url) node.setAttribute("src", url);
+    }
+    // A block colored by the note keeps readable text in dark mode too.
+    const style = node.getAttribute("style");
+    if (style) {
+      const { background, color } = styleColors(style);
+      const text = background && !color ? readableText(background) : null;
+      if (text) node.setAttribute("style", `${style.trim().replace(/;?$/, ";")} color:${text}`);
+    }
   });
 
 export function renderMarkdown(text: string, options: RenderOptions = {}): string {
-  return fillDiagrams(
-    fillMath(
-      DOMPurify.sanitize(markdownToHtml(text, options), {
-        USE_PROFILES: { html: true },
-        FORBID_TAGS: options.note ? NOTE_FORBIDS : REPLY_FORBIDS,
-      }),
-    ),
-  );
+  const html = markdownToHtml(text, options);
+  sanitizing = { note: !!options.note, assets: options.note ? (options.assets ?? null) : null };
+  try {
+    return fillDiagrams(
+      fillMath(
+        DOMPurify.sanitize(html, {
+          USE_PROFILES: { html: true },
+          FORBID_TAGS: options.note ? NOTE_FORBIDS : REPLY_FORBIDS,
+        }),
+      ),
+    );
+  } finally {
+    sanitizing = { note: false, assets: null };
+  }
 }
 
 /** Markdown to unsanitized HTML with math placeholders; exported for tests. */
@@ -75,11 +104,30 @@ export function markdownToHtml(text: string, options: RenderOptions = {}): strin
     note,
     tail,
   };
-  const html = markdown.parser(tokens);
+  const html = options.sourceLines ? withSourceLines(tokens) : markdown.parser(tokens);
   const direction = context.current;
   return pending
     ? `${html}<div class="math-pending" dir="ltr" data-after="${direction}">${escapeHtml(pending)}</div>`
     : html;
+}
+
+/**
+ * Each top-level block drawn with `data-line`, the 1-based line of the note it starts on, so a
+ * picture of the note can say which lines it shows. Otherwise exactly what the parser draws.
+ */
+function withSourceLines(tokens: ReturnType<typeof markdown.lexer>): string {
+  let line = 1;
+  return tokens
+    .map((token) => {
+      const start = line;
+      line += token.raw.split("\n").length - 1;
+      const html = markdown.parser(Object.assign([token], { links: tokens.links }));
+      // Diagrams and drawings are found by their exact placeholders; they keep the line before.
+      if (token.type === "space" || /^\s*<div class="(?:diagram|svg)-source"/.test(html))
+        return html;
+      return html.replace(/^(\s*<[A-Za-z][\w-]*\b[^>]*?)(\/?>)/, `$1 data-line="${start}"$2`);
+    })
+    .join("");
 }
 
 // ── Math ────────────────────────────────────────────────────────────────────
@@ -102,17 +150,17 @@ function placeholder(token: MathToken, tag: "span" | "div"): string {
 }
 
 const PLACEHOLDER =
-  /<(span|div) class="math" dir="ltr" data-tex="([^"]*)" data-mode="(inline|display)" data-open="([^"]*)">[^<]*<\/\1>/g;
+  /<(span|div) class="math" dir="ltr" data-tex="([^"]*)" data-mode="(inline|display)" data-open="([^"]*)"((?: data-line="\d+")?)>[^<]*<\/\1>/g;
 
 /** Puts KaTeX's output into each placeholder that survived sanitizing, with its TeX readable again. */
 export function fillMath(html: string): string {
   return html.replace(
     PLACEHOLDER,
-    (match, tag: string, encoded: string, mode: string, open: string) => {
+    (match, tag: string, encoded: string, mode: string, open: string, line: string) => {
       const tex = decoded(encoded);
       return tex === null
         ? match
-        : `<${tag} class="math" dir="ltr" data-tex="${escapeHtml(tex)}" data-mode="${mode}" data-open="${open}">${renderTex(tex, mode === "display")}</${tag}>`;
+        : `<${tag} class="math" dir="ltr" data-tex="${escapeHtml(tex)}" data-mode="${mode}" data-open="${open}"${line}>${renderTex(tex, mode === "display")}</${tag}>`;
     },
   );
 }
@@ -477,6 +525,12 @@ markdown.use({
         /^(\s*<[A-Za-z][\w-]*)(?![^>]*\sdir=)/,
         `$1 dir="${direction ?? context.current}"`,
       );
+    },
+    // `![A figure|360](…)` is 360 pixels wide, as in Obsidian.
+    image(token) {
+      const { alt, width } = imageSize(token.text);
+      const title = token.title ? ` title="${escapeHtml(token.title)}"` : "";
+      return `<img src="${escapeHtml(token.href)}" alt="${escapeHtml(alt)}"${width ? ` width="${width}"` : ""}${title}>`;
     },
     link(token) {
       const html = Renderer.prototype.link.call(this, token);

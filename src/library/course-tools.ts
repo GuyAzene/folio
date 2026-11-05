@@ -16,7 +16,9 @@ import { NoteConflictError } from "../notes.ts";
 import { SKILL_RULE } from "../skills/tool.ts";
 import { SERVICES_RULE } from "../mcp/tools.ts";
 import { appended, type CourseNote, type CourseNotes } from "./notes.ts";
-import { jpeg, PageReader } from "./page-reader.ts";
+import type { NoteAssets } from "./note-assets.ts";
+import { findingsText, type NoteRenderer, type NoteViewName } from "./note-render.ts";
+import { jpeg, PageReader, type RegionBox } from "./page-reader.ts";
 import {
   checkId,
   LibraryError,
@@ -26,6 +28,11 @@ import {
 } from "./store.ts";
 
 const MAX_PAGE_CHARACTERS = 40_000;
+/** Pictures of notes (`view_note`) and figures cropped into notes in one reply, at most. */
+const MAX_VIEWS = 24;
+const MAX_FIGURES = 12;
+/** A figure is shown as wide on the note's 720-pixel column as it was on its page, within reason. */
+const NOTE_COLUMN = 720;
 /** When the tutor searches the web, and how it keeps the web apart from the course. */
 const WEB_RULE = [
   "You can search the web with search_web. Search when the student asks you to, or when what they ask for goes beyond their course material: more depth, another explanation, history, applications or references, or something the course does not cover. Do not search for what the course already answers.",
@@ -51,6 +58,13 @@ export interface PageReading {
  */
 type Reach = { courseId: string | null; grants: () => Grants };
 
+/** What one reply has done that it may do only so often. */
+interface ReplyLimits {
+  coursesTrashed: number;
+  views: number;
+  figures: number;
+}
+
 const NO_GRANTS: Grants = { courses: [], documents: [] };
 const courseParameter = Type.String({ description: "A course ID from the course list." });
 const addedCourseParameter = Type.Optional(
@@ -60,6 +74,28 @@ const addedCourseParameter = Type.Optional(
 );
 const object = (properties: Record<string, TSchema>) =>
   Type.Object(properties, { additionalProperties: false });
+const regionParameter = (description: string) =>
+  Type.Array(Type.Number({ minimum: 0, maximum: 1 }), { minItems: 4, maxItems: 4, description });
+
+/** A region of a page, `[left, top, right, bottom]` as fractions from its top-left: checked here. */
+function regionOf(value: unknown, tool: string): RegionBox {
+  if (
+    !Array.isArray(value) ||
+    value.length !== 4 ||
+    !value.every(
+      (part) => typeof part === "number" && Number.isFinite(part) && part >= 0 && part <= 1,
+    )
+  )
+    throw new LibraryError(
+      `${tool} needs region as [left, top, right, bottom], each a fraction of the page from 0 to 1.`,
+    );
+  const [left, top, right, bottom] = value as RegionBox;
+  if (right - left < 0.02 || bottom - top < 0.02)
+    throw new LibraryError(
+      `${tool}'s region must have left before right and top before bottom, at least 2% of the page each way.`,
+    );
+  return [left, top, right, bottom];
+}
 
 export interface CourseToolOptions {
   /** The student's notes. Without it, chats cannot read or propose notes. */
@@ -72,6 +108,10 @@ export interface CourseToolOptions {
   pages?: PageReader;
   /** Lets the tutor show drawings and interactive demos (`show_visual`); the window seals them. */
   visuals?: boolean;
+  /** Draws a note as Folio shows it, for the tutor to look at (`view_note`). */
+  renderNote?: NoteRenderer;
+  /** Keeps figures cropped from course pages beside the notes (`add_note_figure`). */
+  assets?: Pick<NoteAssets, "save">;
   /** Lets the tutor search the web (`search_web`), each search its own request. */
   search?: SearchFn;
   /** The student's categories, which name each document's kind; today's five without it. */
@@ -104,6 +144,7 @@ export function createRuntimes(
   library: (chatId: string, grants?: () => Grants) => Promise<CourseRuntime>;
 } {
   const { notes, changed, knowledge, visuals, search } = options;
+  const filesOption = options.files;
   const pages = options.pages ?? new PageReader(library);
   const categories = options.categories ?? (() => DEFAULT_CATEGORIES);
   const outside = (reach: Reach) =>
@@ -184,11 +225,75 @@ export function createRuntimes(
     };
   }
 
+  /**
+   * A region of a PDF page in this chat's reach, rendered as `render` says: a closer look
+   * (read_page with region) or a figure to keep (add_note_figure).
+   */
+  async function pageRegion(
+    reach: Reach,
+    documentId: unknown,
+    page: unknown,
+    region: RegionBox,
+    render: { maxEdge?: number; format?: "jpeg" | "png" },
+  ): Promise<{ data: Uint8Array; documentId: string; title: string; page: number; pages: number }> {
+    if (typeof documentId === "string" && isFileId(documentId)) {
+      const file = reach.grants().files?.find((each) => each.fileId === documentId);
+      if (!file || !filesOption)
+        throw new LibraryError("The student didn't add that file to this chat.");
+      if (file.fileKind !== "pdf") throw new LibraryError(`“${file.name}” isn't a PDF.`);
+      const count = file.pages ?? 1;
+      if (!Number.isInteger(page) || (page as number) < 1 || (page as number) > count)
+        throw new LibraryError(`“${file.name}” has ${count} page${count === 1 ? "" : "s"}.`);
+      const data = await pages.fileRegion(
+        documentId,
+        page as number,
+        () => filesOption.read({ fileId: documentId, kind: file.fileKind }),
+        region,
+        render,
+      );
+      return { data, documentId, title: file.name, page: page as number, pages: count };
+    }
+    const document = await documentIn(reach, documentId);
+    if (document.kind !== "pdf") throw new LibraryError(`“${document.title}” isn't a PDF.`);
+    const count = pageCount(document);
+    if (!Number.isInteger(page) || (page as number) < 1 || (page as number) > count)
+      throw new LibraryError(`“${document.title}” has ${count} page${count === 1 ? "" : "s"}.`);
+    const data = await pages.region(document, page as number, region, render);
+    return {
+      data,
+      documentId: document.id,
+      title: document.title,
+      page: page as number,
+      pages: count,
+    };
+  }
+
   async function readPage(
     reach: Reach,
     request: unknown,
   ): Promise<PageReading & { text: string; image: Uint8Array | null; where: string }> {
-    const { documentId, page } = onlyKeys(request, ["documentId", "page"], "read_page");
+    const { documentId, page, region } = onlyKeys(
+      request,
+      ["documentId", "page", "region"],
+      "read_page",
+    );
+    if (region !== undefined) {
+      const zoomed = await pageRegion(reach, documentId, page, regionOf(region, "read_page"), {
+        format: "jpeg",
+      });
+      return {
+        documentId: zoomed.documentId,
+        title: zoomed.title,
+        page: zoomed.page,
+        pages: zoomed.pages,
+        text: "[A close-up of part of the page. Read the page without region for its text.]",
+        image: zoomed.data,
+        where:
+          typeof documentId === "string" && isFileId(documentId)
+            ? "A file the student added to this chat, not part of any course"
+            : (await library.course((await library.document(zoomed.documentId)).courseId)).name,
+      };
+    }
     if (isFileId(documentId)) return readFilePage(reach, documentId, page);
     const document = await documentIn(reach, documentId);
     const count = pageCount(document);
@@ -226,13 +331,13 @@ export function createRuntimes(
     chatId: string,
     where: string,
     budget: SearchBudget,
-    reply: { coursesTrashed: number },
+    reply: ReplyLimits,
   ): AgentTool[] {
     return [
       ...(knowledge
         ? knowledgeTools(knowledge, library, reach.courseId, () => reach.grants().courses)
         : []),
-      ...pageTools(reach, chatId, where),
+      ...pageTools(reach, chatId, where, reply),
       ...(visuals ? [visualTool()] : []),
       ...(search ? [webSearchTool(search, budget)] : []),
       ...(options.app
@@ -249,7 +354,7 @@ export function createRuntimes(
   }
 
   /** What one reply of a chat has done that it may do only so often. */
-  const replyLimits = () => ({ coursesTrashed: 0 });
+  const replyLimits = (): ReplyLimits => ({ coursesTrashed: 0, views: 0, figures: 0 });
 
   /** The routines and services one question may use; none when they can't be read. */
   const extraTools = (chat: { chatId: string; courseId: string | null; grants: () => Grants }) =>
@@ -280,14 +385,16 @@ export function createRuntimes(
   /** One chat's search budget: whether search is on, and searches this reply has made. */
   const searchBudget = (): SearchBudget => ({ allowed: true, used: 0 });
   const startReply =
-    (budget: SearchBudget, reply: { coursesTrashed: number }) =>
+    (budget: SearchBudget, reply: ReplyLimits) =>
     ({ webSearch }: { webSearch: boolean }) => {
       budget.allowed = webSearch;
       budget.used = 0;
       reply.coursesTrashed = 0;
+      reply.views = 0;
+      reply.figures = 0;
     };
 
-  function pageTools(reach: Reach, chatId: string, where: string): AgentTool[] {
+  function pageTools(reach: Reach, chatId: string, where: string, reply: ReplyLimits): AgentTool[] {
     const wide = reach.courseId === null;
     const courseKey: Record<string, TSchema> = wide ? { courseId: courseParameter } : {};
 
@@ -325,6 +432,11 @@ export function createRuntimes(
           minimum: 1,
           description: "1-based page number. Markdown documents have a single page.",
         }),
+        region: Type.Optional(
+          regionParameter(
+            "A closer, sharper look at part of a PDF page: [left, top, right, bottom], each a fraction of the page from its top-left corner. Omit to read the whole page and its text.",
+          ),
+        ),
       }),
       execute: async (_toolCallId, params, signal) => {
         signal?.throwIfAborted();
@@ -347,7 +459,9 @@ export function createRuntimes(
             title: reading.title,
             page: reading.page,
             pages: reading.pages,
-          } satisfies PageReading,
+            // A close-up of part of the page, not the whole page and its text.
+            ...((params as { region?: unknown }).region !== undefined ? { region: true } : {}),
+          } satisfies PageReading & { region?: true },
         };
       },
     };
@@ -535,11 +649,216 @@ export function createRuntimes(
         );
       },
     };
-    return [listDocuments, readPageTool, listNotes, readNote, createNote, editNote, renameNote];
+    const viewNote: AgentTool | undefined = options.renderNote && {
+      name: "view_note",
+      label: "Look at a note",
+      description:
+        "See one of the student's notes as Folio draws it, as a picture: the edit view (where the student writes; Folio's default) or the read view. It also says what looked broken: formulas that can't be drawn, anything wider than the note's column, HTML shown as text, figures that don't load. A long note comes in parts, each listed with its lines. With find, a sharper close-up of where that passage is drawn. Look after changing how a note looks, and compare it with its source.",
+      parameters: object({
+        noteId: Type.String({ description: "A note ID from list_notes." }),
+        view: Type.Union([Type.Literal("edit"), Type.Literal("read")], {
+          description: "edit: the live editor the student writes in. read: the reading view.",
+        }),
+        part: Type.Optional(
+          Type.Integer({ minimum: 1, description: "Which part of a long note; 1 if omitted." }),
+        ),
+        find: Type.Optional(
+          Type.String({
+            description:
+              "An exact passage of the note, appearing once: a close-up of it instead of a part.",
+          }),
+        ),
+      }),
+      execute: async (_toolCallId, params, signal) => {
+        const input = onlyKeys(params, ["noteId", "view", "part", "find"], "view_note");
+        if (input.view !== "edit" && input.view !== "read")
+          throw new LibraryError("view_note needs view: edit or read.");
+        const view = input.view as NoteViewName;
+        const part = input.part ?? 1;
+        if (!Number.isInteger(part) || (part as number) < 1)
+          throw new LibraryError("view_note's part is a whole number from 1.");
+        if (reply.views >= MAX_VIEWS)
+          throw new LibraryError(
+            `You looked at notes ${MAX_VIEWS} times in this reply. Finish the reply, and look again in the next.`,
+          );
+        const note = await noteIn(reach, input.noteId);
+        let closeUp: { from: number; to: number } | undefined;
+        if (input.find !== undefined) {
+          const find = text(input.find, "an exact passage", "view_note");
+          const count = find ? note.content.split(find).length - 1 : 0;
+          if (count === 0)
+            throw new LibraryError(
+              "That passage is not in the note. Read it again and copy the exact text.",
+            );
+          if (count > 1)
+            throw new LibraryError(
+              `That passage appears ${count} times. Include more of the text around it so it appears once.`,
+            );
+          const from = note.content.slice(0, note.content.indexOf(find)).split("\n").length;
+          closeUp = { from, to: from + find.replace(/\n+$/, "").split("\n").length - 1 };
+        }
+        reply.views++;
+        const course = await library.course(note.courseId);
+        const documents = (await library.listDocuments({ courseId: course.id })).map(
+          (document) => ({ id: document.id, title: document.title }),
+        );
+        const drawn = await options.renderNote!(
+          {
+            content: note.content,
+            courseId: course.id,
+            courseName: course.name,
+            documents,
+            view,
+            ...(closeUp ? { closeUp } : {}),
+          },
+          signal,
+        );
+        const name = view === "edit" ? "edit view" : "read view";
+        const header = `The note "${note.title}" in the ${name} (revision ${note.revision}).`;
+        const details = {
+          noteId: note.id,
+          title: note.title,
+          revision: note.revision,
+          view,
+          part: closeUp ? 0 : (part as number),
+          parts: drawn.tiles.length,
+          closeUp: !!closeUp,
+        };
+        const incomplete = drawn.complete
+          ? ""
+          : "\nThe note is longer than Folio draws for you; only its first parts are here.";
+        if (drawn.closeUp) {
+          const [from, to] = drawn.closeUp.lines;
+          return {
+            content: [
+              {
+                type: "text",
+                text: `${header}\nA close-up of lines ${from}–${to}, at twice the size.\n\n${findingsText(drawn.findings)}`,
+              },
+              jpeg(drawn.closeUp.jpeg),
+            ],
+            details,
+          };
+        }
+        const tile = drawn.tiles[(part as number) - 1];
+        if (!tile)
+          throw new LibraryError(
+            `The note has ${drawn.tiles.length} part${drawn.tiles.length === 1 ? "" : "s"} in the ${name}.`,
+          );
+        const describe = (shown: (typeof drawn.tiles)[number]) =>
+          `lines ${shown.lines[0]}–${shown.lines[1]}${shown.headings.length ? `: ${shown.headings.join(" · ")}` : ""}`;
+        const others =
+          drawn.tiles.length > 1
+            ? `\nAll parts: ${drawn.tiles.map((shown) => `${shown.part}, ${describe(shown)}`).join("; ")}.`
+            : "";
+        return {
+          content: [
+            {
+              type: "text",
+              text: `${header}\nPart ${tile.part} of ${drawn.tiles.length}, ${describe(tile)}.${others}${incomplete}\n\n${findingsText(drawn.findings)}`,
+            },
+            jpeg(tile.jpeg),
+          ],
+          details,
+        };
+      },
+    };
+
+    const addFigure: AgentTool | undefined = options.assets && {
+      name: "add_note_figure",
+      label: "Add a figure to a note",
+      description:
+        "Crop a figure (a diagram, graph, gadget or picture) from a page of a course PDF, or of a PDF the student added to this chat, and keep it beside the student's notes. region is the figure's box: [left, top, right, bottom], each a fraction of the page from its top-left corner; check the box first with read_page and region. It returns the Markdown that shows the figure, and a preview: place the Markdown with edit_note where the figure belongs. Only when the student asks for a note with figures or agrees.",
+      parameters: object({
+        noteId: Type.String({ description: "The note the figure is for, from list_notes." }),
+        documentId: Type.String({
+          description:
+            "A document ID from list_documents, or the fileId of a PDF the student added.",
+        }),
+        page: Type.Integer({ minimum: 1, description: "1-based page number." }),
+        region: regionParameter(
+          "The figure's box: [left, top, right, bottom], each a fraction of the page from its top-left corner.",
+        ),
+        alt: Type.String({ description: "What the figure shows, in a few words." }),
+      }),
+      execute: async (_toolCallId, params, signal) => {
+        const input = onlyKeys(
+          params,
+          ["noteId", "documentId", "page", "region", "alt"],
+          "add_note_figure",
+        );
+        if (reply.figures >= MAX_FIGURES)
+          throw new LibraryError(
+            `You added ${MAX_FIGURES} figures in this reply. Finish the reply, and add more in the next.`,
+          );
+        const note = await noteIn(reach, input.noteId);
+        const region = regionOf(input.region, "add_note_figure");
+        const alt = text(input.alt, "alt, what the figure shows", "add_note_figure")
+          .replace(/[[\]|\n\r]+/g, " ")
+          .replace(/\s+/g, " ")
+          .trim()
+          .slice(0, 120);
+        signal?.throwIfAborted();
+        const crop = await pageRegion(reach, input.documentId, input.page, region, {
+          format: "png",
+        });
+        reply.figures++;
+        const saved = await options.assets!.save(note.courseId, crop.data);
+        const width = Math.round(
+          Math.min(NOTE_COLUMN, Math.max(120, (region[2] - region[0]) * NOTE_COLUMN)),
+        );
+        const markdown = `![${alt || "Figure"}|${width}](${saved.path})`;
+        const preview = await pageRegion(reach, input.documentId, input.page, region, {
+          format: "jpeg",
+          maxEdge: 800,
+        });
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Saved the figure from "${crop.title}", page ${crop.page}, for the note "${note.title}". It is not in the note yet: place this with edit_note where the figure belongs:\n${markdown}`,
+            },
+            jpeg(preview.data),
+          ],
+          details: {
+            noteId: note.id,
+            title: note.title,
+            documentId: crop.documentId,
+            source: crop.title,
+            page: crop.page,
+            file: saved.file,
+          },
+        };
+      },
+    };
+
+    return [
+      listDocuments,
+      readPageTool,
+      listNotes,
+      readNote,
+      createNote,
+      editNote,
+      renameNote,
+      ...(viewNote ? [viewNote] : []),
+      ...(addFigure ? [addFigure] : []),
+    ];
   }
 
   const noteRule = notes
-    ? "The student's notes are their notebook. When they ask you to write, change or rename notes, or agree when you offer, do it with create_note, edit_note or rename_note, and say in a sentence what changed; each change can be undone. Read a note before editing it. Never change notes they did not ask about, and never cite a note as course material."
+    ? [
+        "The student's notes are their notebook. When they ask you to write, change or rename notes, or agree when you offer, do it with create_note, edit_note or rename_note, and say in a sentence what changed; each change can be undone. Read a note before editing it. Never change notes they did not ask about, and never cite a note as course material.",
+        ...(options.renderNote
+          ? [
+              "After changing how a note looks (colored blocks, a title, figures, formulas, tables), look at it with view_note in the edit view and the read view, compare it with its source, and fix what is wrong before saying it is done.",
+            ]
+          : []),
+        ...(options.assets
+          ? [
+              "To show a figure from a page in a note, crop it with add_note_figure and place the Markdown it returns with edit_note.",
+            ]
+          : []),
+      ].join(" ")
     : "You cannot read or change the student's notes.";
   const closing =
     "Folio manages conversation history. Do not assess understanding or record mastery.";
