@@ -297,4 +297,44 @@ describe("long chats", { timeout: 30_000 }, () => {
     expect(sent).toContain("[A visual shown earlier: Two states.]");
     expect(sent).not.toContain("<svg>");
   });
+
+  it("name an earlier visual by its title as plain text, or as untitled", () => {
+    const sentFor = (source: unknown) =>
+      JSON.stringify(
+        modelContextMessages([
+          { role: "user", content: "Show", timestamp: 0 } as AgentMessage,
+          {
+            role: "assistant",
+            content: [{ type: "toolCall", id: "v1", name: "show_visual", arguments: { source } }],
+            stopReason: "toolUse",
+            timestamp: 0,
+          } as unknown as AgentMessage,
+          {
+            role: "toolResult",
+            toolCallId: "v1",
+            toolName: "show_visual",
+            content: [{ type: "text", text: "Shown." }],
+            isError: false,
+            timestamp: 0,
+          } as unknown as AgentMessage,
+          {
+            role: "user",
+            content: "Next",
+            timestamp: 0,
+            folioTrim: { v: 1, stubBefore: 3 },
+          } as unknown as AgentMessage,
+        ]),
+      );
+    expect(sentFor("<svg><title>Two\n   <tspan>states</tspan></title></svg>")).toContain(
+      "[A visual shown earlier: Two states.]",
+    );
+    const rebuilt = sentFor("<svg><title><<script>script>alert(1)<</script>/script></title></svg>");
+    expect(rebuilt).toContain("[A visual shown earlier: scriptalert(1)/script.]");
+    expect(rebuilt).not.toContain("<script");
+    expect(sentFor(`<svg><title>${"a".repeat(200)}</title></svg>`)).toContain(
+      `[A visual shown earlier: ${"a".repeat(80)}.]`,
+    );
+    expect(sentFor('<svg><circle r="1"/></svg>')).toContain("[A visual shown earlier: untitled.]");
+    expect(sentFor(42)).toContain("[A visual shown earlier: untitled.]");
+  });
 });
