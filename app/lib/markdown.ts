@@ -526,6 +526,14 @@ markdown.use({
         `$1 dir="${direction ?? context.current}"`,
       );
     },
+    // In a note, empty lines beyond the one that separates two blocks keep their height, as they
+    // do in the Edit view: the space a workbook leaves under a question for the answer.
+    space(token) {
+      const extra = token.raw.split("\n").length - 3;
+      return context.note && extra > 0
+        ? `<div class="note-gap" aria-hidden="true">${"<br>".repeat(extra)}</div>\n`
+        : "";
+    },
     // `![A figure|360](…)` is 360 pixels wide, as in Obsidian.
     image(token) {
       const { alt, width } = imageSize(token.text);

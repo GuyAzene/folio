@@ -8,7 +8,8 @@ import { readableText, styleColors } from "../app/lib/readable-text.ts";
 import { noteAssetResponse } from "../src/desktop/note-asset-protocol.ts";
 import { chatView } from "../src/desktop/view.ts";
 import { assetUrl, imageSize, parseAssetUrl } from "../src/library/asset-names.ts";
-import { createRuntimes } from "../src/library/course-tools.ts";
+import { closeSource, openSource, textColumn } from "../src/ingest/pages.ts";
+import { createRuntimes, figureWidth } from "../src/library/course-tools.ts";
 import { pixelSize } from "../src/library/images.ts";
 import { MAX_ASSET_BYTES, NoteAssets } from "../src/library/note-assets.ts";
 import {
@@ -441,11 +442,11 @@ describe("the tutor's view_note", () => {
       tool("view_note").execute("v3", { noteId: note.id, view: "print" }),
     ).rejects.toThrow("edit or read");
     chat.beforeSend!({ webSearch: false });
-    for (let look = 0; look < 24; look++)
+    for (let look = 0; look < 48; look++)
       await tool("view_note").execute(`l${look}`, { noteId: note.id, view: "edit" });
     await expect(
-      tool("view_note").execute("l24", { noteId: note.id, view: "edit" }),
-    ).rejects.toThrow("24 times");
+      tool("view_note").execute("l48", { noteId: note.id, view: "edit" }),
+    ).rejects.toThrow("48 times");
     chat.beforeSend!({ webSearch: false });
     await tool("view_note").execute("next", { noteId: note.id, view: "edit" });
   });
@@ -487,7 +488,8 @@ describe("a closer look at a page, and figures from it", () => {
       alt: "A [gadget] | two nodes",
     });
     const said = (result.content[0] as { text: string }).text;
-    const markdown = /!\[A gadget two nodes\|360\]\(assets\/([0-9a-f]{64})\.png\)/.exec(said);
+    // Half the page's width, against the typical column of a page with too little text to measure.
+    const markdown = /!\[A gadget two nodes\|480\]\(assets\/([0-9a-f]{64})\.png\)/.exec(said);
     expect(markdown, said).not.toBeNull();
     const file = resolve(
       library.courseDirectory(course.id),
@@ -518,6 +520,33 @@ describe("a closer look at a page, and figures from it", () => {
         alt: "x",
       }),
     ).rejects.toThrow("not part of this chat");
+  });
+});
+
+describe("a figure's printed size", () => {
+  it("is as wide against the note's column as it was against the page's text column", () => {
+    expect(figureWidth([0.288, 0.1, 0.67, 0.2], [0.15, 0.85])).toBe(393);
+    // Wider than the text, as a figure in the margins can be: no wider than the note's column.
+    expect(figureWidth([0.1, 0.5, 0.94, 0.9], [0.15, 0.85])).toBe(720);
+    expect(figureWidth([0.5, 0.5, 0.52, 0.6], null)).toBe(120);
+    expect(figureWidth([0.25, 0, 0.625, 1], null)).toBe(360);
+  });
+
+  it("measures the text column from the page's text layer, when it has enough text", async () => {
+    const lines = Array.from({ length: 12 }, (_, line) =>
+      line % 3 ? "Every line of this synthetic page starts at the same margin." : "Short line.",
+    );
+    const doc = await openSource(syntheticPdf([lines, ["Too little text."]]));
+    try {
+      const column = await textColumn(doc, 1);
+      // The lines start 72 points into a 612-point page.
+      expect(column![0]).toBeCloseTo(72 / 612, 2);
+      expect(column![1]).toBeGreaterThan(column![0] + 0.2);
+      expect(column![1]).toBeLessThanOrEqual(1);
+      expect(await textColumn(doc, 2)).toBeNull();
+    } finally {
+      await closeSource(doc);
+    }
   });
 });
 

@@ -274,6 +274,51 @@ function metric(value: number | null | undefined, fallback: number, min: number,
     : fallback;
 }
 
+/**
+ * Where a page's text column runs, as fractions of the page's width (`[left, right]`), read from
+ * its text layer; null when the page has too little text to tell. Most lines start at one edge of
+ * the column (the right one on a page that reads right to left), and full lines reach the other.
+ */
+export async function textColumn(
+  doc: SourceDocument,
+  pageNumber: number,
+): Promise<[number, number] | null> {
+  const page = await doc.getPage(pageNumber);
+  try {
+    const { width } = pageViewport(page);
+    const runs = (await textItems(page)).filter(
+      (item) => item.dir !== "ttb" && item.str.trim() && item.box[2] > item.box[0],
+    );
+    if (runs.length < 8 || !(width > 0)) return null;
+    const rtl = runs.filter((item) => item.dir === "rtl").length > runs.length / 2;
+    const start = mostCommon(runs.map((item) => (rtl ? item.box[2] : item.box[0]) / width));
+    // The far edge: as far as lines reach, past a stray few such as a wide formula.
+    const ends = runs.map((item) => (rtl ? item.box[0] : item.box[2]) / width);
+    ends.sort((a, b) => a - b);
+    const end = rtl
+      ? ends[Math.floor(ends.length * 0.02)]!
+      : ends[Math.ceil(ends.length * 0.98) - 1]!;
+    const [left, right] = rtl ? [end, start] : [start, end];
+    return right - left >= 0.2 ? [left, right] : null;
+  } finally {
+    page.cleanup();
+  }
+}
+
+/** The most common of these fractions, to a hundredth; the leftmost on a tie. */
+function mostCommon(values: number[]): number {
+  const counts = new Map<number, number>();
+  for (const value of values) {
+    const bin = Math.round(value * 100);
+    counts.set(bin, (counts.get(bin) ?? 0) + 1);
+  }
+  let best = 0;
+  let most = 0;
+  for (const [bin, count] of counts)
+    if (count > most || (count === most && bin < best)) [best, most] = [bin, count];
+  return best / 100;
+}
+
 /** The text layer with positions; includes pdf.js's empty end-of-line markers and spaces. */
 export async function textItems(page: PDFPageProxy): Promise<PageTextItem[]> {
   const viewport = pageViewport(page);

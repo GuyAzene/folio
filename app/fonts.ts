@@ -2,6 +2,8 @@
 // hidden page that draws a note for the tutor to look at.
 import "@fontsource-variable/inter/opsz.css";
 import "@fontsource-variable/newsreader/opsz.css";
+// Notes keep the italics they are written with; Folio's interface sets none.
+import "@fontsource-variable/newsreader/opsz-italic.css";
 import "@fontsource-variable/geist-mono";
 // Hebrew letters: none of the fonts above has them. Each face downloads only the subsets used.
 import "@fontsource-variable/noto-sans-hebrew/wght.css";
