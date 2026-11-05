@@ -58,6 +58,13 @@ describe("what a visual may be", () => {
     );
   });
 
+  it("reads a title of nothing but opening brackets in one pass", () => {
+    const started = performance.now();
+    expect(visualTitle(`<title>${"<".repeat(200_000)}x</title>`)).toBe("x");
+    // Searching for a `>` again at every `<` took about 300 ms here; one pass takes about 1 ms.
+    expect(performance.now() - started).toBeLessThan(150);
+  });
+
   it("accepts a whole visual, and says how to fix one it refuses", () => {
     expect(visualProblem(DRAWING)).toBeNull();
     expect(visualProblem(DEMO)).toBeNull();

@@ -38,15 +38,16 @@ export function staticSvg(source: string): boolean {
 /**
  * Text with its tags taken out: everything from a `<` to the next `>` goes, and so does any `<`
  * or `>` left over. One pass, and no angle bracket survives, so no markup can be rebuilt from
- * what remains.
+ * what remains. A `<` after the last `>` is dropped without searching again, so a run of them
+ * costs no more than any other text.
  */
 function withoutTags(text: string): string {
+  const last = text.lastIndexOf(">");
   let plain = "";
   for (let index = 0; index < text.length; index++) {
     const char = text[index]!;
     if (char === "<") {
-      const end = text.indexOf(">", index);
-      if (end !== -1) index = end;
+      if (index < last) index = text.indexOf(">", index);
     } else if (char !== ">") plain += char;
   }
   return plain;
