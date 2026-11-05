@@ -58,6 +58,7 @@ export class NoteCapture {
           request.view,
           request.closeUp ?? null,
           request.courseId,
+          request.courseName,
           request.documents,
         ]),
       )

@@ -42,8 +42,10 @@ export class NoteAssets {
     await privateDirectory(directory, "library", LibraryError);
     const target = resolve(directory, file);
     const existing = await lstat(target).catch(() => null);
-    if (!existing) await writeAtomic(target, bytes, { mode: 0o600 });
-    else if (!existing.isFile()) throw new LibraryError("Folio couldn't save that figure.");
+    if (existing && !existing.isFile()) throw new LibraryError("Folio couldn't save that figure.");
+    // A file already there is kept only if it is these bytes; a damaged one is written again.
+    const intact = existing && sha256(await readFile(target)) === file.slice(0, file.indexOf("."));
+    if (!intact) await writeAtomic(target, bytes, { mode: 0o600 });
     return { file, path: `assets/${file}`, width: size.width, height: size.height };
   }
 

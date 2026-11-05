@@ -684,8 +684,12 @@ export function createRuntimes(
         const note = await noteIn(reach, input.noteId);
         let closeUp: { from: number; to: number } | undefined;
         if (input.find !== undefined) {
-          const find = text(input.find, "an exact passage", "view_note");
-          const count = find ? note.content.split(find).length - 1 : 0;
+          // Line endings and trailing spaces don't make a passage different.
+          const content = note.content.replace(/\r\n?/g, "\n");
+          const find = text(input.find, "an exact passage", "view_note")
+            .replace(/\r\n?/g, "\n")
+            .replace(/\s+$/, "");
+          const count = find ? content.split(find).length - 1 : 0;
           if (count === 0)
             throw new LibraryError(
               "That passage is not in the note. Read it again and copy the exact text.",
@@ -694,8 +698,8 @@ export function createRuntimes(
             throw new LibraryError(
               `That passage appears ${count} times. Include more of the text around it so it appears once.`,
             );
-          const from = note.content.slice(0, note.content.indexOf(find)).split("\n").length;
-          closeUp = { from, to: from + find.replace(/\n+$/, "").split("\n").length - 1 };
+          const from = content.slice(0, content.indexOf(find)).split("\n").length;
+          closeUp = { from, to: from + find.split("\n").length - 1 };
         }
         reply.views++;
         const course = await library.course(note.courseId);

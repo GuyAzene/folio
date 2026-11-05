@@ -312,6 +312,19 @@ describe("figures beside notes", () => {
     await expect(assets.read(course.id, `${HASH}.png`)).rejects.toThrow("Unknown figure");
   });
 
+  it("write a damaged figure again rather than keep it", async () => {
+    const { library, course, assets } = await setup();
+    const png = await picture(20, 20);
+    const saved = await assets.save(course.id, png);
+    const file = resolve(library.courseDirectory(course.id), "notes", "assets", saved.file);
+    await writeFile(file, png.slice(0, 20));
+    await expect(assets.read(course.id, saved.file)).rejects.toThrow("changed on disk");
+    expect(await assets.save(course.id, png)).toEqual(saved);
+    expect(
+      Buffer.from((await assets.read(course.id, saved.file)).bytes).equals(Buffer.from(png)),
+    ).toBe(true);
+  });
+
   it("are served only to Folio's own pages, at exactly their address", async () => {
     const { course, assets } = await setup();
     const saved = await assets.save(course.id, await picture());
@@ -401,6 +414,13 @@ describe("the tutor's view_note", () => {
       "A close-up of lines 5–7, at twice the size.",
     );
     expect(result.details).toMatchObject({ closeUp: true, part: 0 });
+    // Line endings and trailing spaces don't make the passage different.
+    await tool("view_note").execute("v1b", {
+      noteId: note.id,
+      view: "read",
+      find: "## Problem 1\r\n\r\nLet $x$.  \n",
+    });
+    expect(drawn.at(-1)!.closeUp).toEqual({ from: 5, to: 7 });
     await expect(
       tool("view_note").execute("v2", { noteId: note.id, view: "read", find: "Not in it" }),
     ).rejects.toThrow("not in the note");

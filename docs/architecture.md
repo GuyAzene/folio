@@ -461,7 +461,9 @@ the same way:
   (`app/lib/wide-math.ts`) instead of pushing the page sideways.
 - Figures are image files beside the course's notes, named by their SHA-256 and written
   `![What it shows|360](assets/<file>)`, the number being the width (`src/library/note-assets.ts`).
-  A figure is never deleted with a note, so undo, history and the Trash find it where it was.
+  A figure is never deleted with a note, so undo, history and the Trash find it where it was. A
+  figure the tutor cropped but never placed stays in the folder too; a later sweep may clear the
+  figures that no note, earlier version or Trash entry names.
 
 The tutor can look at what it wrote. `view_note` draws a note in the edit view or the read view,
 with the very components the note view uses (`NoteReading.svelte`, `createNoteEditor`), and cuts
