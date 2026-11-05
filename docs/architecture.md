@@ -573,6 +573,16 @@ commit. The download link never changes, and there are no versioned releases to 
 real-window job reports on its own and does not hold the nightly back: those checks were written
 on a Mac much faster than GitHub's virtual ones.
 
+On a pull request from this repository that changes the app, CI also retakes the README's
+pictures on macOS (`vp run screenshots`). A still picture is replaced only when it looks
+different (more than 50 pixels off by more than 8 in a colour channel, since Chromium draws the
+same page a few values apart from one version to the next), and the clip, which is recorded in
+real time, only when a picture changed. The pictures that changed are committed to the pull
+request's branch, so they are reviewed with the change. A push with the workflow's own token
+starts no workflow, so the job then starts CI on that commit itself (`workflow_dispatch`):
+`main` requires the CI check on a pull request's latest commit. The preview window hides its
+scrollbars, which macOS would otherwise draw by its own settings.
+
 A quit signal (SIGTERM, as the installer sends) quits Folio as ⌘Q does: chats settle first.
 
 Without a Developer ID Folio cannot update itself, so it says when a newer release is out

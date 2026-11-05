@@ -228,7 +228,7 @@ vp run desktop:package # Folio.app and its disk image, in release/
 vp run desktop:install # the same, then Folio.app into /Applications
 vp build && vp pack # renderer, CLI and Electron bundles
 vp dev              # the interface alone, in a browser, with synthetic data
-vp run screenshots  # the README's pictures and clip, light and dark, from that preview
+vp run screenshots  # retake the README's pictures that changed, light and dark, from that preview
 ```
 
 The benchmark spends your ChatGPT plan, so it runs only with `FOLIO_BENCH=1` and never in `vp

@@ -1,18 +1,24 @@
 // Pictures of Folio for the README, from the browser preview's synthetic courses: `vp run
 // screenshots` serves the interface with `vp dev`, opens it in a hidden Electron window, sets up
-// each scene, and writes docs/images/<scene>-light.png and <scene>-dark.png at twice their size,
-// then the clip of the tutor answering, docs/images/tutor-light.webp and tutor-dark.webp.
-// The clock is fixed, so relative dates and the greeting come out the same on every run. Nothing
-// opens on screen and nothing talks to a model. `vp run screenshots board clip` takes only
-// those.
+// each scene and takes docs/images/<scene>-light.png and <scene>-dark.png at twice their size. A
+// picture is replaced only when it looks different, so retaking them changes nothing until the
+// interface does. The clip of the tutor answering, docs/images/tutor-light.webp and
+// tutor-dark.webp, is recorded in real time and never comes out the same twice, so it is retaken
+// only when a picture changed, when it is missing, or when named. The clock is fixed, so relative
+// dates and the greeting come out the same on every run. Nothing opens on screen and nothing
+// talks to a model. `vp run screenshots board clip` takes only those. On a pull request that
+// changes the app, CI runs this and commits the pictures that changed.
 import { execFileSync, spawn } from "node:child_process";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { copyFile, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
+import { createCanvas, loadImage } from "@napi-rs/canvas";
 import { _electron, type Page } from "playwright-core";
 
 const ROOT = resolve(import.meta.dirname, "..");
+const IMAGES = resolve(ROOT, "docs/images");
 const PORT = 5199;
 const URL = `http://127.0.0.1:${PORT}/`;
 const SIZE = { width: 1280, height: 800 };
@@ -125,12 +131,17 @@ async function serve(): Promise<() => void> {
   }
 }
 
-/** A hidden window on the preview, at twice its size; its page is captured, never shown. */
+/**
+ * A hidden window on the preview, at twice its size; its page is captured, never shown. Its
+ * scrollbars are hidden: macOS draws them or not by its own setting and whether a mouse is
+ * connected, which would make the pictures depend on the Mac that takes them.
+ */
 async function window() {
   const main = resolve(await mkdtemp(resolve(tmpdir(), "folio-screenshots-")), "main.cjs");
   await writeFile(
     main,
     `const { app, BrowserWindow } = require("electron");
+app.commandLine.appendSwitch("hide-scrollbars");
 app.whenReady().then(() => {
   const window = new BrowserWindow({ show: false, ...${JSON.stringify(SIZE)},
     webPreferences: { backgroundThrottling: false } });
@@ -214,7 +225,39 @@ async function clip(page: Page, theme: "light" | "dark"): Promise<void> {
   console.log(`docs/images/tutor-${theme}.webp (${frames.length} frames)`);
 }
 
+/**
+ * Chromium draws the same page a few values apart from one version, or one Mac, to the next.
+ * A retaken picture counts as the same while at most SPECKS of its pixels differ by more than
+ * NOISE in a colour channel; a change anyone could see moves far more pixels, far further.
+ */
+const NOISE = 8;
+const SPECKS = 50;
+
+async function pixels(file: string) {
+  const image = await loadImage(await readFile(file));
+  const canvas = createCanvas(image.width, image.height);
+  const context = canvas.getContext("2d");
+  context.drawImage(image, 0, 0);
+  return context.getImageData(0, 0, image.width, image.height);
+}
+
+async function looksDifferent(kept: string, taken: string): Promise<boolean> {
+  if (!existsSync(kept)) return true;
+  const [before, after] = await Promise.all([pixels(kept), pixels(taken)]);
+  if (before.width !== after.width || before.height !== after.height) return true;
+  let specks = 0;
+  for (let index = 0; index < before.data.length; index += 4)
+    for (let channel = index; channel < index + 3; channel++)
+      if (Math.abs(before.data[channel]! - after.data[channel]!) > NOISE) {
+        if (++specks > SPECKS) return true;
+        break;
+      }
+  return false;
+}
+
 const only = process.argv.slice(2);
+const taken = await mkdtemp(resolve(tmpdir(), "folio-pictures-"));
+const changed: string[] = [];
 const stop = await serve();
 try {
   const { page, close } = await window();
@@ -225,14 +268,21 @@ try {
         await scene.show(page);
         await stillness(page);
         const area = scene.main ? await page.locator("main").boundingBox() : null;
-        await page.screenshot({
-          path: resolve(ROOT, `docs/images/${scene.name}-${colors}.png`),
-          ...(area && { clip: area }),
-        });
-        console.log(`docs/images/${scene.name}-${colors}.png`);
+        const name = `${scene.name}-${colors}.png`;
+        await page.screenshot({ path: resolve(taken, name), ...(area && { clip: area }) });
+        const different = await looksDifferent(resolve(IMAGES, name), resolve(taken, name));
+        if (different) {
+          await copyFile(resolve(taken, name), resolve(IMAGES, name));
+          changed.push(name);
+        }
+        console.log(`docs/images/${name}${different ? "" : " (unchanged)"}`);
       }
-    if (!only.length || only.includes("clip"))
+    const clipMissing = ["light", "dark"].some(
+      (colors) => !existsSync(resolve(IMAGES, `tutor-${colors}.webp`)),
+    );
+    if (only.includes("clip") || (!only.length && (changed.length > 0 || clipMissing)))
       for (const colors of ["light", "dark"] as const) await clip(page, colors);
+    else if (!only.length) console.log("docs/images/tutor-*.webp (unchanged: no picture changed)");
   } finally {
     await close();
   }
