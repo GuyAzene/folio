@@ -44,7 +44,7 @@
     "@types/proper-lockfile": "4.1.4",
     "bits-ui": "2.20.2",
     "dompurify": "3.4.17",
-    "electron": "45.0.0",
+    "electron": "45.1.0",
     "electron-builder": "26.18.0",
     "fast-check": "4.10.2",
     "marked": "18.1.1",
