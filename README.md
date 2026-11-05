@@ -66,7 +66,8 @@ lectures into notes you can browse, and it never changes your files.
   notes and the notes that mention each one. Markdown with live preview, math, tables, diagrams,
   and Hebrew and English lines side by side. Write beside a lecture with links back to its pages,
   save a tutor's answer to a note, or ask the tutor to write, change or rename one; every change
-  can be undone.
+  can be undone. Notes can hold colored blocks, centered titles and figures cropped from a PDF,
+  and the tutor looks at how a note it wrote is drawn, in both views, and fixes what's off.
 - **Assignments.** A board of what you have to hand in, read or prepare, from To do to Done, with
   what you handed in, the grade and the feedback kept with each one.
 - **Nothing lost.** Removed files, notes, chats, assignments and courses wait 30 days in Folio's

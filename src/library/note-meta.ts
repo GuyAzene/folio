@@ -1,4 +1,5 @@
 import { normalizeText, words } from "../kb/normalize.ts";
+import { withoutMarkup } from "../text.ts";
 
 /**
  * What Folio reads out of a note's Markdown to list, filter and link it: a preview line, its
@@ -116,6 +117,21 @@ export function citationLink(documentId: string, page: number, shown: string): s
     .trim()}]]`;
 }
 
+/**
+ * A note's title is its first line, without a Markdown heading mark or HTML tags: a title
+ * written as `# <span style="display:block;text-align:center"><u>Exercise 3</u></span>` is
+ * "Exercise 3".
+ */
+export function noteTitle(content: string): string {
+  const line = content.split("\n").find((candidate) => candidate.trim()) ?? "";
+  return (
+    withoutMarkup(line.replace(/^#{1,6}\s+/, ""))
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 120) || "Untitled note"
+  );
+}
+
 /** The note's headings in order, with their 0-based line, for an outline. */
 export function noteHeadings(content: string): { level: number; text: string; line: number }[] {
   const lines = prose(content).split("\n");
@@ -124,7 +140,8 @@ export function noteHeadings(content: string): { level: number; text: string; li
     const match = /^(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line);
     // The first line is the note's title, shown above the outline already.
     if (!match || index === first) return [];
-    return [{ level: match[1]!.length, text: match[2]!, line: index }];
+    const text = withoutMarkup(match[2]!).replace(/\s+/g, " ").trim();
+    return text ? [{ level: match[1]!.length, text, line: index }] : [];
   });
 }
 

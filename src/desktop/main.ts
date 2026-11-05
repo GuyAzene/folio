@@ -15,6 +15,7 @@ import {
   session,
   shell,
   type IpcMainInvokeEvent,
+  type Session,
 } from "electron";
 import { createFolioModels, readConnections, signOutOfChatGPT } from "../auth.ts";
 import { SIGN_OUT_UNCONFIRMED } from "../chatgpt-sign-in.ts";
@@ -102,6 +103,10 @@ import {
 } from "./api.ts";
 import { ChatService, errorMessage } from "./chat-service.ts";
 import { PageReader } from "../library/page-reader.ts";
+import { ASSET_SCHEME } from "../library/asset-names.ts";
+import { NoteAssets } from "../library/note-assets.ts";
+import { noteAssetResponse } from "./note-asset-protocol.ts";
+import { NoteCapture } from "./note-capture.ts";
 import { Removal } from "../library/removal.ts";
 import { Trash, TRASH_DAYS, type TrashEntry } from "../library/trash.ts";
 import { studyNotesView } from "./study-notes.ts";
@@ -154,6 +159,8 @@ protocol.registerSchemesAsPrivileged([
   { scheme: "folio", privileges: { standard: true, secure: true, supportFetchAPI: true } },
   // The tutor's demos: standard and secure so each is its own origin; never bypassing CSP.
   { scheme: ARTIFACT_SCHEME, privileges: { standard: true, secure: true, corsEnabled: true } },
+  // Figures in notes, loaded by Folio's own pages only (note-asset-protocol.ts).
+  { scheme: ASSET_SCHEME, privileges: { standard: true, secure: true } },
 ]);
 
 let window: BrowserWindow | undefined;
@@ -371,6 +378,16 @@ const library = LibraryStore.open({ home });
 const notes = library.then((store) => new CourseNotes(store));
 // One reader of course PDFs for the tutor: page text, and pages as images.
 const pageReader = library.then((store) => new PageReader(store));
+// Figures in notes, kept beside each course's notes.
+const noteAssets = library.then((store) => new NoteAssets(store));
+// Pictures of a note as Folio draws it, for the tutor to look at; a hidden page draws them.
+const noteCapture = new NoteCapture({
+  url: devUrl ? new URL("capture.html", devUrl).href : "folio://app/capture.html",
+  session: captureSession,
+});
+// The real-window checks draw notes directly (tests/electron/capture.e2e.ts); only they set this.
+if (process.env.FOLIO_E2E_HOOKS === "1")
+  Object.assign(globalThis, { folioE2E: { renderNote: noteCapture.render, noteAssets } });
 // Topics are compared and given overviews at low effort, by the model set for them.
 const knowledgeStore = Promise.all([library, config]).then(([store, settings]) =>
   KnowledgeStore.open(store, {
@@ -525,8 +542,21 @@ const service = Promise.all([
   mcpConfig,
   servers,
   liveChats(),
+  noteAssets,
 ]).then(
-  ([store, courses, courseNotes, knowledge, pages, settings, changes, mcp, running, live]) => {
+  ([
+    store,
+    courses,
+    courseNotes,
+    knowledge,
+    pages,
+    settings,
+    changes,
+    mcp,
+    running,
+    live,
+    assets,
+  ]) => {
     // What the tutor can do in Folio: the same code the window's controls run.
     const controls: AppControls = {
       library: courses,
@@ -577,6 +607,8 @@ const service = Promise.all([
       knowledge,
       pages,
       visuals: true,
+      renderNote: noteCapture.render,
+      assets,
       search,
       // The routines that are on, as each question is sent.
       async extras(chat) {
@@ -1474,18 +1506,56 @@ ipcMain.handle(
   },
 );
 
+function rendererResponse(request: Request): Response | Promise<Response> {
+  const url = new URL(request.url);
+  // Folio's own files go to Folio's page (or to the window opening it), never to a demo.
+  const initiator = (request as { initiatorOrigin?: string }).initiatorOrigin;
+  if (initiator !== undefined && originOf(initiator) !== rendererOrigin)
+    return new Response("Not found", { status: 404 });
+  const path = resolve(rendererRoot, `.${decodeURIComponent(url.pathname)}`);
+  if (url.host !== "app" || !path.startsWith(`${rendererRoot}${sep}`))
+    return new Response("Not found", { status: 404 });
+  return net.fetch(pathToFileURL(path).href);
+}
+
 function serveRenderer(): void {
-  protocol.handle("folio", (request) => {
-    const url = new URL(request.url);
-    // Folio's own files go to Folio's page (or to the window opening it), never to a demo.
-    const initiator = (request as { initiatorOrigin?: string }).initiatorOrigin;
-    if (initiator !== undefined && originOf(initiator) !== rendererOrigin)
-      return new Response("Not found", { status: 404 });
-    const path = resolve(rendererRoot, `.${decodeURIComponent(url.pathname)}`);
-    if (url.host !== "app" || !path.startsWith(`${rendererRoot}${sep}`))
-      return new Response("Not found", { status: 404 });
-    return net.fetch(pathToFileURL(path).href);
-  });
+  protocol.handle("folio", rendererResponse);
+}
+
+async function assetResponse(request: Request): Promise<Response> {
+  return noteAssetResponse(
+    {
+      url: request.url,
+      initiatorOrigin: (request as { initiatorOrigin?: string }).initiatorOrigin,
+    },
+    await noteAssets,
+    rendererOrigin,
+  );
+}
+
+let pictures: Session | undefined;
+/**
+ * The session of the hidden page that draws a note for the tutor (note-capture.ts): in memory
+ * only, so it shares no storage with the window, and held to the window's rules besides: no
+ * permissions, no network, no downloads. It serves Folio's own files and the notes' figures.
+ */
+function captureSession(): Session {
+  if (pictures) return pictures;
+  const ses = session.fromPartition("folio-capture");
+  ses.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
+  ses.setPermissionCheckHandler(() => false);
+  ses.setDevicePermissionHandler(() => false);
+  ses.webRequest.onBeforeRequest(
+    { urls: ["http://*/*", "https://*/*", "ws://*/*", "wss://*/*"] },
+    (details, callback) =>
+      callback({
+        cancel: !requestDecision({ url: details.url, devOrigin: devUrl ? rendererOrigin : null }),
+      }),
+  );
+  ses.on("will-download", (event) => event.preventDefault());
+  ses.protocol.handle("folio", rendererResponse);
+  ses.protocol.handle(ASSET_SCHEME, assetResponse);
+  return (pictures = ses);
 }
 
 /** What the window may ask for, load and reach; see hardening.ts for the rules. */
@@ -1572,6 +1642,7 @@ app.on("before-quit", (event) => {
   event.preventDefault();
   quitting = true;
   signIn?.abort();
+  noteCapture.close();
   // Closing settles running replies as interrupted and releases each chat's lease; the student's
   // servers close after them, so no reply is left calling one.
   void service
@@ -1600,6 +1671,7 @@ app.on("activate", () => {
 void app.whenReady().then(() => {
   hardenSession();
   serveRenderer();
+  protocol.handle(ASSET_SCHEME, assetResponse);
   protocol.handle(ARTIFACT_SCHEME, (request) =>
     artifactResponse(
       {

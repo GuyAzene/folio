@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { defineConfig } from "vite-plus";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import tailwindcss from "@tailwindcss/vite";
@@ -22,7 +23,17 @@ export default defineConfig({
   plugins: [katexWoff2Only, svelte(), tailwindcss()],
   base: "./",
   server: { host: "127.0.0.1", port: 5173, strictPort: true },
-  build: { outDir: "build/renderer", emptyOutDir: true },
+  build: {
+    outDir: "build/renderer",
+    emptyOutDir: true,
+    // The app, and the hidden page that draws a note for the tutor to look at (note-capture.ts).
+    rolldownOptions: {
+      input: {
+        main: resolve(import.meta.dirname, "index.html"),
+        capture: resolve(import.meta.dirname, "capture.html"),
+      },
+    },
+  },
   run: {
     tasks: {
       start: { command: "node src/cli.ts", cache: false },

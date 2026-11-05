@@ -1,9 +1,10 @@
 import { EditorView, WidgetType } from "@codemirror/view";
-import { mountDemos } from "../demo-slots.ts";
+import { assetUrl, imageSize } from "../../../src/library/asset-names.ts";
 import { diagramHtml, drawnHeight } from "../diagrams.ts";
 import { estimateDirection } from "../direction.ts";
 import { renderMarkdown } from "../markdown.ts";
 import { renderTex } from "../tex.ts";
+import { noteCourse, noteDemos } from "./note-context.ts";
 
 /**
  * What the live preview draws in place of Markdown source. Every widget is rebuilt only when
@@ -52,11 +53,12 @@ export class HtmlWidget extends WidgetType {
   eq(other: HtmlWidget): boolean {
     return other.source === this.source && other.block === this.block;
   }
-  toDOM(): HTMLElement {
+  toDOM(view: EditorView): HTMLElement {
     const element = document.createElement(this.block ? "div" : "span");
+    const options = { note: true, assets: view.state.facet(noteCourse) };
     const html = this.block
-      ? renderMarkdown(this.source, { note: true })
-      : renderMarkdown(this.source, { note: true })
+      ? renderMarkdown(this.source, options)
+      : renderMarkdown(this.source, options)
           .trim()
           .replace(/^<p[^>]*>([\s\S]*)<\/p>$/, "$1");
     if (!html.trim()) {
@@ -133,14 +135,15 @@ export class DemoWidget extends WidgetType {
   eq(other: DemoWidget): boolean {
     return other.source === this.source && other.armed === this.armed;
   }
-  toDOM(): HTMLElement {
+  toDOM(view: EditorView): HTMLElement {
     const element = document.createElement("div");
     element.className = "cm-demo";
     element.dir = "ltr";
     const slot = document.createElement("div");
     slot.className = "demo-slot";
     slot.dataset.source = encodeURIComponent(this.source);
-    const run = () => (this.#stop = mountDemos(element));
+    const demos = view.state.facet(noteDemos);
+    const run = () => (this.#stop = demos(element));
     if (this.armed) {
       element.append(slot);
       queueMicrotask(run);
@@ -180,16 +183,21 @@ export class ImageWidget extends WidgetType {
   eq(other: ImageWidget): boolean {
     return other.src === this.src && other.alt === this.alt;
   }
-  toDOM(): HTMLElement {
+  toDOM(view: EditorView): HTMLElement {
     const image = document.createElement("img");
     image.className = "cm-image";
-    image.src = this.src;
-    image.alt = this.alt;
+    // A figure kept beside the notes, `assets/<file>`, loads from this note's course.
+    const course = view.state.facet(noteCourse);
+    image.src = (course && assetUrl(course, this.src)) || this.src;
+    // `![A figure|360](…)` is 360 pixels wide, as in Obsidian.
+    const { alt, width } = imageSize(this.alt);
+    image.alt = alt;
+    if (width) image.width = width;
     // Only local and data images load; anything else shows its description instead.
     image.onerror = () => {
       const missing = document.createElement("span");
       missing.className = "cm-image-missing";
-      missing.textContent = this.alt || "Image";
+      missing.textContent = alt || "Image";
       image.replaceWith(missing);
     };
     return image;

@@ -68,6 +68,8 @@ export const MONO_EM = 0.6;
 const BOX_EM = 1;
 
 const VOID_TAGS = new Set(["br", "hr", "img", "wbr"]);
+/** A block that is only the opening tag of a container: its contents and closing tag follow. */
+const CONTAINER = /^<(div|section|aside|details|figure|center|blockquote)\b[^<>]*>$/i;
 
 const hidden = Decoration.replace({});
 
@@ -253,6 +255,8 @@ class Preview {
 
   private heading(node: SyntaxNode, level: number): void {
     this.lineClass(node.from, `cm-heading cm-h${level}`);
+    // A heading written with markup, such as a centered, underlined title, renders as in Read.
+    this.inlineHtml(node);
     if (this.showsLines(node.from, node.to)) return;
     for (const mark of node.getChildren("HeaderMark")) {
       if (mark.from === node.from) this.hideWithSpace(mark.from, mark.to);
@@ -270,6 +274,7 @@ class Preview {
     this.eachLine(node.from, underline ? underline.from - 1 : node.to, (from) =>
       this.lineClass(from, `cm-heading cm-h${level}`),
     );
+    this.inlineHtml(node);
     if (!underline) return;
     this.lineClass(underline.from, "cm-setext-underline");
     if (!this.showsLines(node.from, node.to)) this.hide(underline.from, underline.to);
@@ -470,16 +475,45 @@ class Preview {
     return source || null;
   }
 
-  /** A table or HTML block: rendered in place when it starts a line and the cursor is away. */
+  /**
+   * A table or HTML block: rendered in place when it starts a line and the cursor is away. A
+   * container opened on its own, such as a colored `<div …>` with Markdown and a blank line
+   * inside, renders with everything up to its closing tag as one block, as the reading view
+   * draws it; otherwise its opening tag, its contents and `</div>` would each draw apart.
+   */
   private renderedBlock(node: SyntaxNode, sourceClass: string): boolean | void {
     const { doc } = this.state;
     const first = doc.lineAt(node.from);
-    const last = doc.lineAt(node.to);
+    const end = node.name === "HTMLBlock" ? (this.containerEnd(node) ?? node) : node;
+    const last = doc.lineAt(end.to);
     if (this.live && first.from === node.from && !this.shows(first.from, last.to)) {
       this.replaceLines(first.from, last.to, new HtmlWidget(this.text(first.from, last.to), true));
+      if (end !== node) this.drawn.push([first.from, last.to]);
       return false;
     }
+    // A container being edited shows both its tags as written; its closing tag is not drawn alone.
+    if (end !== node) {
+      this.eachLine(end.from, end.to, (from) => this.lineClass(from, sourceClass));
+      this.drawn.push([end.from, end.to]);
+    }
     this.eachLine(node.from, node.to, (from) => this.lineClass(from, sourceClass));
+  }
+
+  /** For an HTML block that only opens a container, the later block that closes it, or null. */
+  private containerEnd(node: SyntaxNode): SyntaxNode | null {
+    const open = CONTAINER.exec(this.text(node.from, node.to).trim());
+    if (!open) return null;
+    const name = open[1]!.toLowerCase();
+    const opens = new RegExp(`<${name}\\b`, "gi");
+    const closes = new RegExp(`</${name}\\s*>`, "gi");
+    let depth = 1;
+    for (let sibling = node.nextSibling; sibling; sibling = sibling.nextSibling) {
+      if (sibling.name !== "HTMLBlock") continue;
+      const text = this.text(sibling.from, sibling.to);
+      depth += (text.match(opens)?.length ?? 0) - (text.match(closes)?.length ?? 0);
+      if (depth <= 0) return sibling;
+    }
+    return null;
   }
 
   private inlineMath(node: SyntaxNode): boolean {

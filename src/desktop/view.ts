@@ -157,8 +157,17 @@ function runningLabel(name: string, args: unknown, live?: LiveChat): string {
   const service = live?.service(name);
   if (service) return `Using ${service.label} · ${service.tool}`;
   const page = (args as { page?: unknown } | undefined)?.page;
+  const closer = (args as { region?: unknown } | undefined)?.region !== undefined;
   if (name === "read_page")
-    return typeof page === "number" ? `Reading page ${page}` : "Reading a page";
+    return typeof page === "number"
+      ? `${closer ? "Looking closer at" : "Reading"} page ${page}`
+      : "Reading a page";
+  if (name === "view_note")
+    return (args as { find?: unknown } | undefined)?.find !== undefined
+      ? "Looking closely at your note"
+      : "Looking at your note";
+  if (name === "add_note_figure")
+    return typeof page === "number" ? `Cropping a figure from page ${page}` : "Cropping a figure";
   if (name === "list_documents") return "Looking through the course";
   if (name === "search_course") return "Searching the course";
   if (name === "read_sections") return "Reading the course's notes";
@@ -217,9 +226,41 @@ function finishedLabel(name: string, details: unknown, failed: boolean, fallback
   if (name === "list_documents")
     return failed ? "Couldn't list the course" : "Looked through the course";
   if (name === "read_page") {
-    const reading = details as Partial<SourceView> | undefined;
-    if (failed) return fallback.replace("Reading", "Couldn't read");
-    if (reading?.title && reading.page) return `Read ${reading.title}, page ${reading.page}`;
+    const reading = details as (Partial<SourceView> & { region?: unknown }) | undefined;
+    if (failed)
+      return fallback
+        .replace("Looking closer at", "Couldn't look closer at")
+        .replace("Reading", "Couldn't read");
+    if (reading?.title && reading.page)
+      return reading.region
+        ? `Looked closer at ${reading.title}, page ${reading.page}`
+        : `Read ${reading.title}, page ${reading.page}`;
+  }
+  if (name === "view_note") {
+    if (failed) return "Couldn't look at your note";
+    const shown = (details ?? {}) as {
+      title?: unknown;
+      view?: unknown;
+      part?: unknown;
+      parts?: unknown;
+      closeUp?: unknown;
+    };
+    const which = shown.view === "read" ? "read view" : "edit view";
+    const where = shown.closeUp
+      ? `${which}, close-up`
+      : typeof shown.part === "number" && typeof shown.parts === "number" && shown.parts > 1
+        ? `${which}, part ${shown.part} of ${shown.parts}`
+        : which;
+    return typeof shown.title === "string"
+      ? `Looked at your note ${shown.title} (${where})`
+      : "Looked at your note";
+  }
+  if (name === "add_note_figure") {
+    if (failed) return "Couldn't crop that figure";
+    const figure = (details ?? {}) as { source?: unknown; page?: unknown };
+    return typeof figure.source === "string" && typeof figure.page === "number"
+      ? `Saved a figure from ${figure.source}, page ${figure.page}`
+      : "Saved a figure";
   }
   if (name === "search_course")
     return failed ? "Couldn't search the course" : "Searched the course";

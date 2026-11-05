@@ -56,3 +56,27 @@ function knownFormat(bytes: Uint8Array): boolean {
       bytes[11] === 0x50)
   );
 }
+
+/**
+ * A PNG's or JPEG's kind and size in pixels, read from its header without decoding it: a PNG's
+ * IHDR, a JPEG's first frame header. Null for anything else.
+ */
+export function pixelSize(
+  bytes: Uint8Array,
+): { kind: "png" | "jpg"; width: number; height: number } | null {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const starts = (...signature: number[]) => signature.every((byte, i) => bytes[i] === byte);
+  if (starts(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a) && bytes.byteLength >= 24)
+    return { kind: "png", width: view.getUint32(16), height: view.getUint32(20) };
+  if (!starts(0xff, 0xd8)) return null;
+  let at = 2;
+  while (at + 9 < bytes.byteLength) {
+    if (bytes[at] !== 0xff) return null;
+    const marker = bytes[at + 1]!;
+    // Start-of-frame markers, except the ones that aren't frames (DHT C4, JPG C8, DAC CC).
+    if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker))
+      return { kind: "jpg", height: view.getUint16(at + 5), width: view.getUint16(at + 7) };
+    at += 2 + view.getUint16(at + 2);
+  }
+  return null;
+}

@@ -19,7 +19,7 @@ src/desktop/main.ts           the main process
 
 | Path | What it holds |
 | --- | --- |
-| `app/` | The renderer: `views/` (Home, course, reader, notes, study notes, chats, Studying, Trash), `components/`, and `lib/` (app state, Markdown and math rendering, text direction, the note editor in `lib/editor/`). |
+| `app/` | The renderer: `views/` (Home, course, reader, notes, study notes, chats, Studying, Trash), `components/`, and `lib/` (app state, Markdown and math rendering, text direction, the note editor in `lib/editor/`); `capture.ts` is the hidden page that draws a note for the tutor to look at. |
 | `src/desktop/` | The Electron main process, the preload bridge, the IPC contract (`api.ts`) and the chat service. |
 | `src/conversation.ts`, `src/session-store.ts`, `src/transcript.ts`, `src/agents.ts` | Conversations on Pi: saving and resuming, cancellation, leases, and what history the model sees. |
 | `src/auth.ts`, `src/chatgpt-sign-in.ts`, `src/connections.ts`, `src/model-refs.ts`, `src/model-choices.ts`, `src/live-catalog.ts`, `src/config.ts` | Connections and models: the ChatGPT sign-in and API keys, the models each connection offers, Pi's live list of OpenRouter's models, and which model does what (`config.json`). |
@@ -50,6 +50,18 @@ change (`src/desktop/hardening.ts`):
 
 `FOLIO_PERMISSIONS=log` prints every permission request instead of refusing it, to take stock of
 what the page uses.
+
+A note's figures load from `folio-note://<course>/<file>` (`src/desktop/note-asset-protocol.ts`),
+only for Folio's own pages: the address must name exactly one figure of one course, and a
+demo's frame gets nothing. A note writes a figure as `assets/<file>`, and the renderer turns that
+into its own course's address after the sanitizer has checked it, so a note can never name
+another course's figures.
+
+When the tutor looks at a note (`view_note`), the main process opens a hidden window on
+`capture.html` (`src/desktop/note-capture.ts`) for that one drawing and closes it afterwards. It
+runs in an in-memory session of its own, so it shares no storage with the window, with no
+preload and so no IPC, and under the same rules: no permissions, no network, no downloads, no
+navigation. A stopped reply or a quit closes it at once.
 
 Replies and notes are Markdown sanitized by DOMPurify. Math leaves the sanitizer as an inert
 placeholder carrying its TeX percent-encoded (the sanitizer drops attributes such as `E[X]>0` or
@@ -138,8 +150,8 @@ There are three kinds of chat, fixed when a chat is created:
 - **Plain chats** read nothing. Only chats from early builds are plain.
 
 The tutor's tools (`list_documents`, `read_page`, `search_course`, `read_sections`,
-`related_sections`, `topic_map`, `list_notes`, `read_note`, `create_note`, `edit_note` and
-`rename_note`) check every
+`related_sections`, `topic_map`, `list_notes`, `read_note`, `create_note`, `edit_note`,
+`rename_note`, `view_note` and `add_note_figure`) check every
 argument in application code against what the chat may read. The app installs its own prompt
 before each request, so a saved chat never carries stale permissions. That prompt stays the same
 from turn to turn, which lets the provider reuse the start of each request: what changes with a
@@ -157,7 +169,8 @@ under its hash, read-only, and recorded on their message like anything else they
 reads it with `read_page` in that chat only; reading it never adds it to a course. `add_file`
 adds it when the student asks, through the same import as Materials.
 
-`read_page` returns the page's text and the page itself as an image, so diagrams count. Every
+`read_page` returns the page's text and the page itself as an image, so diagrams count; with a
+`region` (fractions of the page), a sharper close-up of part of it instead. Every
 request resends the conversation, so at most the six most recent messages with images keep them,
 and earlier ones say an image was there. Older images are let go five at a time rather than one
 per new image, so most requests repeat the one before.
@@ -435,6 +448,32 @@ History menu, brings an earlier version back as a new one. Notes link to each ot
 `[[Title]]` and to study-notes topics with `[[topic:slug]]`. Chats from before this keep their
 suggested edits, which the student still keeps, inserts or discards.
 
+A note can be a faithful copy of a handout, such as a homework workbook, and both views draw it
+the same way:
+
+- A container opened on its own, such as `<div style="background-color:#ffb9bb">` with Markdown
+  and math inside and a blank line around them, draws as one block in the editor too. A colored
+  block that sets no text color gets a readable one, so it stays legible in dark mode.
+- A heading may carry HTML, such as a centered, underlined title; the note's title and outline
+  read its words without the tags.
+- Math is drawn at the reading size (`--reading-math`), and an inline formula breaks between its
+  terms in a left-to-right line. One still wider than its line scrolls inside itself
+  (`app/lib/wide-math.ts`) instead of pushing the page sideways.
+- Figures are image files beside the course's notes, named by their SHA-256 and written
+  `![What it shows|360](assets/<file>)`, the number being the width (`src/library/note-assets.ts`).
+  A figure is never deleted with a note, so undo, history and the Trash find it where it was. A
+  figure the tutor cropped but never placed stays in the folder too; a later sweep may clear the
+  figures that no note, earlier version or Trash entry names.
+
+The tutor can look at what it wrote. `view_note` draws a note in the edit view or the read view,
+with the very components the note view uses (`NoteReading.svelte`, `createNoteEditor`), and cuts
+it into pictures 784 pixels wide, between blocks, with which lines each shows. A close-up of a
+passage comes at twice the size. The drawing also says what looked broken: a formula KaTeX
+can't draw, anything wider than the column, HTML shown as text, a figure that doesn't load, a
+colored block hard to read in either theme. `add_note_figure` crops a region of a course PDF
+page into a figure and returns the Markdown that shows it; placing it is an ordinary `edit_note`,
+which the student can undo.
+
 All notes live in one notebook, a place of its own in the sidebar: a list grouped by when each
 note last changed (pinned notes first) beside the open note. Courses are the folders and `#tags`
 cut across them; a course's Notes tab is the same list filtered to it. Search reads every note's
@@ -529,6 +568,7 @@ Everything lives in `~/.folio/` (or `FOLIO_HOME`), with directories `0700` and f
 | `pending/<id>.json` | Changes the tutor proposed, waiting for the student or answered |
 | `library/` | Courses, read-only originals with their hashes, notes with their history, and suggested edits |
 | `library/assignments/<id>/` | Each assignment's record and the files handed in or back |
+| `library/courses/<id>/notes/assets/` | Figures in the course's notes, each named by its SHA-256 |
 | `library/courses/<id>/kb/generations/<n>/` | Each published version of a course's study notes |
 | `library/kb.sqlite` | Which version of each course's study notes is current |
 | `jobs.sqlite` | Study jobs and the saved output of their steps |

@@ -46,7 +46,13 @@ import {
   type NamingScope,
   type Rename,
 } from "../../src/library/naming.ts";
-import { linkFirstMention, matchNote, mentionsOf, noteFacts } from "../../src/library/note-meta.ts";
+import {
+  linkFirstMention,
+  matchNote,
+  mentionsOf,
+  noteFacts,
+  noteTitle,
+} from "../../src/library/note-meta.ts";
 import { FINITE_AUTOMATA, GRAPH_TRAVERSAL } from "../../tests/fixtures/showcase-slides.ts";
 import { SYNTHETIC_LECTURE, syntheticPdf } from "../../tests/fixtures/synthetic-pdf.ts";
 import { syntheticSlides } from "../../tests/fixtures/synthetic-slides.ts";
@@ -485,11 +491,7 @@ function putNote(noteId: string, courseId: string, content: string): NoteView {
   const note: NoteView = {
     id: noteId,
     courseId,
-    title:
-      content
-        .split("\n")
-        .find((line) => line.trim())
-        ?.replace(/^#+\s*/, "") || "Untitled note",
+    title: noteTitle(content),
     revision: String(Number(previous) + 1),
     updatedAt: new Date().toISOString(),
     ...noteFacts(content),
@@ -2739,7 +2741,7 @@ export const previewApi: FolioApi = {
       revision: version.revision,
       at: version.at,
       author: "student" as const,
-      title: version.content.split("\n")[0]?.replace(/^#+\s*/, "") || "Untitled note",
+      title: noteTitle(version.content),
       characters: version.content.length,
     }));
   },

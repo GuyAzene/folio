@@ -17,10 +17,21 @@ import {
   Transaction,
   type TransactionSpec,
 } from "@codemirror/state";
-import { drawSelection, dropCursor, EditorView, keymap, placeholder } from "@codemirror/view";
+import {
+  drawSelection,
+  dropCursor,
+  EditorView,
+  keymap,
+  placeholder,
+  ViewPlugin,
+  type ViewUpdate,
+} from "@codemirror/view";
+import type { DemoRunner } from "../demo-placeholder.ts";
+import { measureWideMath } from "../wide-math.ts";
 import { insertLink, toggleWrap } from "./commands.ts";
 import { noteDirection } from "./direction.ts";
 import { livePreview, livePreviewExtension } from "./live-preview.ts";
+import { noteCourse, noteDemos } from "./note-context.ts";
 import { noteMarkdown } from "./syntax.ts";
 import { noteHighlight, noteTheme } from "./theme.ts";
 import { wikilinks, type LinkTargets } from "./wikilinks.ts";
@@ -48,7 +59,34 @@ export interface NoteEditorOptions {
   links?: LinkTargets;
   /** Grow with the text inside a page that scrolls, instead of scrolling itself. */
   inFlow?: boolean;
+  /** Shown but not edited, as in a picture of the note. */
+  readOnly?: boolean;
+  /** The course the note belongs to, whose figures it shows. */
+  courseId?: string;
+  /** How a ```demo block runs; without it, a placeholder shows where the demo would. */
+  demos?: DemoRunner;
 }
+
+/** Marks inline formulas too wide for their line (see wide-math.ts) whenever the note redraws. */
+const wideMath = ViewPlugin.fromClass(
+  class {
+    readonly view: EditorView;
+    constructor(view: EditorView) {
+      this.view = view;
+      this.measure();
+    }
+    update(update: ViewUpdate): void {
+      if (update.docChanged || update.viewportChanged || update.geometryChanged) this.measure();
+    }
+    measure(): void {
+      this.view.requestMeasure({
+        key: this,
+        read: (view) => measureWideMath(view.contentDOM),
+        write: (mark) => mark(),
+      });
+    }
+  },
+);
 
 export interface NoteEditor {
   readonly view: EditorView;
@@ -89,6 +127,10 @@ export function noteExtensions(options: Omit<NoteEditorOptions, "doc">, mode = n
     syntaxHighlighting(noteHighlight),
     noteDirection(),
     livePreviewExtension(),
+    wideMath,
+    options.demos ? noteDemos.of(options.demos) : [],
+    noteCourse.of(options.courseId ?? null),
+    options.readOnly ? [EditorState.readOnly.of(true), EditorView.editable.of(false)] : [],
     options.links ? wikilinks(options.links) : [],
     closeBrackets(),
     search({ top: true }),

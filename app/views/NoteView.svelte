@@ -6,6 +6,7 @@
   import CourseTile from "../components/CourseTile.svelte";
   import IconButton from "../components/IconButton.svelte";
   import NoteBacklinks from "../components/NoteBacklinks.svelte";
+  import NoteReading from "../components/NoteReading.svelte";
   import PaneControls from "../components/PaneControls.svelte";
   import {
     citationLabel,
@@ -19,9 +20,7 @@
   } from "../lib/editor/note-editor.ts";
   import { formatDate } from "../lib/labels.ts";
   import { mountDemos } from "../lib/demo-slots.ts";
-  import { linkedMarkdown, wikilinkTarget } from "../lib/editor/wikilinks.ts";
   import { shortTitle } from "../lib/titles.ts";
-  import { renderMarkdown } from "../lib/markdown.ts";
   import { folio } from "../lib/state.svelte.ts";
 
   /**
@@ -237,6 +236,8 @@
         onRead: () => (mode = "read"),
         links: { targets: linkTargets, open: openLink, label: linkLabel },
         inFlow: true,
+        courseId: note?.courseId,
+        demos: mountDemos,
       });
       return () => {
         editor?.destroy();
@@ -482,29 +483,14 @@
     <div class="flex min-h-0 flex-1">
       <div class="scroll-quiet min-h-0 min-w-0 flex-1 overflow-y-auto">
         {#if mode === "read"}
-          <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
-          <article
-            bind:this={article}
-            class="prose-folio prose-reading mx-auto max-w-[784px] px-8 pt-10 pb-8 font-serif text-[17px] leading-7 max-sm:px-4"
-            onclick={(event) => {
-              const anchor = (event.target as Element).closest?.("a");
-              const target = wikilinkTarget(anchor?.getAttribute("href") ?? null);
-              if (!target) return;
-              event.preventDefault();
-              openLink(target, event.metaKey || event.ctrlKey);
-            }}
-            {@attach (node) => {
-              // Demos run again whenever the note's text changes.
-              void content;
-              return mountDemos(node);
-            }}
-          >
-            <!-- Sanitized by DOMPurify in renderMarkdown. -->
-            <!-- eslint-disable-next-line svelte/no-at-html-tags -->
-            {@html renderMarkdown(linkedMarkdown(content || "Nothing here yet.", linkLabel), {
-              note: true,
-            })}
-          </article>
+          <NoteReading
+            {content}
+            {linkLabel}
+            courseId={note?.courseId ?? null}
+            demos={mountDemos}
+            onlink={openLink}
+            bind:article
+          />
         {:else if status !== "loading"}
           <div {@attach mountEditor}></div>
           {#if onlyTitle(content)}

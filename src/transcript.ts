@@ -290,9 +290,12 @@ export function stubOf(result: { toolName: string; details?: unknown; isError?: 
       ? `"${details.title}", page ${String(details.page)}`
       : handles
         ? `sections ${handles}`
-        : result.toolName === "read_note" && typeof details.title === "string"
-          ? `the note "${details.title}"`
-          : "";
+        : (result.toolName === "read_note" || result.toolName === "view_note") &&
+            typeof details.title === "string"
+          ? `the note "${details.title}"${typeof details.view === "string" ? `, ${details.view} view` : ""}`
+          : result.toolName === "add_note_figure" && typeof details.source === "string"
+            ? `a figure from "${details.source}", page ${String(details.page)}`
+            : "";
   return `[An earlier ${result.toolName} result${what ? ` (${what})` : ""} is not sent again; call the tool again if you need its text.]`;
 }
 
@@ -351,6 +354,12 @@ const EARLIER_PAGE =
   "[A page image from earlier is not sent again; read the page again to look at it.]";
 const EARLIER_OWN_IMAGE =
   "[An image the student added earlier is not sent again; ask them to add it again if you need it.]";
+/** Pictures from the note tools, which say what they were rather than calling them pages. */
+const EARLIER_TOOL_IMAGE: Record<string, string> = {
+  view_note:
+    "[A picture of the note from earlier is not sent again; call view_note again to look at it.]",
+  add_note_figure: "[A figure's preview from earlier is not sent again.]",
+};
 
 /**
  * How many of the first `count` messages with images send their images as text instead: none
@@ -388,7 +397,11 @@ function withRecentImages(context: Message[]): Message[] {
       block.type === "image"
         ? {
             type: "text" as const,
-            text: kinds[image++]?.kind === "image" ? EARLIER_OWN_IMAGE : EARLIER_PAGE,
+            text:
+              kinds[image++]?.kind === "image"
+                ? EARLIER_OWN_IMAGE
+                : (message.role === "toolResult" && EARLIER_TOOL_IMAGE[message.toolName]) ||
+                  EARLIER_PAGE,
           }
         : block,
     );

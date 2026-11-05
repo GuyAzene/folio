@@ -13,8 +13,11 @@ import {
   type NoteFile,
   type NoteHistoryEntry,
 } from "../notes.ts";
+import { withoutMarkup } from "../text.ts";
 import { checkId, LibraryError, type LibraryStore } from "./store.ts";
-import { linkFirstMention, matchNote, type Mention, mentionsOf } from "./note-meta.ts";
+import { linkFirstMention, matchNote, type Mention, mentionsOf, noteTitle } from "./note-meta.ts";
+
+export { noteTitle };
 
 export interface CourseNote extends NoteFile {
   id: string;
@@ -65,17 +68,6 @@ export class ProposalStaleError extends Error {}
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_PROPOSAL_CHARACTERS = 20_000;
 const STALE = "Your note changed after Folio drafted this edit. Nothing was changed.";
-
-/** A note's title is its first line, without a Markdown heading mark. */
-export function noteTitle(content: string): string {
-  const line = content.split("\n").find((candidate) => candidate.trim()) ?? "";
-  return (
-    line
-      .replace(/^#{1,6}\s+/, "")
-      .trim()
-      .slice(0, 120) || "Untitled note"
-  );
-}
 
 /** `[[Old]]` and `[[Old|shown text]]` links point at the new title; nothing else changes. */
 export function relinkTitle(content: string, from: string, to: string): string {
@@ -158,7 +150,11 @@ export class CourseNotes {
 
   async create(courseId: string, title: string, content = ""): Promise<CourseNote> {
     await this.#library.course(courseId);
-    const heading = title.replace(/\s+/g, " ").trim().slice(0, 120) || "Untitled note";
+    // The 120 characters are the title as read; a title written with markup keeps its tags whole.
+    const written = title.replace(/\s+/g, " ").trim();
+    const plain = withoutMarkup(written).replace(/\s+/g, " ").trim();
+    const heading =
+      (plain.length > 120 ? plain.slice(0, 120) : plain ? written : "") || "Untitled note";
     const id = randomUUID();
     await writeNoteFile(
       resolve(await this.#directory(courseId, "notes"), `${id}.md`),
