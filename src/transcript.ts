@@ -1,5 +1,6 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Message } from "@earendil-works/pi-ai";
+import { visualTitle } from "./visual.ts";
 
 type JsonRecord = Record<string, unknown>;
 const stopReasons = new Set([
@@ -339,14 +340,7 @@ function trimmed(messages: AgentMessage[]): AgentMessage[] {
 
 function earlierTitle(args: unknown): string {
   const source = (args as { source?: unknown } | undefined)?.source;
-  const title =
-    typeof source === "string" ? /<title[^>]*>([\s\S]*?)<\/title>/i.exec(source)?.[1] : "";
-  return (
-    title
-      ?.replace(/<[^>]*>/g, "")
-      .trim()
-      .slice(0, 80) || "untitled"
-  );
+  return (typeof source === "string" && visualTitle(source)?.slice(0, 80)) || "untitled";
 }
 
 /** At most this many messages (questions or tool results) keep their images in a request. */

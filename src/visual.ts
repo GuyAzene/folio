@@ -35,11 +35,15 @@ export function staticSvg(source: string): boolean {
   );
 }
 
-/** The visual's `<title>`, as plain text. */
+/**
+ * The visual's `<title>`, as plain text: tags inside it are dropped, and so is any `<` or `>`
+ * left over, so no markup can be rebuilt from what remains.
+ */
 export function visualTitle(source: string): string | null {
   const title = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(source)?.[1];
   const text = title
     ?.replace(/<[^>]*>/g, "")
+    .replace(/[<>]/g, "")
     .replace(/\s+/g, " ")
     .trim();
   return text ? text.slice(0, 120) : null;
