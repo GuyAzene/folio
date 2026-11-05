@@ -132,15 +132,17 @@ async function serve(): Promise<() => void> {
 }
 
 /**
- * A hidden window on the preview, at twice its size; its page is captured, never shown. Its
- * scrollbars are hidden: macOS draws them or not by its own setting and whether a mouse is
- * connected, which would make the pictures depend on the Mac that takes them.
+ * A hidden window on the preview, at twice its size; its page is captured, never shown. Nothing
+ * comes from the Mac that takes the pictures: the scale is forced, since a screen that isn't
+ * Retina draws the page at its own size whatever the page asks, and the scrollbars are hidden,
+ * since macOS draws them or not by its own setting and whether a mouse is connected.
  */
 async function window() {
   const main = resolve(await mkdtemp(resolve(tmpdir(), "folio-screenshots-")), "main.cjs");
   await writeFile(
     main,
     `const { app, BrowserWindow } = require("electron");
+app.commandLine.appendSwitch("force-device-scale-factor", "2");
 app.commandLine.appendSwitch("hide-scrollbars");
 app.whenReady().then(() => {
   const window = new BrowserWindow({ show: false, ...${JSON.stringify(SIZE)},
