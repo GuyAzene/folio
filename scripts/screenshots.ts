@@ -1,18 +1,28 @@
 // Pictures of Folio for the README, from the browser preview's synthetic courses: `vp run
 // screenshots` serves the interface with `vp dev`, opens it in a hidden Electron window, sets up
-// each scene, and writes docs/images/<scene>-light.png and <scene>-dark.png at twice their size,
-// then the clip of the tutor answering, docs/images/tutor-light.webp and tutor-dark.webp.
-// The clock is fixed, so relative dates and the greeting come out the same on every run. Nothing
-// opens on screen and nothing talks to a model. `vp run screenshots board clip` takes only
-// those.
+// each scene and takes docs/images/<scene>-light.png and <scene>-dark.png at twice their size. A
+// picture is replaced only when it looks different, so retaking them changes nothing until the
+// interface does. The clip of the tutor answering, docs/images/tutor-light.webp and
+// tutor-dark.webp, is recorded in real time and never comes out the same twice, so it is retaken
+// only when a picture changed, when it is missing, or when named. The clock is fixed, so relative
+// dates and the greeting come out the same on every run. Nothing opens on screen and nothing
+// talks to a model. `vp run screenshots board clip` takes only those.
+//
+// On a pull request that changes the app, CI runs this and commits the pictures that changed:
+// CI's pictures are the ones the README keeps. Another Mac draws text a little differently, so
+// elsewhere the pictures that changed go to a temporary folder, to look at; `--write` puts them
+// in docs/images all the same.
 import { execFileSync, spawn } from "node:child_process";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { copyFile, mkdtemp, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { _electron, type Page } from "playwright-core";
+import { looksDifferent } from "./picture-difference.ts";
 
 const ROOT = resolve(import.meta.dirname, "..");
+const IMAGES = resolve(ROOT, "docs/images");
 const PORT = 5199;
 const URL = `http://127.0.0.1:${PORT}/`;
 const SIZE = { width: 1280, height: 800 };
@@ -125,12 +135,24 @@ async function serve(): Promise<() => void> {
   }
 }
 
-/** A hidden window on the preview, at twice its size; its page is captured, never shown. */
+type Area = { x: number; y: number; width: number; height: number };
+/** `fast` encodes quickly, for the clip's frames, which img2webp encodes again. */
+type Capture = (area?: Area | null, fast?: boolean) => Promise<Buffer>;
+
+/**
+ * A hidden window on the preview, drawn at twice its size; its page is captured, never shown.
+ * Nothing comes from the Mac that takes the pictures. The page is drawn at twice its size by
+ * Chromium's emulation and captured by Chromium itself, since Playwright's screenshot of an
+ * Electron window takes the screen's own scale (once on a Mac without Retina, as GitHub's are).
+ * The scrollbars are hidden, since macOS draws them or not by its own setting and whether a
+ * mouse is connected.
+ */
 async function window() {
   const main = resolve(await mkdtemp(resolve(tmpdir(), "folio-screenshots-")), "main.cjs");
   await writeFile(
     main,
     `const { app, BrowserWindow } = require("electron");
+app.commandLine.appendSwitch("hide-scrollbars");
 app.whenReady().then(() => {
   const window = new BrowserWindow({ show: false, ...${JSON.stringify(SIZE)},
     webPreferences: { backgroundThrottling: false } });
@@ -147,7 +169,21 @@ app.whenReady().then(() => {
     mobile: false,
   });
   await page.clock.setFixedTime(NOW);
-  return { page, close: () => app.close() };
+  /** The page, or an area of it, as a PNG at twice its size; anything else is refused. */
+  const capture: Capture = async (area, fast = false) => {
+    const { data } = await cdp.send("Page.captureScreenshot", {
+      format: "png",
+      optimizeForSpeed: fast,
+      ...(area && { clip: { ...area, scale: 1 } }),
+    });
+    const png = Buffer.from(data, "base64");
+    const width = png.readUInt32BE(16);
+    const expected = Math.round((area?.width ?? SIZE.width) * 2);
+    if (width !== expected)
+      throw new Error(`A picture came out ${width} pixels wide instead of ${expected}.`);
+    return png;
+  };
+  return { page, capture, close: () => app.close() };
 }
 
 /** Opens the preview fresh, in a theme, on Home. */
@@ -161,14 +197,21 @@ async function home(page: Page, theme: "light" | "dark"): Promise<void> {
   }, theme);
   await page.reload();
   await page.getByPlaceholder("Ask about any of your courses").waitFor();
+  // A focused box's caret blinks, so no two pictures of it would be alike.
+  await page.addStyleTag({ content: "* { caret-color: transparent !important; }" });
 }
 
 /**
- * docs/images/tutor-<theme>.webp: the automaton slide with a new chat beside it, the question
+ * tutor-<theme>.webp, into `folder`: the automaton slide with a new chat beside it, the question
  * typed and sent, and the answer arriving, as an animated WebP that loops. Frames are taken as
  * fast as they come and each keeps its own duration; img2webp (from libwebp) joins them.
  */
-async function clip(page: Page, theme: "light" | "dark"): Promise<void> {
+async function clip(
+  page: Page,
+  capture: Capture,
+  theme: "light" | "dark",
+  folder: string,
+): Promise<void> {
   await home(page, theme);
   await sidebar(page, "Computational Models").click();
   await page.getByText("Lecture 1 Finite automata", { exact: true }).click();
@@ -184,7 +227,7 @@ async function clip(page: Page, theme: "light" | "dark"): Promise<void> {
   const frames: { png: Buffer; at: number }[] = [];
   let recording = true;
   const record = (async () => {
-    while (recording) frames.push({ png: await page.screenshot({ clip: area }), at: Date.now() });
+    while (recording) frames.push({ png: await capture(area, true), at: Date.now() });
   })();
   await page.waitForTimeout(600);
   await box.click();
@@ -209,15 +252,28 @@ async function clip(page: Page, theme: "light" | "dark"): Promise<void> {
     const duration = index + 1 < frames.length ? frames[index + 1]!.at - frame.at : 3000;
     args.push("-d", String(Math.max(20, duration)), path);
   }
-  const out = resolve(ROOT, `docs/images/tutor-${theme}.webp`);
+  const out = resolve(folder, `tutor-${theme}.webp`);
   execFileSync("img2webp", [...args, "-o", out], { stdio: "ignore" });
-  console.log(`docs/images/tutor-${theme}.webp (${frames.length} frames)`);
+  console.log(`${shown(out)} (${frames.length} frames)`);
 }
 
-const only = process.argv.slice(2);
+const args = process.argv.slice(2);
+const write = process.env.CI === "true" || args.includes("--write");
+const only = args.filter((arg) => arg !== "--write");
+const names = [...SCENES.map((scene) => scene.name), "clip"];
+const unknown = only.filter((name) => !names.includes(name));
+if (unknown.length) {
+  console.error(`No picture is called ${unknown.join(", ")}. There are ${names.join(", ")}.`);
+  process.exit(1);
+}
+/** Where the pictures that changed go: docs/images on CI or with --write, otherwise a folder. */
+const folder = write ? IMAGES : await mkdtemp(resolve(tmpdir(), "folio-readme-pictures-"));
+const shown = (path: string) => path.replace(`${ROOT}/`, "");
+const taken = await mkdtemp(resolve(tmpdir(), "folio-pictures-"));
+const changed: string[] = [];
 const stop = await serve();
 try {
-  const { page, close } = await window();
+  const { page, capture, close } = await window();
   try {
     for (const scene of SCENES.filter((scene) => !only.length || only.includes(scene.name)))
       for (const colors of ["light", "dark"] as const) {
@@ -225,17 +281,29 @@ try {
         await scene.show(page);
         await stillness(page);
         const area = scene.main ? await page.locator("main").boundingBox() : null;
-        await page.screenshot({
-          path: resolve(ROOT, `docs/images/${scene.name}-${colors}.png`),
-          ...(area && { clip: area }),
-        });
-        console.log(`docs/images/${scene.name}-${colors}.png`);
+        const name = `${scene.name}-${colors}.png`;
+        await writeFile(resolve(taken, name), await capture(area));
+        const different = await looksDifferent(resolve(IMAGES, name), resolve(taken, name));
+        if (different) {
+          await copyFile(resolve(taken, name), resolve(folder, name));
+          changed.push(name);
+        }
+        console.log(different ? shown(resolve(folder, name)) : `docs/images/${name} (unchanged)`);
       }
-    if (!only.length || only.includes("clip"))
-      for (const colors of ["light", "dark"] as const) await clip(page, colors);
+    const clipMissing = ["light", "dark"].some(
+      (colors) => !existsSync(resolve(IMAGES, `tutor-${colors}.webp`)),
+    );
+    if (only.includes("clip") || (!only.length && (changed.length > 0 || clipMissing)))
+      for (const colors of ["light", "dark"] as const) await clip(page, capture, colors, folder);
+    else if (!only.length) console.log("docs/images/tutor-*.webp (unchanged: no picture changed)");
   } finally {
     await close();
   }
 } finally {
   stop();
 }
+if (!write && (changed.length || only.includes("clip")))
+  console.log(
+    "\nThese are for looking at. On a pull request, CI commits the pictures that changed; " +
+      "--write puts them in docs/images.",
+  );

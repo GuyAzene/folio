@@ -6,6 +6,8 @@ on:
   pull_request:
   # The release workflow runs every check on the tagged commit.
   workflow_call:
+  # The README pictures job starts CI on the commit it pushes, which would otherwise get none.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -46,7 +48,12 @@ jobs:
           BEFORE: ${{ github.event.before }}
         run: |
           if [ "$EVENT" = pull_request ]; then range="$BASE...$HEAD"; else range="$BEFORE..$GITHUB_SHA"; fi
-          if files=$(git diff --name-only "$range" 2>/dev/null) && [ -n "$files" ]; then
+          if [ "$EVENT" = workflow_dispatch ]; then
+            # Started on its own, by the README pictures job or by hand: everything runs.
+            files=""
+            app=true
+            why="this run was started on its own, so every check runs"
+          elif files=$(git diff --name-only "$range" 2>/dev/null) && [ -n "$files" ]; then
             count=$(wc -l <<< "$files" | tr -d ' ')
             # Docs, Markdown at the root and in .github, GitHub's templates and settings, the
             # license and unit tests: nothing the macOS jobs build or check.
@@ -156,20 +163,89 @@ jobs:
         env:
           FOLIO_E2E_APP: ${{ github.workspace }}/release/mac-arm64/Folio.app
 
+  # On a pull request that changes the app, the README pictures are retaken from the preview
+  # (`vp run screenshots`), and those that look different are committed to the pull request's
+  # branch, so they are reviewed with the change. A push with the workflow's token starts no
+  # workflow, so this job starts CI on that commit itself: without it, the commit would never
+  # get the CI check main requires. That run checks the branch as it is, not merged with main as
+  # a pull request's run does; the commit only adds pictures to what was just checked merged.
+  # Only this repository's own branches: Dependabot's and a fork's tokens can't push.
+  pictures:
+    name: "macOS: README pictures"
+    needs: changes
+    if: >-
+      github.event_name == 'pull_request' && needs.changes.outputs.app == 'true' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.user.login != 'dependabot[bot]'
+    runs-on: macos-15
+    timeout-minutes: 15
+    permissions:
+      # Pushes the pictures to the pull request's branch, then starts CI on that commit.
+      contents: write
+      actions: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The branch's own commit, not the merge commit: the pictures go on top of it.
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: voidzero-dev/setup-vp@cab1ab9eaff52d4857875f4f2c016e36af8f2c76 # v1.22.0
+        with:
+          node-version-file: .node-version
+          sfw: true
+          cache: true
+          cache-toolchain: true
+          cache-save: false
+      - name: Electron
+        run: vp node node_modules/electron/install.js
+      - name: img2webp, which joins the clip's frames
+        run: command -v img2webp >/dev/null || brew install webp
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+      - name: Retake the pictures
+        run: vp run screenshots
+      - name: Commit the pictures that changed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          changed=$(git status --porcelain -- docs/images | cut -c4-)
+          if [ -z "$changed" ]; then
+            echo "**README pictures:** none looks different." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          git add -- docs/images
+          # No hooks: nothing the pull request brought runs while the token is at hand.
+          git -c core.hooksPath=/dev/null -c user.name="github-actions[bot]" \
+            -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit --quiet -m "Retake the README pictures" -m "$changed"
+          # Refused if the branch moved on meanwhile; the newer commit's own run retakes them.
+          git -c core.hooksPath=/dev/null push --quiet \
+            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            "HEAD:refs/heads/$BRANCH"
+          gh workflow run ci.yml --ref "$BRANCH"
+          {
+            echo "**README pictures:** committed $(wc -l <<< "$changed" | tr -d ' ') to \`$BRANCH\`, and started CI on that commit:"
+            echo
+            sed 's/^/- /' <<< "$changed"
+          } >> "$GITHUB_STEP_SUMMARY"
+
   # The one check a pull request needs: every job passed, or was skipped because nothing it
   # checks changed. A job skipped by its own condition counts as passed, so this is safe to
-  # require where a workflow filtered by paths would leave the check pending.
+  # require where a workflow filtered by paths would leave the check pending. The README pictures
+  # are waited for, so a pull request can't merge before its pictures are in, but they report on
+  # their own: a picture that didn't come out holds no change back.
   ci:
     name: CI
     if: always()
-    needs: [changes, check, window, packaged]
+    needs: [changes, check, window, packaged, pictures]
     runs-on: ubuntu-latest
     steps:
       - name: Every job passed or had nothing to check
         env:
           NEEDS: ${{ toJSON(needs) }}
         run: |
-          failed=$(jq -r 'to_entries[] | select(.value.result != "success" and .value.result != "skipped") | "\(.key): \(.value.result)"' <<< "$NEEDS")
+          failed=$(jq -r 'to_entries[] | select(.key != "pictures") | select(.value.result != "success" and .value.result != "skipped") | "\(.key): \(.value.result)"' <<< "$NEEDS")
           if [ -n "$failed" ]; then
             echo "::error::Not every job passed: $(paste -sd, - <<< "$failed")"
             exit 1

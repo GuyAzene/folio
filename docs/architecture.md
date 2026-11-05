@@ -573,6 +573,28 @@ commit. The download link never changes, and there are no versioned releases to 
 real-window job reports on its own and does not hold the nightly back: those checks were written
 on a Mac much faster than GitHub's virtual ones.
 
+On a pull request from this repository that changes the app, CI also retakes the README's
+pictures on macOS (`vp run screenshots`). A still picture is replaced only when it looks
+different (more than 50 pixels off by more than 8 in a colour channel, since Chromium draws the
+same page a few values apart from one version to the next), and the clip, which is recorded in
+real time, only when a picture changed. The pictures that changed are committed to the pull
+request's branch, so they are reviewed with the change. A push with the workflow's own token
+starts no workflow, so the job then starts CI on that commit itself (`workflow_dispatch`):
+`main` requires the CI check on a pull request's latest commit. GitHub also holds a
+`pull_request` run of that commit for approval; it runs nothing and can be left alone.
+
+Nothing in the pictures comes from the Mac that takes them. The page is drawn at twice its size
+by Chromium's emulation and captured by Chromium (`Page.captureScreenshot`), since Playwright's
+screenshot of an Electron window takes the screen's own scale, once on GitHub's Macs, which have
+no Retina screen; a picture of another size is refused. The scrollbars are hidden, since macOS
+draws them by its own settings, and so is the caret, which blinks. GitHub's Mac draws text a
+little differently from a newer macOS, so the pictures CI commits are the ones the README keeps:
+elsewhere, `vp run screenshots` puts the pictures that changed in a temporary folder, and only
+`--write` puts them in `docs/images`. The rule for "looks different" is in
+`scripts/picture-difference.ts`, with its tests. The CI check waits for the pictures job but
+not on its result, so a picture that doesn't come out holds no change back; if its commit went
+through but starting CI on it failed, the pull request waits for a CI check, which shows.
+
 A quit signal (SIGTERM, as the installer sends) quits Folio as ⌘Q does: chats settle first.
 
 Without a Developer ID Folio cannot update itself, so it says when a newer release is out
