@@ -28,6 +28,21 @@ describe("what a visual may be", () => {
     expect(visualTitle("<svg></svg>")).toBeNull();
   });
 
+  it("keeps a title plain text, whatever markup it holds", () => {
+    expect(visualTitle("<title>Two <tspan>states</tspan>\n  apart</title>")).toBe(
+      "Two states apart",
+    );
+    expect(visualTitle("<title><<script>script>alert(1)<</script>/script></title>")).not.toMatch(
+      /[<>]/,
+    );
+    fc.assert(
+      fc.property(
+        fc.string(),
+        (inner) => !/[<>]/.test(visualTitle(`<title>${inner}</title>`) ?? ""),
+      ),
+    );
+  });
+
   it("accepts a whole visual, and says how to fix one it refuses", () => {
     expect(visualProblem(DRAWING)).toBeNull();
     expect(visualProblem(DEMO)).toBeNull();
