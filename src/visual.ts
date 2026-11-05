@@ -36,16 +36,26 @@ export function staticSvg(source: string): boolean {
 }
 
 /**
- * The visual's `<title>`, as plain text: tags inside it are dropped, and so is any `<` or `>`
- * left over, so no markup can be rebuilt from what remains.
+ * Text with its tags taken out: everything from a `<` to the next `>` goes, and so does any `<`
+ * or `>` left over. One pass, and no angle bracket survives, so no markup can be rebuilt from
+ * what remains.
  */
+function withoutTags(text: string): string {
+  let plain = "";
+  for (let index = 0; index < text.length; index++) {
+    const char = text[index]!;
+    if (char === "<") {
+      const end = text.indexOf(">", index);
+      if (end !== -1) index = end;
+    } else if (char !== ">") plain += char;
+  }
+  return plain;
+}
+
+/** The visual's `<title>`, as plain text. */
 export function visualTitle(source: string): string | null {
   const title = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(source)?.[1];
-  const text = title
-    ?.replace(/<[^>]*>/g, "")
-    .replace(/[<>]/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
+  const text = title === undefined ? undefined : withoutTags(title).replace(/\s+/g, " ").trim();
   return text ? text.slice(0, 120) : null;
 }
 

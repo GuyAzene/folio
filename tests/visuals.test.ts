@@ -41,6 +41,21 @@ describe("what a visual may be", () => {
         (inner) => !/[<>]/.test(visualTitle(`<title>${inner}</title>`) ?? ""),
       ),
     );
+    // The same text as stripping tags with a regular expression and then any bracket left over.
+    const stripped = (inner: string) =>
+      inner
+        .replace(/<[^>]*>/g, "")
+        .replace(/[<>]/g, "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 120) || null;
+    fc.assert(
+      fc.property(
+        fc.string({ unit: fc.constantFrom("<", ">", "/", "a", "b", " ", "\n", "é", "ש") }),
+        (inner) => visualTitle(`<title>${inner}</title>`) === stripped(inner),
+      ),
+      { numRuns: 2000 },
+    );
   });
 
   it("accepts a whole visual, and says how to fix one it refuses", () => {
