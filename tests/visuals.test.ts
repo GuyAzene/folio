@@ -41,6 +41,29 @@ describe("what a visual may be", () => {
         (inner) => !/[<>]/.test(visualTitle(`<title>${inner}</title>`) ?? ""),
       ),
     );
+    // The same text worked out another way: every piece of the title that a `>` ends keeps only
+    // what comes before its first `<`, and the piece after the last `>` loses every `<`. This is
+    // what stripping tags with `/<[^>]*>/g` and then any bracket left over used to give.
+    const stripped = (inner: string) => {
+      const pieces = inner.split(">");
+      const tail = pieces.pop()!.split("<").join("");
+      const text = pieces.map((piece) => piece.split("<")[0]).join("") + tail;
+      return text.replace(/\s+/g, " ").trim().slice(0, 120) || null;
+    };
+    fc.assert(
+      fc.property(
+        fc.string({ unit: fc.constantFrom("<", ">", "/", "a", "b", " ", "\n", "é", "ש") }),
+        (inner) => visualTitle(`<title>${inner}</title>`) === stripped(inner),
+      ),
+      { numRuns: 2000 },
+    );
+  });
+
+  it("reads a title of nothing but opening brackets in one pass", () => {
+    const started = performance.now();
+    expect(visualTitle(`<title>${"<".repeat(200_000)}x</title>`)).toBe("x");
+    // Searching for a `>` again at every `<` took about 300 ms here; one pass takes about 1 ms.
+    expect(performance.now() - started).toBeLessThan(150);
   });
 
   it("accepts a whole visual, and says how to fix one it refuses", () => {
