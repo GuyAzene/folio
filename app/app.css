@@ -461,10 +461,13 @@
 }
 
 /* A figure sits in its line, as text does, so a centered block centers it; Tailwind's base would
-   make it a block of its own, always at the left. */
-.prose-reading img {
-  display: inline-block;
-  vertical-align: bottom;
+   make it a block of its own, always at the left. In the base layer with Tailwind's own rule, so a
+   utility on an image still wins. */
+@layer base {
+  .prose-reading img {
+    display: inline-block;
+    vertical-align: bottom;
+  }
 }
 
 /* Empty lines a note leaves, beyond the one between blocks, keep their space when read: the space

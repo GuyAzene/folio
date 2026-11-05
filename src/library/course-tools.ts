@@ -269,8 +269,9 @@ export function createRuntimes(
         throw new LibraryError(`“${file.name}” has ${count} page${count === 1 ? "" : "s"}.`);
       const load = () => filesOption.read({ fileId: documentId, kind: file.fileKind });
       const data = await pages.fileRegion(documentId, page as number, load, region, render);
+      // The column only sizes a figure: a text layer that can't be read leaves the usual size.
       const column = render.column
-        ? await pages.fileColumn(documentId, page as number, load)
+        ? await pages.fileColumn(documentId, page as number, load).catch(() => null)
         : null;
       return { data, documentId, title: file.name, page: page as number, pages: count, column };
     }
@@ -286,7 +287,7 @@ export function createRuntimes(
       title: document.title,
       page: page as number,
       pages: count,
-      column: render.column ? await pages.column(document, page as number) : null,
+      column: render.column ? await pages.column(document, page as number).catch(() => null) : null,
     };
   }
 

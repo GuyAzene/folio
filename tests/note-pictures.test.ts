@@ -10,6 +10,7 @@ import { chatView } from "../src/desktop/view.ts";
 import { assetUrl, imageSize, parseAssetUrl } from "../src/library/asset-names.ts";
 import { closeSource, openSource, textColumn } from "../src/ingest/pages.ts";
 import { createRuntimes, figureWidth } from "../src/library/course-tools.ts";
+import { PageReader } from "../src/library/page-reader.ts";
 import { pixelSize } from "../src/library/images.ts";
 import { MAX_ASSET_BYTES, NoteAssets } from "../src/library/note-assets.ts";
 import {
@@ -25,7 +26,7 @@ import { noteHeadings } from "../src/library/note-meta.ts";
 import { LibraryStore } from "../src/library/store.ts";
 import type { SessionRecord } from "../src/session-store.ts";
 import { withoutMarkup } from "../src/text.ts";
-import { modelContextMessages, stubOf } from "../src/transcript.ts";
+import { MAX_IMAGES, modelContextMessages, stubOf } from "../src/transcript.ts";
 import { SYNTHETIC_LECTURE, syntheticPdf } from "./fixtures/synthetic-pdf.ts";
 
 // Synthetic notes, pictures and pages only.
@@ -524,6 +525,33 @@ describe("a closer look at a page, and figures from it", () => {
 });
 
 describe("a figure's printed size", () => {
+  it("falls back to the usual size when the page's text layer can't be read", async () => {
+    const { library, notes, assets, course, handout, note } = await setup();
+    class Unmeasurable extends PageReader {
+      override async column(): Promise<[number, number] | null> {
+        throw new Error("A text layer that can't be read");
+      }
+    }
+    const pages = new Unmeasurable(library);
+    try {
+      const chat = await createRuntimes(library, { notes, assets, pages }).course(
+        course.id,
+        "00000000-0000-4000-8000-0000000000d2",
+      );
+      const figure = chat.tools.find((tool) => tool.name === "add_note_figure")!;
+      const result = await figure.execute("f1", {
+        noteId: note.id,
+        documentId: handout.id,
+        page: 1,
+        region: [0.1, 0.1, 0.6, 0.4],
+        alt: "A gadget",
+      });
+      expect((result.content[0] as { text: string }).text).toContain("![A gadget|480](assets/");
+    } finally {
+      await pages.close();
+    }
+  });
+
   it("is as wide against the note's column as it was against the page's text column", () => {
     expect(figureWidth([0.288, 0.1, 0.67, 0.2], [0.15, 0.85])).toBe(393);
     // Wider than the text, as a figure in the margins can be: no wider than the note's column.
@@ -565,6 +593,49 @@ describe("pictures in a long chat", () => {
       timestamp: 0,
     }) as unknown as AgentMessage;
 
+  /** A question, then each result after the call that asked for it, all in one reply. */
+  const oneReply = (results: AgentMessage[]): AgentMessage[] => [
+    { role: "user", content: "Make the workbook.", timestamp: 0 } as AgentMessage,
+    ...results.flatMap((each) => {
+      const { toolCallId: id, toolName: name } = each as { toolCallId: string; toolName: string };
+      return [
+        {
+          role: "assistant",
+          content: [{ type: "toolCall", id, name, arguments: {} }],
+          api: "openai-responses",
+          provider: "openai",
+          model: "gpt-6.1-sol",
+          usage: {
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 0,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          },
+          stopReason: "toolUse",
+          timestamp: 0,
+        } as unknown as AgentMessage,
+        each,
+      ];
+    }),
+  ];
+
+  it("send only the latest few, even after every look and figure one reply may take", () => {
+    // 48 looks at the note and 12 figures: the most one reply may take.
+    const results = [
+      ...Array.from({ length: 48 }, () => result("view_note", { title: "Exercise 9" })),
+      ...Array.from({ length: 12 }, () => result("add_note_figure", { source: "Handout" })),
+    ];
+    const images = modelContextMessages(oneReply(results))
+      .filter((message) => message.role === "toolResult")
+      .map((message) => (message as { content: { type: string }[] }).content[1]!.type);
+    const kept = images.filter((type) => type === "image").length;
+    expect(kept).toBeGreaterThanOrEqual(2);
+    expect(kept).toBeLessThanOrEqual(MAX_IMAGES);
+    expect(images.at(-1)).toBe("image");
+  });
+
   it("say what an earlier picture of a note or figure was, and leave page wording as it was", () => {
     expect(stubOf({ toolName: "view_note", details: { title: "Exercise 9", view: "edit" } })).toBe(
       '[An earlier view_note result (the note "Exercise 9", edit view) is not sent again; call the tool again if you need its text.]',
@@ -580,34 +651,7 @@ describe("pictures in a long chat", () => {
       result("add_note_figure", { source: "Handout", page: 1 }),
       ...Array.from({ length: 2 }, () => result("read_page", { title: "Handout", page: 1 })),
     ];
-    // A question, then each result after the call that asked for it.
-    const messages: AgentMessage[] = [
-      { role: "user", content: "Make the workbook.", timestamp: 0 } as AgentMessage,
-      ...results.flatMap((each) => {
-        const { toolCallId: id, toolName: name } = each as { toolCallId: string; toolName: string };
-        return [
-          {
-            role: "assistant",
-            content: [{ type: "toolCall", id, name, arguments: {} }],
-            api: "openai-responses",
-            provider: "openai",
-            model: "gpt-6.1-sol",
-            usage: {
-              input: 0,
-              output: 0,
-              cacheRead: 0,
-              cacheWrite: 0,
-              totalTokens: 0,
-              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-            },
-            stopReason: "toolUse",
-            timestamp: 0,
-          } as unknown as AgentMessage,
-          each,
-        ];
-      }),
-    ];
-    const sent = modelContextMessages(messages)
+    const sent = modelContextMessages(oneReply(results))
       .filter((message) => message.role === "toolResult")
       .map((message) => (message as { content: { type: string; text?: string }[] }).content[1]);
     expect(sent[0]).toEqual({
