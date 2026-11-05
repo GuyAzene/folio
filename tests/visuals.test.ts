@@ -41,14 +41,15 @@ describe("what a visual may be", () => {
         (inner) => !/[<>]/.test(visualTitle(`<title>${inner}</title>`) ?? ""),
       ),
     );
-    // The same text as stripping tags with a regular expression and then any bracket left over.
-    const stripped = (inner: string) =>
-      inner
-        .replace(/<[^>]*>/g, "")
-        .replace(/[<>]/g, "")
-        .replace(/\s+/g, " ")
-        .trim()
-        .slice(0, 120) || null;
+    // The same text worked out another way: every piece of the title that a `>` ends keeps only
+    // what comes before its first `<`, and the piece after the last `>` loses every `<`. This is
+    // what stripping tags with `/<[^>]*>/g` and then any bracket left over used to give.
+    const stripped = (inner: string) => {
+      const pieces = inner.split(">");
+      const tail = pieces.pop()!.split("<").join("");
+      const text = pieces.map((piece) => piece.split("<")[0]).join("") + tail;
+      return text.replace(/\s+/g, " ").trim().slice(0, 120) || null;
+    };
     fc.assert(
       fc.property(
         fc.string({ unit: fc.constantFrom("<", ">", "/", "a", "b", " ", "\n", "é", "ש") }),
