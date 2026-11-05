@@ -62,8 +62,8 @@ development Folio is open.
 - Interface changes are checked in the browser preview (`vp dev`) and, when they cross the
   Electron bridge, in a real Folio window: the preview skips that hop.
 - On a pull request that changes the app, CI retakes the README's pictures and commits those that
-  look different to its branch, so pull before pushing again. There is no need to commit them by
-  hand.
+  look different to its branch, so pull before pushing again. CI's pictures are the ones the
+  README keeps: `vp run screenshots` elsewhere writes to a temporary folder, for looking at.
 - Test the hard cases: cancellation, restart and resume, duplicate delivery, edit conflicts and
   scope boundaries.
 - Keep deterministic tests, real-provider checks and learning outcomes apart; one does not

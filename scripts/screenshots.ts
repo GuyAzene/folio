@@ -6,16 +6,20 @@
 // tutor-dark.webp, is recorded in real time and never comes out the same twice, so it is retaken
 // only when a picture changed, when it is missing, or when named. The clock is fixed, so relative
 // dates and the greeting come out the same on every run. Nothing opens on screen and nothing
-// talks to a model. `vp run screenshots board clip` takes only those. On a pull request that
-// changes the app, CI runs this and commits the pictures that changed.
+// talks to a model. `vp run screenshots board clip` takes only those.
+//
+// On a pull request that changes the app, CI runs this and commits the pictures that changed:
+// CI's pictures are the ones the README keeps. Another Mac draws text a little differently, so
+// elsewhere the pictures that changed go to a temporary folder, to look at; `--write` puts them
+// in docs/images all the same.
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { copyFile, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { copyFile, mkdtemp, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
-import { createCanvas, loadImage } from "@napi-rs/canvas";
 import { _electron, type Page } from "playwright-core";
+import { looksDifferent } from "./picture-difference.ts";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const IMAGES = resolve(ROOT, "docs/images");
@@ -198,11 +202,16 @@ async function home(page: Page, theme: "light" | "dark"): Promise<void> {
 }
 
 /**
- * docs/images/tutor-<theme>.webp: the automaton slide with a new chat beside it, the question
+ * tutor-<theme>.webp, into `folder`: the automaton slide with a new chat beside it, the question
  * typed and sent, and the answer arriving, as an animated WebP that loops. Frames are taken as
  * fast as they come and each keeps its own duration; img2webp (from libwebp) joins them.
  */
-async function clip(page: Page, capture: Capture, theme: "light" | "dark"): Promise<void> {
+async function clip(
+  page: Page,
+  capture: Capture,
+  theme: "light" | "dark",
+  folder: string,
+): Promise<void> {
   await home(page, theme);
   await sidebar(page, "Computational Models").click();
   await page.getByText("Lecture 1 Finite automata", { exact: true }).click();
@@ -243,42 +252,23 @@ async function clip(page: Page, capture: Capture, theme: "light" | "dark"): Prom
     const duration = index + 1 < frames.length ? frames[index + 1]!.at - frame.at : 3000;
     args.push("-d", String(Math.max(20, duration)), path);
   }
-  const out = resolve(ROOT, `docs/images/tutor-${theme}.webp`);
+  const out = resolve(folder, `tutor-${theme}.webp`);
   execFileSync("img2webp", [...args, "-o", out], { stdio: "ignore" });
-  console.log(`docs/images/tutor-${theme}.webp (${frames.length} frames)`);
+  console.log(`${shown(out)} (${frames.length} frames)`);
 }
 
-/**
- * Chromium draws the same page a few values apart from one version, or one Mac, to the next.
- * A retaken picture counts as the same while at most SPECKS of its pixels differ by more than
- * NOISE in a colour channel; a change anyone could see moves far more pixels, far further.
- */
-const NOISE = 8;
-const SPECKS = 50;
-
-async function pixels(file: string) {
-  const image = await loadImage(await readFile(file));
-  const canvas = createCanvas(image.width, image.height);
-  const context = canvas.getContext("2d");
-  context.drawImage(image, 0, 0);
-  return context.getImageData(0, 0, image.width, image.height);
+const args = process.argv.slice(2);
+const write = process.env.CI === "true" || args.includes("--write");
+const only = args.filter((arg) => arg !== "--write");
+const names = [...SCENES.map((scene) => scene.name), "clip"];
+const unknown = only.filter((name) => !names.includes(name));
+if (unknown.length) {
+  console.error(`No picture is called ${unknown.join(", ")}. There are ${names.join(", ")}.`);
+  process.exit(1);
 }
-
-async function looksDifferent(kept: string, taken: string): Promise<boolean> {
-  if (!existsSync(kept)) return true;
-  const [before, after] = await Promise.all([pixels(kept), pixels(taken)]);
-  if (before.width !== after.width || before.height !== after.height) return true;
-  let specks = 0;
-  for (let index = 0; index < before.data.length; index += 4)
-    for (let channel = index; channel < index + 3; channel++)
-      if (Math.abs(before.data[channel]! - after.data[channel]!) > NOISE) {
-        if (++specks > SPECKS) return true;
-        break;
-      }
-  return false;
-}
-
-const only = process.argv.slice(2);
+/** Where the pictures that changed go: docs/images on CI or with --write, otherwise a folder. */
+const folder = write ? IMAGES : await mkdtemp(resolve(tmpdir(), "folio-readme-pictures-"));
+const shown = (path: string) => path.replace(`${ROOT}/`, "");
 const taken = await mkdtemp(resolve(tmpdir(), "folio-pictures-"));
 const changed: string[] = [];
 const stop = await serve();
@@ -295,16 +285,16 @@ try {
         await writeFile(resolve(taken, name), await capture(area));
         const different = await looksDifferent(resolve(IMAGES, name), resolve(taken, name));
         if (different) {
-          await copyFile(resolve(taken, name), resolve(IMAGES, name));
+          await copyFile(resolve(taken, name), resolve(folder, name));
           changed.push(name);
         }
-        console.log(`docs/images/${name}${different ? "" : " (unchanged)"}`);
+        console.log(different ? shown(resolve(folder, name)) : `docs/images/${name} (unchanged)`);
       }
     const clipMissing = ["light", "dark"].some(
       (colors) => !existsSync(resolve(IMAGES, `tutor-${colors}.webp`)),
     );
     if (only.includes("clip") || (!only.length && (changed.length > 0 || clipMissing)))
-      for (const colors of ["light", "dark"] as const) await clip(page, capture, colors);
+      for (const colors of ["light", "dark"] as const) await clip(page, capture, colors, folder);
     else if (!only.length) console.log("docs/images/tutor-*.webp (unchanged: no picture changed)");
   } finally {
     await close();
@@ -312,3 +302,8 @@ try {
 } finally {
   stop();
 }
+if (!write && (changed.length || only.includes("clip")))
+  console.log(
+    "\nThese are for looking at. On a pull request, CI commits the pictures that changed; " +
+      "--write puts them in docs/images.",
+  );

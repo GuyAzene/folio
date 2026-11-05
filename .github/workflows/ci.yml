@@ -167,8 +167,9 @@ jobs:
   # (`vp run screenshots`), and those that look different are committed to the pull request's
   # branch, so they are reviewed with the change. A push with the workflow's token starts no
   # workflow, so this job starts CI on that commit itself: without it, the commit would never
-  # get the CI check main requires. Only this repository's own branches: Dependabot's and a
-  # fork's tokens can't push.
+  # get the CI check main requires. That run checks the branch as it is, not merged with main as
+  # a pull request's run does; the commit only adds pictures to what was just checked merged.
+  # Only this repository's own branches: Dependabot's and a fork's tokens can't push.
   pictures:
     name: "macOS: README pictures"
     needs: changes
@@ -198,7 +199,7 @@ jobs:
       - name: Electron
         run: vp node node_modules/electron/install.js
       - name: img2webp, which joins the clip's frames
-        run: brew install webp
+        run: command -v img2webp >/dev/null || brew install webp
         env:
           HOMEBREW_NO_AUTO_UPDATE: "1"
       - name: Retake the pictures
@@ -231,7 +232,9 @@ jobs:
 
   # The one check a pull request needs: every job passed, or was skipped because nothing it
   # checks changed. A job skipped by its own condition counts as passed, so this is safe to
-  # require where a workflow filtered by paths would leave the check pending.
+  # require where a workflow filtered by paths would leave the check pending. The README pictures
+  # are waited for, so a pull request can't merge before its pictures are in, but they report on
+  # their own: a picture that didn't come out holds no change back.
   ci:
     name: CI
     if: always()
@@ -242,7 +245,7 @@ jobs:
         env:
           NEEDS: ${{ toJSON(needs) }}
         run: |
-          failed=$(jq -r 'to_entries[] | select(.value.result != "success" and .value.result != "skipped") | "\(.key): \(.value.result)"' <<< "$NEEDS")
+          failed=$(jq -r 'to_entries[] | select(.key != "pictures") | select(.value.result != "success" and .value.result != "skipped") | "\(.key): \(.value.result)"' <<< "$NEEDS")
           if [ -n "$failed" ]; then
             echo "::error::Not every job passed: $(paste -sd, - <<< "$failed")"
             exit 1

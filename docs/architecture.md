@@ -588,7 +588,12 @@ by Chromium's emulation and captured by Chromium (`Page.captureScreenshot`), sin
 screenshot of an Electron window takes the screen's own scale, once on GitHub's Macs, which have
 no Retina screen; a picture of another size is refused. The scrollbars are hidden, since macOS
 draws them by its own settings, and so is the caret, which blinks. GitHub's Mac draws text a
-little differently from a newer macOS, so the pictures CI commits are the ones the README keeps.
+little differently from a newer macOS, so the pictures CI commits are the ones the README keeps:
+elsewhere, `vp run screenshots` puts the pictures that changed in a temporary folder, and only
+`--write` puts them in `docs/images`. The rule for "looks different" is in
+`scripts/picture-difference.ts`, with its tests. The CI check waits for the pictures job but
+not on its result, so a picture that doesn't come out holds no change back; if its commit went
+through but starting CI on it failed, the pull request waits for a CI check, which shows.
 
 A quit signal (SIGTERM, as the installer sends) quits Folio as ⌘Q does: chats settle first.
 
