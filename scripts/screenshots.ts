@@ -131,18 +131,23 @@ async function serve(): Promise<() => void> {
   }
 }
 
+type Area = { x: number; y: number; width: number; height: number };
+/** `fast` encodes quickly, for the clip's frames, which img2webp encodes again. */
+type Capture = (area?: Area | null, fast?: boolean) => Promise<Buffer>;
+
 /**
- * A hidden window on the preview, at twice its size; its page is captured, never shown. Nothing
- * comes from the Mac that takes the pictures: the scale is forced, since a screen that isn't
- * Retina draws the page at its own size whatever the page asks, and the scrollbars are hidden,
- * since macOS draws them or not by its own setting and whether a mouse is connected.
+ * A hidden window on the preview, drawn at twice its size; its page is captured, never shown.
+ * Nothing comes from the Mac that takes the pictures. The page is drawn at twice its size by
+ * Chromium's emulation and captured by Chromium itself, since Playwright's screenshot of an
+ * Electron window takes the screen's own scale (once on a Mac without Retina, as GitHub's are).
+ * The scrollbars are hidden, since macOS draws them or not by its own setting and whether a
+ * mouse is connected.
  */
 async function window() {
   const main = resolve(await mkdtemp(resolve(tmpdir(), "folio-screenshots-")), "main.cjs");
   await writeFile(
     main,
     `const { app, BrowserWindow } = require("electron");
-app.commandLine.appendSwitch("force-device-scale-factor", "2");
 app.commandLine.appendSwitch("hide-scrollbars");
 app.whenReady().then(() => {
   const window = new BrowserWindow({ show: false, ...${JSON.stringify(SIZE)},
@@ -160,7 +165,21 @@ app.whenReady().then(() => {
     mobile: false,
   });
   await page.clock.setFixedTime(NOW);
-  return { page, close: () => app.close() };
+  /** The page, or an area of it, as a PNG at twice its size; anything else is refused. */
+  const capture: Capture = async (area, fast = false) => {
+    const { data } = await cdp.send("Page.captureScreenshot", {
+      format: "png",
+      optimizeForSpeed: fast,
+      ...(area && { clip: { ...area, scale: 1 } }),
+    });
+    const png = Buffer.from(data, "base64");
+    const width = png.readUInt32BE(16);
+    const expected = Math.round((area?.width ?? SIZE.width) * 2);
+    if (width !== expected)
+      throw new Error(`A picture came out ${width} pixels wide instead of ${expected}.`);
+    return png;
+  };
+  return { page, capture, close: () => app.close() };
 }
 
 /** Opens the preview fresh, in a theme, on Home. */
@@ -174,6 +193,8 @@ async function home(page: Page, theme: "light" | "dark"): Promise<void> {
   }, theme);
   await page.reload();
   await page.getByPlaceholder("Ask about any of your courses").waitFor();
+  // A focused box's caret blinks, so no two pictures of it would be alike.
+  await page.addStyleTag({ content: "* { caret-color: transparent !important; }" });
 }
 
 /**
@@ -181,7 +202,7 @@ async function home(page: Page, theme: "light" | "dark"): Promise<void> {
  * typed and sent, and the answer arriving, as an animated WebP that loops. Frames are taken as
  * fast as they come and each keeps its own duration; img2webp (from libwebp) joins them.
  */
-async function clip(page: Page, theme: "light" | "dark"): Promise<void> {
+async function clip(page: Page, capture: Capture, theme: "light" | "dark"): Promise<void> {
   await home(page, theme);
   await sidebar(page, "Computational Models").click();
   await page.getByText("Lecture 1 Finite automata", { exact: true }).click();
@@ -197,7 +218,7 @@ async function clip(page: Page, theme: "light" | "dark"): Promise<void> {
   const frames: { png: Buffer; at: number }[] = [];
   let recording = true;
   const record = (async () => {
-    while (recording) frames.push({ png: await page.screenshot({ clip: area }), at: Date.now() });
+    while (recording) frames.push({ png: await capture(area, true), at: Date.now() });
   })();
   await page.waitForTimeout(600);
   await box.click();
@@ -262,7 +283,7 @@ const taken = await mkdtemp(resolve(tmpdir(), "folio-pictures-"));
 const changed: string[] = [];
 const stop = await serve();
 try {
-  const { page, close } = await window();
+  const { page, capture, close } = await window();
   try {
     for (const scene of SCENES.filter((scene) => !only.length || only.includes(scene.name)))
       for (const colors of ["light", "dark"] as const) {
@@ -271,7 +292,7 @@ try {
         await stillness(page);
         const area = scene.main ? await page.locator("main").boundingBox() : null;
         const name = `${scene.name}-${colors}.png`;
-        await page.screenshot({ path: resolve(taken, name), ...(area && { clip: area }) });
+        await writeFile(resolve(taken, name), await capture(area));
         const different = await looksDifferent(resolve(IMAGES, name), resolve(taken, name));
         if (different) {
           await copyFile(resolve(taken, name), resolve(IMAGES, name));
@@ -283,7 +304,7 @@ try {
       (colors) => !existsSync(resolve(IMAGES, `tutor-${colors}.webp`)),
     );
     if (only.includes("clip") || (!only.length && (changed.length > 0 || clipMissing)))
-      for (const colors of ["light", "dark"] as const) await clip(page, colors);
+      for (const colors of ["light", "dark"] as const) await clip(page, capture, colors);
     else if (!only.length) console.log("docs/images/tutor-*.webp (unchanged: no picture changed)");
   } finally {
     await close();
