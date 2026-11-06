@@ -10,7 +10,7 @@
 // CSC_LINK names a code-signing certificate, so Windows warns before the first run.
 import { execFileSync, execSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { createCanvas, loadImage } from "@napi-rs/canvas";
@@ -171,7 +171,9 @@ if (
     "Folio is running from release/. Quit it before building, since the build replaces that folder.",
   );
 
-const dir = await mkdtemp(resolve(tmpdir(), "folio-package-"));
+// The temporary folder's real path: Windows may give it a short name, as RUNNER~1, which Vite
+// resolves to the long one, and then refuses the pages as outside the build.
+const dir = await mkdtemp(resolve(await realpath(tmpdir()), "folio-package-"));
 try {
   await stage(dir);
   const licenses = await thirdPartyNotices(dir);
