@@ -69,6 +69,7 @@ const bridge = {
     throw new Error("Reopening a chat never reads it again here.");
   },
   setFocus: async () => {},
+  setWindowTheme: async () => {},
   send: (input: SendInput) => {
     sent.push(input);
     return new Promise<{ chatId: string }>((resolve) =>

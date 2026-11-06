@@ -175,7 +175,7 @@
                   >
                     <Columns2 size={14} strokeWidth={1.75} class="text-text-3" />
                     Open beside
-                    <span class="ml-auto pl-3 text-[11px] text-text-4">⌥-click</span>
+                    <span class="ml-auto pl-3 text-[11px] text-text-4">{folio.keys("⌥-click")}</span>
                   </DropdownMenu.Item>
                   <DropdownMenu.Separator class="my-1.5 h-px bg-line-subtle" />
                   <DropdownMenu.Item class={menuItem} onSelect={() => (renaming = document.id)}>

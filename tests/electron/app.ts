@@ -86,9 +86,13 @@ export function buildApp(): Promise<string> {
       await rm(dir, { recursive: true, force: true });
       for (const path of SOURCES)
         await cp(resolve(ROOT, path), resolve(dir, path), { recursive: true });
-      await symlink(resolve(ROOT, "node_modules"), resolve(dir, "node_modules"), "dir");
-      execFileSync("vp", ["build"], { cwd: dir, stdio: "ignore" });
-      execFileSync("vp", ["pack"], { cwd: dir, stdio: "ignore" });
+      // A junction on Windows, which needs no administrator, as a folder link would.
+      const link = process.platform === "win32" ? "junction" : "dir";
+      await symlink(resolve(ROOT, "node_modules"), resolve(dir, "node_modules"), link);
+      // On Windows vp may be a .cmd shim, which only a shell starts.
+      const options = { cwd: dir, stdio: "ignore", shell: process.platform === "win32" } as const;
+      execFileSync("vp", ["build"], options);
+      execFileSync("vp", ["pack"], options);
       await writeFile(done, "");
       console.log(`Built Folio for these checks in ${dir}.`);
       return dir;

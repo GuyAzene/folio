@@ -80,7 +80,7 @@ void describe("connections and models", () => {
     assert.ok(openrouter.connected && openrouter.models.length > 0);
 
     // Settings shows the problem, and a change from the window lands in the file.
-    await page.keyboard.press("Meta+Comma");
+    await page.keyboard.press("ControlOrMeta+Comma");
     await page.getByRole("button", { name: "Models" }).click();
     await page.getByText("Folio couldn't use some of config.json").waitFor();
     await page.evaluate(() => window.folio.setRoleModel("planner", "chatgpt/gpt-6.1-sol"));
@@ -161,7 +161,7 @@ void describe("connections and models", () => {
     );
 
     // The chooser in Settings lists it under its lab.
-    await page.keyboard.press("Meta+Comma");
+    await page.keyboard.press("ControlOrMeta+Comma");
     await page.getByRole("button", { name: "Models" }).click();
     await page.getByRole("button", { name: "Choose…" }).click();
     await page.getByRole("textbox", { name: "Search OpenRouter models" }).fill("synthetic");

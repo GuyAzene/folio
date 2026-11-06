@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { setTimeout } from "node:timers/promises";
@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import type { OAuthCredential, OAuthAuth } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { createFolioModels, readConnections, readConnectionStatus } from "../src/auth.ts";
+import { expectMode } from "./fixtures/modes.ts";
 
 const run = promisify(execFile);
 const homes: string[] = [];
@@ -39,8 +40,8 @@ describe("Folio ChatGPT connection", () => {
     const restarted = await createFolioModels({ home });
     expect(restarted.store.getDeviceId()).toBe(first.store.getDeviceId());
     expect((await readConnectionStatus(restarted.store)).connected).toBe(true);
-    expect((await stat(home)).mode & 0o777).toBe(0o700);
-    expect((await stat(resolve(home, "connection.json"))).mode & 0o777).toBe(0o600);
+    await expectMode(home, 0o700);
+    await expectMode(resolve(home, "connection.json"), 0o600);
     expect(JSON.parse(await readFile(resolve(home, "connection.json"), "utf8")).version).toBe(1);
     // Logging out ends the session at OpenAI; here OpenAI is a stub that confirms it.
     const revoked: string[] = [];
@@ -252,7 +253,7 @@ describe("Folio's API keys", () => {
     await store.modify("anthropic", async () => key("sk-ant-synthetic-0123"));
     await store.modify("openrouter", async () => key("sk-or-synthetic-4567"));
     expect(await readFile(resolve(home, "connection.json"), "utf8")).toBe(signIn);
-    expect((await stat(resolve(home, "keys.json"))).mode & 0o777).toBe(0o600);
+    await expectMode(resolve(home, "keys.json"), 0o600);
     expect([...(await readConnections(store))].sort()).toEqual([
       "anthropic",
       "chatgpt",

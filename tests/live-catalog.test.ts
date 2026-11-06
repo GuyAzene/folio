@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { getBuiltinModelDataGeneratedAt } from "@earendil-works/pi-ai/providers/all";
@@ -16,6 +16,7 @@ import {
   PI_VERSION,
 } from "../src/live-catalog.ts";
 import { modelFor, openrouterCatalog } from "../src/model-choices.ts";
+import { expectMode } from "./fixtures/modes.ts";
 
 const homes: string[] = [];
 
@@ -231,8 +232,8 @@ describe("the live list", () => {
     await live.load();
     await live.refresh();
     const file = resolve(home, "catalog/openrouter.json");
-    expect((await stat(file)).mode & 0o777).toBe(0o600);
-    expect((await stat(resolve(home, "catalog"))).mode & 0o777).toBe(0o700);
+    await expectMode(file, 0o600);
+    await expectMode(resolve(home, "catalog"), 0o700);
 
     const offline = piDev(() => {
       throw new Error("offline");

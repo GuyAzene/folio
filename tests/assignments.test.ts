@@ -1,4 +1,4 @@
-import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vite-plus/test";
@@ -9,6 +9,7 @@ import { LibraryStore } from "../src/library/store.ts";
 import { Trash } from "../src/library/trash.ts";
 import { createSessionStore } from "../src/session-store.ts";
 import { syntheticPdf } from "./fixtures/synthetic-pdf.ts";
+import { expectMode } from "./fixtures/modes.ts";
 
 // Synthetic coursework only.
 
@@ -75,7 +76,7 @@ describe("assignments", () => {
     expect(first.status).toBe("submitted");
     expect(first.attempts).toHaveLength(1);
     const kept = library.assignmentFile(work.id, first.attempts[0]!.files[0]!.id);
-    expect((await stat(kept)).mode & 0o777).toBe(0o400);
+    await expectMode(kept, 0o400);
     await writeFile(answer, syntheticPdf([["Corrected answers"]]));
     const second = await library.addAssignmentFiles(work.id, [answer], "attempt", first.revision);
     expect(second.attempts.map((attempt) => attempt.files[0]!.sha256)).toHaveLength(2);

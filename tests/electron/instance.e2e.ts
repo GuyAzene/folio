@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { chmod, lstat, readdir, readFile, readlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { relative, resolve } from "node:path";
+import { relative, resolve, sep } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { after, describe, it } from "node:test";
 import type { ElectronApplication } from "playwright-core";
@@ -36,7 +36,8 @@ async function snapshot(home: string): Promise<Map<string, string>> {
     resolve(entry.parentPath, entry.name),
   );
   for (const path of [home, ...paths]) {
-    const name = relative(home, path);
+    // With forward slashes on Windows too, as the names below are written.
+    const name = relative(home, path).split(sep).join("/");
     if (name === "electron" || name.startsWith("electron/")) continue;
     if (/\.lock(\/|$)/.test(name)) continue;
     try {

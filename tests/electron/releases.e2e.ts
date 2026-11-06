@@ -97,7 +97,7 @@ void describe("a newer Folio", () => {
     await kept.hover();
     await page.getByRole("button", { name: "Hide until the next release" }).click();
     await kept.waitFor({ state: "detached" });
-    await page.keyboard.press("Meta+Comma");
+    await page.keyboard.press("ControlOrMeta+Comma");
     await page.getByText(`Folio ${current}. Checks GitHub once a day`).waitFor();
     const settingsLink = page.getByRole("link", { name: `Folio ${next} is out. See what's new` });
     assert.equal(await settingsLink.getAttribute("href"), releasePage);

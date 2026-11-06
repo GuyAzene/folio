@@ -21,6 +21,7 @@ import { createSessionStore } from "../src/session-store.ts";
 import { SkillLibrary, type SkillSwitches } from "../src/skills/library.ts";
 import { parseSkill } from "../src/skills/skill-file.ts";
 import { skillCommand, skillTool } from "../src/skills/tool.ts";
+import { expectMode } from "./fixtures/modes.ts";
 
 const homes: string[] = [];
 const conversations: Conversation[] = [];
@@ -260,8 +261,8 @@ describe("writing Folio's own routines", () => {
     const { home, library } = await libraryWith();
     await library.create("quiz-me", "Quiz me: one question at a time.", "Ask, wait, then check.");
     const file = resolve(home, "skills/quiz-me/SKILL.md");
-    expect((await stat(file)).mode & 0o777).toBe(0o600);
-    expect((await stat(resolve(home, "skills"))).mode & 0o777).toBe(0o700);
+    await expectMode(file, 0o600);
+    await expectMode(resolve(home, "skills"), 0o700);
     const { text, revision } = await library.read("quiz-me");
     const parsed = parseSkill(text, "quiz-me");
     expect("meta" in parsed && parsed.meta.description).toBe("Quiz me: one question at a time.");

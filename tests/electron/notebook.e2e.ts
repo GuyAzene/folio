@@ -62,7 +62,7 @@ void describe("the notebook", () => {
     );
     await page.getByText("Linked mentions").waitFor();
 
-    await page.keyboard.press("Meta+o");
+    await page.keyboard.press("ControlOrMeta+o");
     await page.getByPlaceholder("Find or create a note").fill("Binary trees");
     await page.keyboard.press("Enter");
     await eventually(

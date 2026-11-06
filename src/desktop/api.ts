@@ -822,6 +822,8 @@ export interface FolioApi {
   undoAction(undo: AppAction): Promise<string>;
   /** Every OpenRouter model Folio can use, for picking the composer's. */
   openrouterCatalog(): Promise<ModelView[]>;
+  /** Draws the system's window buttons for the theme shown; only elsewhere than on a Mac. */
+  setWindowTheme(dark: boolean): Promise<void>;
   /** Shows config.json in Finder, writing today's choices to it first if it doesn't exist. */
   revealConfig(): Promise<void>;
   /** The student's routines from every folder Folio reads, and the ones it couldn't. */

@@ -295,9 +295,10 @@ const servers = mcpConfig.then(
       config,
       home,
       path: () =>
-        (serverPath ??= app.isPackaged
-          ? shellPath().then((path) => mergePath(path, process.env.PATH))
-          : Promise.resolve(mergePath(process.env.PATH))),
+        (serverPath ??=
+          app.isPackaged && process.platform !== "win32"
+            ? shellPath().then((path) => mergePath(path, process.env.PATH))
+            : Promise.resolve(mergePath(process.env.PATH))),
       changed: () => void emitMcp(),
     }),
 );
@@ -1014,6 +1015,9 @@ const handlers: Record<InvokeMethod, (...args: unknown[]) => Promise<unknown>> =
     return (await operations).undoNaming(renames as Rename[]);
   },
   openrouterCatalog: async () => openrouterCatalog(catalog),
+  async setWindowTheme(dark) {
+    if (process.platform !== "darwin") window?.setTitleBarOverlay(windowControls(dark === true));
+  },
   async revealConfig() {
     const settings = await config;
     await settings.ensure();
@@ -1601,6 +1605,21 @@ app.on("web-contents-created", (_event, contents) => {
   });
 });
 
+/**
+ * Elsewhere than on a Mac, the system's own minimize, maximize and close buttons sit over the
+ * tab strip's right end, as tall as the frame above the strip and the strip together. Their
+ * background is all but transparent (a fully transparent one is drawn wrong on Linux), and their
+ * symbols take the color of the strip's own buttons in the theme shown.
+ */
+const WINDOW_CONTROLS_HEIGHT = 52;
+function windowControls(dark: boolean): Electron.TitleBarOverlay {
+  return {
+    color: "#01000000",
+    symbolColor: dark ? "#7c7c85" : "#71717a",
+    height: WINDOW_CONTROLS_HEIGHT,
+  };
+}
+
 function createWindow(): void {
   window = new BrowserWindow({
     width: 1360,
@@ -1609,9 +1628,18 @@ function createWindow(): void {
     minHeight: 480,
     title: "Folio",
     show: false,
-    titleBarStyle: "hiddenInset",
-    // On the same line as the tab strip's buttons, as the sidebar button and Folio's name are.
-    trafficLightPosition: { x: 18, y: 24 },
+    ...(process.platform === "darwin"
+      ? {
+          titleBarStyle: "hiddenInset",
+          // On the same line as the tab strip's buttons, as the sidebar button and Folio's name are.
+          trafficLightPosition: { x: 18, y: 24 },
+        }
+      : {
+          titleBarStyle: "hidden",
+          titleBarOverlay: windowControls(false),
+          // The menu's shortcuts still work; its bar shows only while Alt is held.
+          autoHideMenuBar: true,
+        }),
     // Light is Folio's default theme; the renderer applies a saved dark preference.
     backgroundColor: "#f3f3f4",
     webPreferences: {

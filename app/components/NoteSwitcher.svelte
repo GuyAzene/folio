@@ -119,7 +119,7 @@
         <div
           class="flex h-9 items-center gap-4 border-t border-line-subtle bg-sunken px-4 text-[12px] text-text-3 dark:bg-surface"
         >
-          <span>↑↓ move</span><span>↵ open</span><span>⌘↵ new tab</span><span class="flex-1"
+          <span>↑↓ move</span><span>↵ open</span><span>{folio.keys("⌘↵")} new tab</span><span class="flex-1"
           ></span><span>esc close</span>
         </div>
       </Command.Root>

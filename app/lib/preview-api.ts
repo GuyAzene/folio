@@ -2132,7 +2132,8 @@ export const previewApi: FolioApi = {
       models: previewModels(),
       chats: summaries(),
       unavailableChats: 0,
-      platform: "darwin",
+      // ?platform=win32 shows the layout Folio has elsewhere than on a Mac.
+      platform: new URLSearchParams(location.search).get("platform") ?? "darwin",
     };
   },
   async openChat(chatId) {
@@ -2459,6 +2460,7 @@ export const previewApi: FolioApi = {
   async openrouterCatalog() {
     return structuredClone(OPENROUTER_CATALOG);
   },
+  async setWindowTheme() {},
   async revealConfig() {},
   async listSkills() {
     return previewSkillsView();

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Tooltip } from "bits-ui";
   import type { Snippet } from "svelte";
+  import { folio } from "../lib/state.svelte.ts";
 
   let {
     label,
@@ -35,7 +36,7 @@
     >
       {label}
       {#if shortcut}<span class="font-mono text-[11px] opacity-60"
-          >{shortcut}</span
+          >{folio.keys(shortcut)}</span
         >{/if}
     </Tooltip.Content>
   </Tooltip.Portal>

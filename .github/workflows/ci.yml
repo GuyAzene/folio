@@ -28,7 +28,7 @@ env:
     --test-reporter=./tests/electron/github-annotations.ts --test-reporter-destination=stdout
 
 jobs:
-  # Decides whether the macOS jobs run, and says why in the run's summary.
+  # Decides whether the macOS and Windows jobs run, and says why in the run's summary.
   changes:
     name: What changed
     runs-on: ubuntu-latest
@@ -39,7 +39,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Files the macOS jobs depend on
+      - name: Files the macOS and Windows jobs depend on
         id: files
         env:
           EVENT: ${{ github.event_name }}
@@ -56,7 +56,7 @@ jobs:
           elif files=$(git diff --name-only "$range" 2>/dev/null) && [ -n "$files" ]; then
             count=$(wc -l <<< "$files" | tr -d ' ')
             # Docs, Markdown at the root and in .github, GitHub's templates and settings, the
-            # license and unit tests: nothing the macOS jobs build or check.
+            # license and unit tests: nothing the macOS and Windows jobs build or check.
             others=$(grep -Ev '^(docs/.*|[^/]+\.md|\.github/([^/]+\.md|ISSUE_TEMPLATE/.*|release\.yml|dependabot\.yml)|LICENSE|\.gitignore|tests/.*\.test\.ts)$' <<< "$files" || true)
             if [ -n "$others" ]; then
               app=true
@@ -71,7 +71,7 @@ jobs:
           fi
           echo "app=$app" >> "$GITHUB_OUTPUT"
           {
-            if [ "$app" = true ]; then echo "**macOS checks run:** $why."; else echo "**macOS checks skipped:** $why."; fi
+            if [ "$app" = true ]; then echo "**macOS and Windows checks run:** $why."; else echo "**macOS and Windows checks skipped:** $why."; fi
             if [ -n "$files" ]; then
               printf '\n<details><summary>Changed files</summary>\n\n```text\n%s\n```\n\n</details>\n' "$files"
             fi
@@ -162,6 +162,34 @@ jobs:
           tests/electron/diagrams.e2e.ts tests/electron/install.e2e.ts
         env:
           FOLIO_E2E_APP: ${{ github.workspace }}/release/mac-arm64/Folio.app
+
+  # Folio on Windows: the unit tests, then the real-window checks on a fresh build, as the macOS
+  # window job runs them. It reports on its own, like the nightly build, until it has shown it
+  # passes reliably; packaging for Windows comes later.
+  windows:
+    name: "Windows: tests and Folio in a real window"
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
+    runs-on: windows-2025
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: voidzero-dev/setup-vp@cab1ab9eaff52d4857875f4f2c016e36af8f2c76 # v1.22.0
+        with:
+          node-version-file: .node-version
+          sfw: true
+          # setup-vp's cache restores slower on Windows than installing afresh.
+          cache: false
+      - name: Electron
+        run: vp node node_modules/electron/install.js
+      - name: Tests
+        run: vp test
+      # `vp run test:electron`, with the flags above.
+      - name: Folio in a real window
+        run: vp node --test $TEST_FLAGS tests/electron/*.e2e.ts
 
   # On a pull request that changes the app, the README pictures are retaken from the preview
   # (`vp run screenshots`), and those that look different are committed to the pull request's
