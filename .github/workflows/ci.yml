@@ -164,8 +164,7 @@ jobs:
           FOLIO_E2E_APP: ${{ github.workspace }}/release/mac-arm64/Folio.app
 
   # Folio on Windows: the unit tests, then the real-window checks on a fresh build, as the macOS
-  # window job runs them. It reports on its own, like the nightly build, until it has shown it
-  # passes reliably; packaging for Windows comes later.
+  # window job runs them.
   windows:
     name: "Windows: tests and Folio in a real window"
     needs: changes
@@ -193,8 +192,7 @@ jobs:
         if: ${{ !cancelled() }}
         run: vp node --test $TEST_FLAGS tests/electron/*.e2e.ts
 
-  # Folio packaged for Windows, with the checks of what packaging can break, as on macOS. It
-  # reports on its own too.
+  # Folio packaged for Windows, with the checks of what packaging can break, as on macOS.
   windows-packaged:
     name: "Windows: packaged app"
     needs: changes
@@ -303,7 +301,7 @@ jobs:
   ci:
     name: CI
     if: always()
-    needs: [changes, check, window, packaged, pictures]
+    needs: [changes, check, window, packaged, windows, windows-packaged, pictures]
     runs-on: ubuntu-latest
     steps:
       - name: Every job passed or had nothing to check

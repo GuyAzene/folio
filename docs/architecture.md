@@ -639,8 +639,8 @@ CI (`.github/workflows/ci.yml`) runs the checks and unit tests on Linux, and on 
 real-window checks, then the same checks on the packaged app and the install checks
 (`tests/electron/install.e2e.ts`). On Windows it runs the unit tests and the real-window checks
 on a fresh build, and packages Folio to run the same packaging checks as on macOS on
-`Folio.exe`, then opens it and asks it to close. Those jobs report on their own, outside the CI
-check, until they have shown they pass reliably. Tests that write many small files run several
+`Folio.exe`, then opens it and asks it to close. Both are part of the CI check, so nothing merges
+before Windows passes too. Tests that write many small files run several
 times slower there, so a test gets 20 seconds on Windows, and checks of a file's permissions
 look only at whether it may be written (`tests/fixtures/modes.ts`), which is all Windows keeps.
 
