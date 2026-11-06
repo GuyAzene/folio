@@ -129,20 +129,26 @@ void describe("A second Folio on the same home", () => {
     jobs.close();
   });
 
-  void it("opens the window again when the open Folio had closed it", async () => {
-    const seeded = await seedHome("A synthetic reply.");
-    const first = await launch(seeded.home, QUIET);
-    running.push(first);
-    await first.page.getByText("Synthetic chat").first().waitFor();
-    // On a Mac, Folio keeps running with its window closed.
-    await first.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
-    const windows = () =>
-      first.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length);
-    await until(async () => (await windows()) === 0, "the window to close");
+  // Elsewhere, closing the window quits Folio, as apps there do, so there is no open Folio left.
+  const macOnly = process.platform !== "darwin" && "only a Mac keeps Folio open with no window";
+  void it(
+    "opens the window again when the open Folio had closed it",
+    { skip: macOnly },
+    async () => {
+      const seeded = await seedHome("A synthetic reply.");
+      const first = await launch(seeded.home, QUIET);
+      running.push(first);
+      await first.page.getByText("Synthetic chat").first().waitFor();
+      // On a Mac, Folio keeps running with its window closed.
+      await first.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
+      const windows = () =>
+        first.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length);
+      await until(async () => (await windows()) === 0, "the window to close");
 
-    const reopened = first.app.waitForEvent("window");
-    assert.equal(await launchAgain(seeded.home, QUIET), 0);
-    await (await reopened).getByText("Synthetic chat").first().waitFor();
-    assert.equal(await windows(), 1);
-  });
+      const reopened = first.app.waitForEvent("window");
+      assert.equal(await launchAgain(seeded.home, QUIET), 0);
+      await (await reopened).getByText("Synthetic chat").first().waitFor();
+      assert.equal(await windows(), 1);
+    },
+  );
 });

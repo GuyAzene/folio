@@ -95,6 +95,8 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["tests/**/*.test.ts"],
+    // Windows runs the tests that write many files several times slower than a Mac does.
+    testTimeout: process.platform === "win32" ? 20_000 : 5_000,
   },
   pack: [
     { ...node, entry: ["src/cli.ts"], format: ["esm"], outDir: "dist", clean: true },

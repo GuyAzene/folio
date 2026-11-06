@@ -1,4 +1,4 @@
-import { execFileSync, spawn } from "node:child_process";
+import { execSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   cp,
@@ -92,10 +92,9 @@ export function buildApp(): Promise<string> {
       // A junction on Windows, which needs no administrator, as a folder link would.
       const link = process.platform === "win32" ? "junction" : "dir";
       await symlink(resolve(ROOT, "node_modules"), resolve(dir, "node_modules"), link);
-      // On Windows vp may be a .cmd shim, which only a shell starts. A failed build says why.
-      const options = { cwd: dir, stdio: "pipe", shell: process.platform === "win32" } as const;
-      execFileSync("vp", ["build"], options);
-      execFileSync("vp", ["pack"], options);
+      // Through a shell, which also starts vp where it is a .cmd shim. A failed build says why.
+      execSync("vp build", { cwd: dir, stdio: "pipe" });
+      execSync("vp pack", { cwd: dir, stdio: "pipe" });
       await writeFile(done, "");
       console.log(`Built Folio for these checks in ${dir}.`);
       return dir;

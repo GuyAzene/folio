@@ -117,10 +117,13 @@ async function setup(
 }
 
 async function settled(events: DesktopEvent[]): Promise<void> {
-  await vi.waitFor(() => {
-    const last = events.findLast((event) => event.type === "chat");
-    expect(last?.type === "chat" && last.chat.status !== "running").toBe(true);
-  });
+  await vi.waitFor(
+    () => {
+      const last = events.findLast((event) => event.type === "chat");
+      expect(last?.type === "chat" && last.chat.status !== "running").toBe(true);
+    },
+    { timeout: 5_000 },
+  );
 }
 
 afterEach(async () => {
