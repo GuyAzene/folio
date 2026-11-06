@@ -83,8 +83,11 @@ const WINDOWS_ENV = [
   "windir",
   "ComSpec",
   "PATHEXT",
+  "PROCESSOR_ARCHITECTURE",
   "USERNAME",
   "USERPROFILE",
+  "HOMEDRIVE",
+  "HOMEPATH",
   "APPDATA",
   "LOCALAPPDATA",
   "ProgramData",
@@ -93,9 +96,12 @@ const WINDOWS_ENV = [
   "TEMP",
   "TMP",
 ];
-function windowsEnv(): Record<string, string> {
+export function windowsEnv(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
   return Object.fromEntries(
-    WINDOWS_ENV.flatMap((name) => (process.env[name] ? [[name, process.env[name]]] : [])),
+    WINDOWS_ENV.flatMap((name) => {
+      const value = env[name];
+      return value ? [[name, value]] : [];
+    }),
   );
 }
 

@@ -59,8 +59,11 @@ export async function writeAtomic(
  * open a folder to flush it, and its file system keeps a rename in its own journal, so there it
  * does nothing.
  */
-export async function syncDirectory(path: string): Promise<void> {
-  if (process.platform === "win32") return;
+export async function syncDirectory(
+  path: string,
+  platform: NodeJS.Platform = process.platform,
+): Promise<void> {
+  if (platform === "win32") return;
   const handle = await open(path, "r");
   try {
     await handle.sync();

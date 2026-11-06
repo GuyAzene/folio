@@ -1016,7 +1016,8 @@ const handlers: Record<InvokeMethod, (...args: unknown[]) => Promise<unknown>> =
   },
   openrouterCatalog: async () => openrouterCatalog(catalog),
   async setWindowTheme(dark) {
-    if (process.platform !== "darwin") window?.setTitleBarOverlay(windowControls(dark === true));
+    darkWindow = dark === true;
+    if (process.platform !== "darwin") window?.setTitleBarOverlay(windowControls(darkWindow));
   },
   async revealConfig() {
     const settings = await config;
@@ -1612,6 +1613,8 @@ app.on("web-contents-created", (_event, contents) => {
  * symbols take the color of the strip's own buttons in the theme shown.
  */
 const WINDOW_CONTROLS_HEIGHT = 52;
+/** The theme the window last showed, so a window opened again starts with the same buttons. */
+let darkWindow = false;
 function windowControls(dark: boolean): Electron.TitleBarOverlay {
   return {
     color: "#01000000",
@@ -1636,7 +1639,7 @@ function createWindow(): void {
         }
       : {
           titleBarStyle: "hidden",
-          titleBarOverlay: windowControls(false),
+          titleBarOverlay: windowControls(darkWindow),
           // The menu's shortcuts still work; its bar shows only while Alt is held.
           autoHideMenuBar: true,
         }),

@@ -22,7 +22,7 @@ import { Approvals } from "../src/mcp/approvals.ts";
 import { McpConfig, pastedServers, readMcp, redact, secretsOf } from "../src/mcp/config.ts";
 import { serverSlug, toolNames } from "../src/mcp/names.ts";
 import { promptCommand } from "../src/mcp/prompts.ts";
-import { McpServers } from "../src/mcp/servers.ts";
+import { McpServers, windowsEnv } from "../src/mcp/servers.ts";
 import { mergePath, shellPath, which } from "../src/mcp/shell-path.ts";
 import { serviceTools, shapeResult, toolSchema } from "../src/mcp/tools.ts";
 import { createSessionStore } from "../src/session-store.ts";
@@ -232,6 +232,26 @@ describe("finding programs", () => {
       expect(mergePath("/a:/b", "/b:relative").split(":").slice(0, 2)).toEqual(["/a", "/b"]);
     },
   );
+
+  it("gives a service on Windows the variables its programs need, and none of Folio's", () => {
+    const env = {
+      SystemRoot: "C:\\Windows",
+      PATHEXT: ".EXE;.CMD",
+      HOMEDRIVE: "C:",
+      HOMEPATH: "\\Users\\student",
+      TEMP: "C:\\Temp",
+      APPDATA: "",
+      OPENAI_API_KEY: "sk-synthetic",
+      FOLIO_HOME: "C:\\folio",
+    };
+    expect(windowsEnv(env)).toEqual({
+      SystemRoot: "C:\\Windows",
+      PATHEXT: ".EXE;.CMD",
+      HOMEDRIVE: "C:",
+      HOMEPATH: "\\Users\\student",
+      TEMP: "C:\\Temp",
+    });
+  });
 
   it("finds a Windows program by the extensions PATHEXT lists", async () => {
     const home = await folder();
