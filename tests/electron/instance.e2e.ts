@@ -30,12 +30,21 @@ const QUIET = { FOLIO_STUDY_DELAY_MS: "600000" };
  * chat's run lease touches its lock folder every two seconds, and so is anything that went away
  * while it was read.
  */
+/** Every path in a home, listed again when a passing lock folder goes away while it is read. */
+async function everything(home: string): Promise<string[]> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const entries = await readdir(home, { recursive: true, withFileTypes: true });
+      return entries.map((entry) => resolve(entry.parentPath, entry.name));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT" || attempt === 5) throw error;
+    }
+  }
+}
+
 async function snapshot(home: string): Promise<Map<string, string>> {
   const entries = new Map<string, string>();
-  const paths = (await readdir(home, { recursive: true, withFileTypes: true })).map((entry) =>
-    resolve(entry.parentPath, entry.name),
-  );
-  for (const path of [home, ...paths]) {
+  for (const path of [home, ...(await everything(home))]) {
     // With forward slashes on Windows too, as the names below are written.
     const name = relative(home, path).split(sep).join("/");
     if (name === "electron" || name.startsWith("electron/")) continue;
