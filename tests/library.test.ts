@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vite-plus/test";
@@ -12,6 +12,7 @@ import {
   titleFromName,
 } from "../src/library/store.ts";
 import { SYNTHETIC_LECTURE, syntheticPdf } from "./fixtures/synthetic-pdf.ts";
+import { expectMode } from "./fixtures/modes.ts";
 
 const homes: string[] = [];
 
@@ -54,7 +55,7 @@ describe("course library", () => {
       originalName: "lec01_graph-traversal.pdf",
     });
     const original = resolve(store.root, "documents", document.id, "original.pdf");
-    expect((await stat(original)).mode & 0o777).toBe(0o400);
+    await expectMode(original, 0o400);
     const { data } = await store.readOriginal(document.id);
     expect(Buffer.from(data).equals(await readFile(pdf))).toBe(true);
 

@@ -1,5 +1,5 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import { lstat, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { createCanvas } from "@napi-rs/canvas";
@@ -28,6 +28,7 @@ import type { SessionRecord } from "../src/session-store.ts";
 import { withoutMarkup } from "../src/text.ts";
 import { MAX_IMAGES, modelContextMessages, stubOf } from "../src/transcript.ts";
 import { SYNTHETIC_LECTURE, syntheticPdf } from "./fixtures/synthetic-pdf.ts";
+import { expectMode } from "./fixtures/modes.ts";
 
 // Synthetic notes, pictures and pages only.
 
@@ -281,8 +282,8 @@ describe("figures beside notes", () => {
     expect(saved).toMatchObject({ path: `assets/${saved.file}`, width: 40, height: 30 });
     expect(saved.file).toMatch(/^[0-9a-f]{64}\.png$/);
     const file = resolve(library.courseDirectory(course.id), "notes", "assets", saved.file);
-    expect((await stat(file)).mode & 0o777).toBe(0o600);
-    expect((await stat(resolve(file, ".."))).mode & 0o777).toBe(0o700);
+    await expectMode(file, 0o600);
+    await expectMode(resolve(file, ".."), 0o700);
     expect(await assets.save(course.id, png)).toEqual(saved);
     const read = await assets.read(course.id, saved.file);
     expect(read.type).toBe("image/png");

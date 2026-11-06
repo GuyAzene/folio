@@ -1,5 +1,5 @@
 import { lstat, mkdir, open, readdir, readFile, realpath, stat } from "node:fs/promises";
-import { basename, extname, relative, resolve, sep } from "node:path";
+import { basename, extname, isAbsolute, relative, resolve, sep } from "node:path";
 import { privateDirectory, writeAtomic } from "../files.ts";
 import {
   MAX_SKILL_BYTES,
@@ -130,10 +130,12 @@ export class SkillLibrary {
     return this.#folio;
   }
 
-  /** A path with ~ for the home folder, as config.json keeps it. */
+  /** A path with ~ for the home folder and forward slashes after it, as config.json keeps it. */
   key(path: string): string {
     const part = relative(this.#user, path);
-    return part && !part.startsWith("..") && !part.startsWith(sep) ? `~/${part}` : path;
+    return part && !part.startsWith("..") && !isAbsolute(part)
+      ? `~/${part.split(sep).join("/")}`
+      : path;
   }
 
   /** A key back to a path. */
@@ -291,7 +293,8 @@ export class SkillLibrary {
     if (info.size > MAX_FILE) throw new SkillError(`${path} is larger than 128 KB.`);
     const bytes = await readFile(target);
     if (bytes.includes(0)) throw new SkillError(`${path} isn't a text file.`);
-    return { skill, path: relative(dir, target), text: new TextDecoder().decode(bytes) };
+    const shown = relative(dir, target).split(sep).join("/");
+    return { skill, path: shown, text: new TextDecoder().decode(bytes) };
   }
 
   /** The SKILL.md of one of Folio's own routines, to edit, with its revision. */
@@ -359,7 +362,8 @@ async function listFiles(dir: string): Promise<SkillFile[]> {
       if (entry.isDirectory()) {
         if (depth < 3) await walk(path, depth + 1);
       } else if (entry.isFile()) {
-        const rel = relative(dir, path);
+        // With forward slashes on Windows too, as a routine names its files.
+        const rel = relative(dir, path).split(sep).join("/");
         if (rel === "SKILL.md") continue;
         const ext = extname(entry.name).toLowerCase();
         const executable = ((await stat(path).catch(() => null))?.mode ?? 0) & 0o111;

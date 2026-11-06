@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vite-plus/test";
@@ -11,6 +11,7 @@ import {
   releaseSource,
   RETRY_MS,
 } from "../src/releases.ts";
+import { expectMode } from "./fixtures/modes.ts";
 
 const homes: string[] = [];
 
@@ -169,7 +170,7 @@ describe("a newer release", () => {
       fetch: github(() => release("v0.2.0")).fetch,
     }).check();
     const file = resolve(home, "release.json");
-    expect((await stat(file)).mode & 0o777).toBe(0o600);
+    await expectMode(file, 0o600);
     expect(JSON.parse(await readFile(file, "utf8"))).toMatchObject({
       version: 1,
       on: true,
@@ -309,7 +310,7 @@ describe("a newer release", () => {
     expect(await check.setOn(false)).toEqual({ version: "0.1.0", on: false, newer: null });
     const file = resolve(home, "release.json");
     expect(JSON.parse(await readFile(file, "utf8"))).toMatchObject({ version: 1, on: false });
-    expect((await stat(file)).mode & 0o777).toBe(0o600);
+    await expectMode(file, 0o600);
 
     // A day later, and after a restart, nothing is asked and nothing is shown.
     let now = Date.now() + 2 * CHECK_EVERY_MS;

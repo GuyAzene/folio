@@ -169,7 +169,7 @@
                   />
                   <span class="min-w-0 flex-1 truncate">Image…</span>
                   <span class="shrink-0 text-[12px] whitespace-nowrap text-text-3"
-                    >or paste ⌘V</span
+                    >or paste {folio.keys("⌘V")}</span
                   >
                 </Command.Item>
                 <Command.Item

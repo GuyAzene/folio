@@ -64,8 +64,8 @@ void describe("panes", () => {
     const dragged = await widths(page);
     assert.ok(dragged[1]! > dragged[0]!, `the chat should be wider: ${dragged.join(", ")}`);
 
-    await page.keyboard.press("Meta+t");
-    await page.keyboard.press("Meta+1");
+    await page.keyboard.press("ControlOrMeta+t");
+    await page.keyboard.press("ControlOrMeta+1");
     await box.waitFor();
     assert.deepEqual(await widths(page), dragged);
     assert.equal(await box.inputValue(), "A half-written question");
@@ -134,8 +134,8 @@ void describe("panes", () => {
     running.push(app);
     const { page } = app;
     await page.getByRole("button", { name: "Ask Folio" }).waitFor();
-    await page.keyboard.press("Meta+t");
-    await page.keyboard.press("Meta+k");
+    await page.keyboard.press("ControlOrMeta+t");
+    await page.keyboard.press("ControlOrMeta+k");
     await page.keyboard.type("Synthetic chat");
     await page.getByRole("option", { name: "Synthetic chat", exact: true }).click();
     await page.getByText("A synthetic reply.").waitFor();

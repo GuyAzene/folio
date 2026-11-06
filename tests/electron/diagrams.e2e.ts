@@ -77,7 +77,11 @@ void describe("Diagrams in Folio's window", () => {
     await diagram.hover();
     await diagram.getByRole("button", { name: "Copy" }).click();
     await diagram.getByRole("button", { name: "Copied" }).waitFor();
-    const copied = await app.evaluate(({ clipboard }) => clipboard.readText());
+    // Windows hands text back from the clipboard with its own line endings.
+    const copied = (await app.evaluate(({ clipboard }) => clipboard.readText())).replaceAll(
+      "\r\n",
+      "\n",
+    );
     assert.equal(copied, REPLY.slice(REPLY.indexOf("```mermaid"), REPLY.lastIndexOf("```") + 3));
   });
 

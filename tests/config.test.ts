@@ -1,10 +1,11 @@
-import { lstat, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { DEFAULT_ROLES, FolioConfig, readConfig } from "../src/config.ts";
 import { modelCatalog } from "../src/connections.ts";
 import { DEFAULT_OPENROUTER } from "../src/model-choices.ts";
+import { expectMode } from "./fixtures/modes.ts";
 
 const catalog = modelCatalog();
 const homes: string[] = [];
@@ -120,7 +121,7 @@ describe("which model does what", () => {
       note: "mine",
       openrouter: { models: ["moonshotai/kimi-k3"] },
     });
-    expect((await stat(file)).mode & 0o777).toBe(0o600);
+    await expectMode(file, 0o600);
     expect(config.roles.writer).toBe("openrouter/deepseek/deepseek-v4-pro");
     expect(config.openrouter).toEqual(["moonshotai/kimi-k3"]);
   });

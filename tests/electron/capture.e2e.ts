@@ -77,7 +77,7 @@ function workbook(asset: string): string {
     "",
     "A broken one: $\\frac{a$ here.",
     "",
-    "An over-wide one: $\\left\\{ w \\mid w\\textit{ is a very long word that keeps going and going far past the edge of the column so that it cannot fit}\\right\\}$.",
+    "An over-wide one: $\\left\\{ w \\mid w\\textit{ is a very long word that keeps going and going far past the edge of the column so that it cannot fit however its font is drawn}\\right\\}$.",
     "",
   ].join("\n");
 }

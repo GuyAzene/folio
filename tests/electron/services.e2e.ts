@@ -136,7 +136,7 @@ void describe("MCP servers", () => {
     await page.getByText("You declined Synthetic · lookup").waitFor();
 
     // Settings: the server, its tools and a rule, and no secret anywhere on the page.
-    await page.keyboard.press("Meta+,");
+    await page.keyboard.press("ControlOrMeta+,");
     await page.getByRole("button", { name: "MCP servers" }).click();
     // In Settings: the chat list beside the open chat names a synthetic chat too.
     await page

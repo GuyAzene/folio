@@ -73,6 +73,38 @@ const FAILURE_WINDOW = 10 * 60_000;
 const MAX_LOG = 4_096;
 const CONNECT_TIMEOUT = 30_000;
 
+/**
+ * What programs on Windows expect to find, which a server started without Folio's own environment
+ * would lack: without SystemRoot, for one, Python can't open a network connection.
+ */
+const WINDOWS_ENV = [
+  "SystemRoot",
+  "SystemDrive",
+  "windir",
+  "ComSpec",
+  "PATHEXT",
+  "PROCESSOR_ARCHITECTURE",
+  "USERNAME",
+  "USERPROFILE",
+  "HOMEDRIVE",
+  "HOMEPATH",
+  "APPDATA",
+  "LOCALAPPDATA",
+  "ProgramData",
+  "ProgramFiles",
+  "ProgramFiles(x86)",
+  "TEMP",
+  "TMP",
+];
+export function windowsEnv(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  return Object.fromEntries(
+    WINDOWS_ENV.flatMap((name) => {
+      const value = env[name];
+      return value ? [[name, value]] : [];
+    }),
+  );
+}
+
 export interface McpServersOptions {
   config: McpConfig;
   /** Folio's home: servers' folders are in `mcp/` there. */
@@ -205,10 +237,14 @@ export class McpServers {
           env: {
             PATH: path,
             HOME: homedir(),
-            USER: process.env.USER ?? "",
-            LOGNAME: process.env.LOGNAME ?? process.env.USER ?? "",
-            SHELL: process.env.SHELL ?? "/bin/zsh",
-            TMPDIR: process.env.TMPDIR ?? tmpdir(),
+            ...(process.platform === "win32"
+              ? windowsEnv()
+              : {
+                  USER: process.env.USER ?? "",
+                  LOGNAME: process.env.LOGNAME ?? process.env.USER ?? "",
+                  SHELL: process.env.SHELL ?? "/bin/zsh",
+                  TMPDIR: process.env.TMPDIR ?? tmpdir(),
+                }),
             LANG: process.env.LANG ?? "en_US.UTF-8",
             PYTHONIOENCODING: "utf-8",
             ...entry.env,

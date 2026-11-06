@@ -80,7 +80,7 @@ void describe("routines", () => {
       ],
     );
 
-    await page.keyboard.press("Meta+,");
+    await page.keyboard.press("ControlOrMeta+,");
     await page.getByRole("button", { name: "Skills" }).click();
     await page.getByText("/quiz-me").waitFor();
     await page.getByRole("switch", { name: "Use feynman" }).click();
@@ -95,7 +95,7 @@ void describe("routines", () => {
     assert.deepEqual(config.skills.on, ["~/study/feynman"]);
     await page.keyboard.press("Escape");
 
-    await page.keyboard.press("Meta+k");
+    await page.keyboard.press("ControlOrMeta+k");
     await page.keyboard.type("lecture 1");
     await page.getByRole("option", { name: "lecture 1", exact: true }).click();
     await page.getByText("First question: what is a regular language?").waitFor();

@@ -18,7 +18,10 @@
 </script>
 
 <div
-  class="drag flex h-11 shrink-0 items-center gap-1 border-b border-line-subtle pr-2 {leftInset
+  class="drag flex h-11 shrink-0 items-center gap-1 border-b border-line-subtle {folio.platform ===
+  'darwin'
+    ? 'pr-2'
+    : 'pr-[134px]'} {leftInset
     ? folio.platform === 'darwin'
       ? 'pl-[110px]'
       : 'pl-11'

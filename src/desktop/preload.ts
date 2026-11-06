@@ -35,6 +35,7 @@ const api: FolioApi = {
   resolvePending: (id, apply) => call("resolvePending", id, apply),
   undoAction: (undo) => call("undoAction", undo),
   openrouterCatalog: () => call("openrouterCatalog"),
+  setWindowTheme: (dark) => call("setWindowTheme", dark),
   revealConfig: () => call("revealConfig"),
   listSkills: () => call("listSkills"),
   setSkillOn: (key, on) => call("setSkillOn", key, on),

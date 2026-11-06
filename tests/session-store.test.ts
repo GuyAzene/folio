@@ -6,7 +6,6 @@ import {
   readFile,
   readdir,
   rm,
-  stat,
   symlink,
   utimes,
   writeFile,
@@ -23,6 +22,7 @@ import {
   SessionConflictError,
   SessionFormatError,
 } from "../src/session-store.ts";
+import { expectMode } from "./fixtures/modes.ts";
 
 const run = promisify(execFile);
 const homes: string[] = [];
@@ -117,9 +117,9 @@ describe("private versioned session snapshots", () => {
     expect(saved.revision).toBe(2);
     expect(saved.focus?.page).toBe(2);
     expect(saved.scope).toEqual(input.scope);
-    expect((await stat(home)).mode & 0o777).toBe(0o700);
-    expect((await stat(store.directory)).mode & 0o777).toBe(0o700);
-    expect((await stat(resolve(store.directory, `${saved.id}.json`))).mode & 0o777).toBe(0o600);
+    await expectMode(home, 0o700);
+    await expectMode(store.directory, 0o700);
+    await expectMode(resolve(store.directory, `${saved.id}.json`), 0o600);
     expect(await readdir(store.directory)).toEqual([`${saved.id}.json`]);
   });
 

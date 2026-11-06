@@ -123,7 +123,7 @@
     >
       <Search size={14} strokeWidth={1.75} />
       <span class="flex-1 text-left">Search or ask</span>
-      <span class="font-mono text-[11px] text-text-4">⌘K</span>
+      <span class="font-mono text-[11px] text-text-4">{folio.keys("⌘K")}</span>
     </button>
     <IconButton
       label="New chat"
@@ -378,7 +378,7 @@
       <span class="flex-1 text-left font-medium">Settings</span>
       <span
         class="font-mono text-[11px] text-text-4 opacity-0 transition-opacity group-hover:opacity-100"
-        >⌘,</span
+        >{folio.keys("⌘,")}</span
       >
     </button>
   </div>

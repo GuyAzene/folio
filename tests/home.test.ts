@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 import { moveLegacyHome } from "../src/home.ts";
+import { expectMode } from "./fixtures/modes.ts";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -23,7 +24,7 @@ describe("Folio's home folder", () => {
     const { from, to } = await legacy();
     expect(moveLegacyHome(from, to)).toBe("moved");
     expect(await readFile(resolve(to, "sessions", "chat.json"), "utf8")).toBe("{}");
-    expect((await stat(to)).mode & 0o777).toBe(0o700);
+    await expectMode(to, 0o700);
     await expect(stat(from)).rejects.toThrow();
     expect(moveLegacyHome(from, to)).toBe("kept");
   });

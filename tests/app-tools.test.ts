@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vite-plus/test";
@@ -18,6 +18,7 @@ import { createRuntimes } from "../src/library/course-tools.ts";
 import { LibraryOperations } from "../src/library/operations.ts";
 import { LibraryStore } from "../src/library/store.ts";
 import { SYNTHETIC_LECTURE, syntheticPdf } from "./fixtures/synthetic-pdf.ts";
+import { expectMode } from "./fixtures/modes.ts";
 
 const homes: string[] = [];
 
@@ -300,7 +301,7 @@ describe("the tutor's controls", () => {
     const kept = await files.add(await pdf("Lecture 9.pdf"));
     expect(await files.add(await pdf("Lecture 9.pdf"))).toEqual(kept);
     const path = files.path(kept);
-    expect((await stat(path)).mode & 0o777).toBe(0o400);
+    await expectMode(path, 0o400);
     await chmod(path, 0o600);
     await writeFile(path, "changed");
     await expect(files.read(kept)).rejects.toThrow("changed outside Folio");

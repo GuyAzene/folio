@@ -21,6 +21,7 @@ import { createSessionStore } from "../src/session-store.ts";
 import { SkillLibrary, type SkillSwitches } from "../src/skills/library.ts";
 import { parseSkill } from "../src/skills/skill-file.ts";
 import { skillCommand, skillTool } from "../src/skills/tool.ts";
+import { expectMode } from "./fixtures/modes.ts";
 
 const homes: string[] = [];
 const conversations: Conversation[] = [];
@@ -139,7 +140,7 @@ describe("the routines Folio finds", () => {
 
     let found = await library.scan();
     expect(found.skills.map((skill) => [skill.key, skill.from, skill.on])).toEqual([
-      [`${home}/skills/quiz-me`, "Folio", true],
+      [resolve(home, "skills", "quiz-me"), "Folio", true],
       ["~/study/pdf", "~/study", false],
       ["~/study/quiz-me", "~/study", false],
     ]);
@@ -158,7 +159,7 @@ describe("the routines Folio finds", () => {
     ]);
 
     // Folio's own turned off, the added folder's of the same name is used.
-    state.switches = { ...state.switches, off: [`${home}/skills/quiz-me`] };
+    state.switches = { ...state.switches, off: [resolve(home, "skills", "quiz-me")] };
     expect((await library.active()).map((skill) => `${skill.from}:${skill.name}`)).toEqual([
       "~/study:pdf",
       "~/study:quiz-me",
@@ -181,7 +182,7 @@ describe("the routines Folio finds", () => {
     const many = resolve(root, "study-skills");
     await writeSkill(many, "feynman", skillMd("feynman", "Teach it back."));
     const single = await writeSkill(root, "exam-prep", skillMd("exam-prep", "Plan exam prep."));
-    state.switches = { on: [`${many}/feynman`, single], off: [], folders: [many, single] };
+    state.switches = { on: [resolve(many, "feynman"), single], off: [], folders: [many, single] };
     expect((await library.active()).map((skill) => skill.name)).toEqual(["feynman", "exam-prep"]);
   });
 
@@ -260,8 +261,8 @@ describe("writing Folio's own routines", () => {
     const { home, library } = await libraryWith();
     await library.create("quiz-me", "Quiz me: one question at a time.", "Ask, wait, then check.");
     const file = resolve(home, "skills/quiz-me/SKILL.md");
-    expect((await stat(file)).mode & 0o777).toBe(0o600);
-    expect((await stat(resolve(home, "skills"))).mode & 0o777).toBe(0o700);
+    await expectMode(file, 0o600);
+    await expectMode(resolve(home, "skills"), 0o700);
     const { text, revision } = await library.read("quiz-me");
     const parsed = parseSkill(text, "quiz-me");
     expect("meta" in parsed && parsed.meta.description).toBe("Quiz me: one question at a time.");
@@ -325,7 +326,7 @@ describe("the use_skill tool and /name", () => {
       /^<folio_skill name="quiz-me">\nDo it step by step\.\n<\/folio_skill>/,
     );
     expect(started.block).toContain('started their routine "quiz-me"');
-    state.switches = { on: [], off: [`${home}/skills/quiz-me`], folders: [] };
+    state.switches = { on: [], off: [resolve(home, "skills", "quiz-me")], folders: [] };
     await expect(skillCommand(library, "quiz-me")).rejects.toThrow(
       /no routine "quiz-me" turned on/,
     );

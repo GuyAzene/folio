@@ -40,6 +40,7 @@ import type {
   TrashEntryView,
 } from "../../src/desktop/api.ts";
 import { DEFAULT_THINKING, STUDY_ROLES, THINKING_LEVELS } from "../../src/desktop/api.ts";
+import { keys } from "./keys.ts";
 import { chatTitle } from "../../src/chat-title.ts";
 import { categoryOf, DEFAULT_CATEGORIES, type Category } from "../../src/library/categories.ts";
 import type { AppAction } from "../../src/library/app-actions.ts";
@@ -221,6 +222,11 @@ class FolioState {
 
   get api(): FolioApi {
     return this.#api!;
+  }
+
+  /** A shortcut written the Mac way, named as the student's system names its keys. */
+  keys(shortcut: string): string {
+    return keys(shortcut, this.platform);
   }
 
   /** The student's MCP servers, as Settings shows them; null until first read. */
@@ -2007,6 +2013,7 @@ class FolioState {
       (this.theme === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
     document.documentElement.dataset.theme = dark ? "dark" : "light";
     this.shownTheme = dark ? "dark" : "light";
+    void this.#api?.setWindowTheme(dark).catch(() => undefined);
   }
 
   // ── Workspace ───────────────────────────────────────────────────────────

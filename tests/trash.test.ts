@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 import { KnowledgeStore } from "../src/kb/store.ts";
 import { CourseNotes } from "../src/library/notes.ts";
@@ -218,7 +218,7 @@ describe("Folio's Trash", () => {
     const one = await removal.removeDocument((await pdf("Lecture 1.pdf")).id);
     const two = await removal.removeDocument((await pdf("Lecture 2.pdf")).id);
     await trash.discard(one.id);
-    expect(discarded.map((path) => path.split("/").at(-1))).toEqual(["Folio – Lecture 1"]);
+    expect(discarded.map((path) => basename(path))).toEqual(["Folio – Lecture 1"]);
     expect(await trash.purge(Date.parse(two.removedAt) + 29 * 86_400_000)).toBe(0);
     expect(await trash.purge(Date.parse(two.removedAt) + 31 * 86_400_000)).toBe(1);
     expect(await trash.list()).toEqual([]);

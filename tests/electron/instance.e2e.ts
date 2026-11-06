@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { chmod, lstat, readdir, readFile, readlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { relative, resolve } from "node:path";
+import { relative, resolve, sep } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { after, describe, it } from "node:test";
 import type { ElectronApplication } from "playwright-core";
@@ -30,13 +30,23 @@ const QUIET = { FOLIO_STUDY_DELAY_MS: "600000" };
  * chat's run lease touches its lock folder every two seconds, and so is anything that went away
  * while it was read.
  */
+/** Every path in a home, listed again when a passing lock folder goes away while it is read. */
+async function everything(home: string): Promise<string[]> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const entries = await readdir(home, { recursive: true, withFileTypes: true });
+      return entries.map((entry) => resolve(entry.parentPath, entry.name));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT" || attempt === 5) throw error;
+    }
+  }
+}
+
 async function snapshot(home: string): Promise<Map<string, string>> {
   const entries = new Map<string, string>();
-  const paths = (await readdir(home, { recursive: true, withFileTypes: true })).map((entry) =>
-    resolve(entry.parentPath, entry.name),
-  );
-  for (const path of [home, ...paths]) {
-    const name = relative(home, path);
+  for (const path of [home, ...(await everything(home))]) {
+    // With forward slashes on Windows too, as the names below are written.
+    const name = relative(home, path).split(sep).join("/");
     if (name === "electron" || name.startsWith("electron/")) continue;
     if (/\.lock(\/|$)/.test(name)) continue;
     try {
@@ -128,20 +138,26 @@ void describe("A second Folio on the same home", () => {
     jobs.close();
   });
 
-  void it("opens the window again when the open Folio had closed it", async () => {
-    const seeded = await seedHome("A synthetic reply.");
-    const first = await launch(seeded.home, QUIET);
-    running.push(first);
-    await first.page.getByText("Synthetic chat").first().waitFor();
-    // On a Mac, Folio keeps running with its window closed.
-    await first.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
-    const windows = () =>
-      first.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length);
-    await until(async () => (await windows()) === 0, "the window to close");
+  // Elsewhere, closing the window quits Folio, as apps there do, so there is no open Folio left.
+  const macOnly = process.platform !== "darwin" && "only a Mac keeps Folio open with no window";
+  void it(
+    "opens the window again when the open Folio had closed it",
+    { skip: macOnly },
+    async () => {
+      const seeded = await seedHome("A synthetic reply.");
+      const first = await launch(seeded.home, QUIET);
+      running.push(first);
+      await first.page.getByText("Synthetic chat").first().waitFor();
+      // On a Mac, Folio keeps running with its window closed.
+      await first.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
+      const windows = () =>
+        first.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length);
+      await until(async () => (await windows()) === 0, "the window to close");
 
-    const reopened = first.app.waitForEvent("window");
-    assert.equal(await launchAgain(seeded.home, QUIET), 0);
-    await (await reopened).getByText("Synthetic chat").first().waitFor();
-    assert.equal(await windows(), 1);
-  });
+      const reopened = first.app.waitForEvent("window");
+      assert.equal(await launchAgain(seeded.home, QUIET), 0);
+      await (await reopened).getByText("Synthetic chat").first().waitFor();
+      assert.equal(await windows(), 1);
+    },
+  );
 });

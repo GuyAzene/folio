@@ -61,7 +61,9 @@ When the tutor looks at a note (`view_note`), the main process opens a hidden wi
 `capture.html` (`src/desktop/note-capture.ts`) for that one drawing and closes it afterwards. It
 runs in an in-memory session of its own, so it shares no storage with the window, with no
 preload and so no IPC, and under the same rules: no permissions, no network, no downloads, no
-navigation. A stopped reply or a quit closes it at once.
+navigation. A stopped reply or a quit closes it at once. On Windows it draws offscreen: Windows
+hardly draws a window that is never shown, so a screenshot of one can wait for a frame that never
+comes.
 
 Replies and notes are Markdown sanitized by DOMPurify. Math leaves the sanitizer as an inert
 placeholder carrying its TeX percent-encoded (the sanitizer drops attributes such as `E[X]>0` or
@@ -135,6 +137,13 @@ itself that nothing is open. Explain and Ask… go to the tab's chat, opening on
 document if there is none; "Add this page to a note" and "Quote to notes" go to the tab's note
 the same way. A chat for another course gives way to a new chat for the document's own course,
 since a course chat can't read beyond it.
+
+On Windows and Linux the system draws its own window buttons over the tab strip's right end
+(Electron's `titleBarOverlay`), on an all but transparent background with symbols in the strip's
+icon color for the theme shown (`setWindowTheme`), and the strip leaves them room; the menu bar
+shows only while Alt is held. Shortcuts are written the Mac way and shown there with Ctrl, Alt
+and Shift (`app/lib/keys.ts`); they answer to Ctrl wherever they answer to ⌘. The browser
+preview shows that layout with `?platform=win32`.
 
 What the student is writing to a chat belongs to the chat, not to the pane: it stays through tab
 switches and a restart until it is sent (`app/lib/drafts.ts`, in the window's storage on this
@@ -252,7 +261,10 @@ any of those values in a result, an error or a log reads `[hidden]`.
 
 - **Local servers** run as the student's own programs in a clean environment (the login shell's
   PATH, read once with a time limit so commands installed with uv or Homebrew are found, plus the
-  server's own settings, never Folio's), each in its own folder in `~/.folio/mcp/<name>/`. A server
+  server's own settings, never Folio's), each in its own folder in `~/.folio/mcp/<name>/`. On
+  Windows the PATH is the one Folio was opened with, a command is found by the extensions
+  PATHEXT lists (`npx` is `npx.cmd`), and the environment adds what Windows programs need, such
+  as `SystemRoot`. A server
   that stops is started again after 2, 10 and 60 seconds, and left failed after a fourth stop in
   ten minutes until the student restarts it. Closing Folio closes every server's process group.
 - **Remote servers** (`"type": "http"`, https or this Mac only) are reached over Streamable HTTP
@@ -588,8 +600,10 @@ Everything lives in `~/.folio/` (or `FOLIO_HOME`), with directories `0700` and f
 | `trash/<id>/` | Removed items, kept for 30 days |
 | `workspace.json` | Open tabs and their panes |
 
-Writes are atomic. Revision and hash checks refuse edits made elsewhere instead of overwriting
-them, and a chat open in one process refuses writes from another. Session files are versioned and
+Writes are atomic: a complete file is written and flushed beside the old one, renamed over it,
+and the folder flushed too, so the rename survives a crash. Windows can't flush a folder, and
+journals the rename itself, so there the folder is left alone. Revision and hash checks refuse
+edits made elsewhere instead of overwriting them, and a chat open in one process refuses writes from another. Session files are versioned and
 pin the Pi runtime and transcript format they were written with.
 
 ## The packaged app
@@ -618,7 +632,11 @@ quarantined, so it opens without Gatekeeper's prompt.
 
 CI (`.github/workflows/ci.yml`) runs the checks and unit tests on Linux, and on macOS the
 real-window checks, then the same checks on the packaged app and the install checks
-(`tests/electron/install.e2e.ts`). After a push to `main` whose checks, tests and builds pass,
+(`tests/electron/install.e2e.ts`). On Windows it runs the unit tests and the real-window checks
+on a fresh build; Folio isn't packaged for Windows yet. That job reports on its own, outside the
+CI check, until it has shown it passes reliably. Tests that write many small files run several
+times slower there, so a test gets 20 seconds on Windows, and checks of a file's permissions
+look only at whether it may be written (`tests/fixtures/modes.ts`), which is all Windows keeps. After a push to `main` whose checks, tests and builds pass,
 it builds the app for others (`FOLIO_DISTRIBUTE=1`: the inspector flags off), opens it on an
 empty home and quits it,
 then replaces the disk image on the rolling `nightly` pre-release and moves its tag to that

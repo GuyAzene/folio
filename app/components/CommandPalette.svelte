@@ -85,7 +85,7 @@
                 <span class="min-w-0 flex-1 truncate"
                   >Ask Folio “<bdi>{query.trim()}</bdi>”</span
                 >
-                <span class="font-mono text-[11px] text-text-3">⌘↵</span>
+                <span class="font-mono text-[11px] text-text-3">{folio.keys("⌘↵")}</span>
               </Command.Item>
             {/if}
             <Command.Group>
@@ -257,7 +257,7 @@
                     strokeWidth={1.75}
                     class="text-text-3"
                   /><span class="flex-1">New chat</span><span
-                    class="font-mono text-[11px] text-text-3">⌘N</span
+                    class="font-mono text-[11px] text-text-3">{folio.keys("⌘N")}</span
                   ></Command.Item
                 >
                 <Command.Item
@@ -276,7 +276,7 @@
                     strokeWidth={1.75}
                     class="text-text-3"
                   /><span class="flex-1">Settings</span><span
-                    class="font-mono text-[11px] text-text-3">⌘,</span
+                    class="font-mono text-[11px] text-text-3">{folio.keys("⌘,")}</span
                   ></Command.Item
                 >
               </Command.GroupItems>
@@ -286,7 +286,7 @@
         <div
           class="flex h-9 items-center gap-4 border-t border-line-subtle bg-sunken px-4 text-[12px] text-text-3 dark:bg-surface"
         >
-          <span>↑↓ move</span><span>↵ open</span><span>⌘↵ ask Folio</span><span
+          <span>↑↓ move</span><span>↵ open</span><span>{folio.keys("⌘↵")} ask Folio</span><span
             class="flex-1"
           ></span><span>esc close</span>
         </div>

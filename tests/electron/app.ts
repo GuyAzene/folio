@@ -1,4 +1,4 @@
-import { execFileSync, spawn } from "node:child_process";
+import { execSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   cp,
@@ -6,6 +6,7 @@ import {
   mkdtemp,
   readdir,
   readFile,
+  realpath,
   rm,
   stat,
   symlink,
@@ -62,7 +63,9 @@ async function fingerprint(): Promise<string> {
 export function buildApp(): Promise<string> {
   built ??= (async () => {
     if (process.env.FOLIO_E2E_APP) return process.env.FOLIO_E2E_APP;
-    const dir = resolve(tmpdir(), `folio-e2e-app-${await fingerprint()}`);
+    // The temporary folder's real path: Windows may give it a short name, as RUNNER~1, which
+    // Vite resolves to the long one, and then refuses the pages as outside the build.
+    const dir = resolve(await realpath(tmpdir()), `folio-e2e-app-${await fingerprint()}`);
     const done = resolve(dir, ".built");
     const exists = (path: string) =>
       stat(path).then(
@@ -86,9 +89,12 @@ export function buildApp(): Promise<string> {
       await rm(dir, { recursive: true, force: true });
       for (const path of SOURCES)
         await cp(resolve(ROOT, path), resolve(dir, path), { recursive: true });
-      await symlink(resolve(ROOT, "node_modules"), resolve(dir, "node_modules"), "dir");
-      execFileSync("vp", ["build"], { cwd: dir, stdio: "ignore" });
-      execFileSync("vp", ["pack"], { cwd: dir, stdio: "ignore" });
+      // A junction on Windows, which needs no administrator, as a folder link would.
+      const link = process.platform === "win32" ? "junction" : "dir";
+      await symlink(resolve(ROOT, "node_modules"), resolve(dir, "node_modules"), link);
+      // Through a shell, which also starts vp where it is a .cmd shim. A failed build says why.
+      execSync("vp build", { cwd: dir, stdio: "pipe" });
+      execSync("vp pack", { cwd: dir, stdio: "pipe" });
       await writeFile(done, "");
       console.log(`Built Folio for these checks in ${dir}.`);
       return dir;

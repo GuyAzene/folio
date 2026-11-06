@@ -4,7 +4,7 @@ import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { DraftBundle } from "../ingest/pipeline.ts";
 import { coursePrefix } from "../ingest/pipeline.ts";
-import { privateDirectory } from "../files.ts";
+import { privateDirectory, syncDirectory } from "../files.ts";
 import { checkId, LibraryError, type LibraryStore } from "../library/store.ts";
 import { buildIndex, KnowledgeIndex } from "./index.ts";
 import {
@@ -399,7 +399,8 @@ async function syncTree(path: string): Promise<void> {
     const child = resolve(path, entry.name);
     if (entry.isDirectory()) await syncTree(child);
     else {
-      const handle = await open(child, "r");
+      // Windows flushes only a file opened for writing.
+      const handle = await open(child, process.platform === "win32" ? "r+" : "r");
       try {
         await handle.sync();
       } finally {
@@ -408,13 +409,4 @@ async function syncTree(path: string): Promise<void> {
     }
   }
   await syncDirectory(path);
-}
-
-async function syncDirectory(path: string): Promise<void> {
-  const handle = await open(path, "r");
-  try {
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
 }

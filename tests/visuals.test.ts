@@ -1,5 +1,5 @@
 import { readdir, readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { relative, resolve, sep } from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import fc from "fast-check";
 import { describe, expect, it } from "vite-plus/test";
@@ -308,7 +308,7 @@ describe("one way to make a frame", () => {
       expect(text.includes("allow-same-origin"), file).toBe(false);
       if (/<iframe\b|createElement\(\s*["']iframe/.test(text)) framers.push(file);
     }
-    expect(framers.map((file) => file.slice(root.length + 1))).toEqual([
+    expect(framers.map((file) => relative(root, file).split(sep).join("/"))).toEqual([
       "app/components/ArtifactFrame.svelte",
     ]);
   });

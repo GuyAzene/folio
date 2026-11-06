@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { resolve } from "node:path";
+import { delimiter, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { StreamFn } from "@earendil-works/pi-agent-core";
 import {
@@ -22,12 +22,13 @@ import { Approvals } from "../src/mcp/approvals.ts";
 import { McpConfig, pastedServers, readMcp, redact, secretsOf } from "../src/mcp/config.ts";
 import { serverSlug, toolNames } from "../src/mcp/names.ts";
 import { promptCommand } from "../src/mcp/prompts.ts";
-import { McpServers } from "../src/mcp/servers.ts";
+import { McpServers, windowsEnv } from "../src/mcp/servers.ts";
 import { mergePath, shellPath, which } from "../src/mcp/shell-path.ts";
 import { serviceTools, shapeResult, toolSchema } from "../src/mcp/tools.ts";
 import { createSessionStore } from "../src/session-store.ts";
 import { startHttpServer } from "./fixtures/mcp-http.ts";
 import { FAKE_TOKEN } from "./fixtures/mcp-server.ts";
+import { expectMode } from "./fixtures/modes.ts";
 
 const FIXTURE = fileURLToPath(new URL("./fixtures/mcp-server.ts", import.meta.url));
 const homes: string[] = [];
@@ -140,7 +141,7 @@ describe("mcp.json", () => {
         },
       }),
     );
-    expect((await stat(config.path)).mode & 0o777).toBe(0o600);
+    await expectMode(config.path, 0o600);
     expect(config.server("piazza")).toMatchObject({ enabled: false, label: "Piazza" });
     const view = JSON.stringify(
       mcpView(
@@ -205,27 +206,69 @@ describe("tool names", () => {
 });
 
 describe("finding programs", () => {
-  it("finds a command on PATH or by its full path, and reads the login shell's PATH in time", async () => {
-    const home = await folder();
-    const program = resolve(home, "server-mcp");
-    await writeFile(program, "#!/bin/sh\n");
-    await chmod(program, 0o755);
-    expect(await which("server-mcp", `/nowhere:${home}`)).toBe(program);
-    expect(await which(program, "")).toBe(program);
-    expect(await which("missing-mcp", home)).toBeNull();
+  // Windows runs no shell scripts and has no login shell to ask.
+  it.skipIf(process.platform === "win32")(
+    "finds a command on PATH or by its full path, and reads the login shell's PATH in time",
+    async () => {
+      const home = await folder();
+      const program = resolve(home, "server-mcp");
+      await writeFile(program, "#!/bin/sh\n");
+      await chmod(program, 0o755);
+      expect(await which("server-mcp", `/nowhere:${home}`)).toBe(program);
+      expect(await which(program, "")).toBe(program);
+      expect(await which("missing-mcp", home)).toBeNull();
 
-    const shell = resolve(home, "shell");
-    await writeFile(
-      shell,
-      `#!/bin/sh\nprintf 'noise __FOLIO_PATH__/from/shell:/usr/bin__FOLIO_PATH__'\n`,
-    );
-    await chmod(shell, 0o755);
-    expect(await shellPath(shell)).toBe("/from/shell:/usr/bin");
-    const slow = resolve(home, "slow-shell");
-    await writeFile(slow, "#!/bin/sh\nsleep 5\n");
-    await chmod(slow, 0o755);
-    expect(await shellPath(slow, 200)).toBeNull();
-    expect(mergePath("/a:/b", "/b:relative").split(":").slice(0, 2)).toEqual(["/a", "/b"]);
+      const shell = resolve(home, "shell");
+      await writeFile(
+        shell,
+        `#!/bin/sh\nprintf 'noise __FOLIO_PATH__/from/shell:/usr/bin__FOLIO_PATH__'\n`,
+      );
+      await chmod(shell, 0o755);
+      expect(await shellPath(shell)).toBe("/from/shell:/usr/bin");
+      const slow = resolve(home, "slow-shell");
+      await writeFile(slow, "#!/bin/sh\nsleep 5\n");
+      await chmod(slow, 0o755);
+      expect(await shellPath(slow, 200)).toBeNull();
+      expect(mergePath("/a:/b", "/b:relative").split(":").slice(0, 2)).toEqual(["/a", "/b"]);
+    },
+  );
+
+  it("gives a service on Windows the variables its programs need, and none of Folio's", () => {
+    const env = {
+      SystemRoot: "C:\\Windows",
+      PATHEXT: ".EXE;.CMD",
+      HOMEDRIVE: "C:",
+      HOMEPATH: "\\Users\\student",
+      TEMP: "C:\\Temp",
+      APPDATA: "",
+      OPENAI_API_KEY: "sk-synthetic",
+      FOLIO_HOME: "C:\\folio",
+    };
+    expect(windowsEnv(env)).toEqual({
+      SystemRoot: "C:\\Windows",
+      PATHEXT: ".EXE;.CMD",
+      HOMEDRIVE: "C:",
+      HOMEPATH: "\\Users\\student",
+      TEMP: "C:\\Temp",
+    });
+  });
+
+  it("finds a Windows program by the extensions PATHEXT lists", async () => {
+    const home = await folder();
+    const shim = resolve(home, "server-mcp.cmd");
+    const binary = resolve(home, "other-mcp.exe");
+    for (const file of [shim, binary, resolve(home, "server-mcp")]) {
+      await writeFile(file, "");
+      await chmod(file, 0o755);
+    }
+    // `server-mcp` beside the shim is a shell script, as npm puts beside npx.cmd: not a program.
+    expect(
+      await which("server-mcp", `${resolve(home, "nowhere")}${delimiter}${home}`, "win32"),
+    ).toBe(shim);
+    expect(await which("other-mcp", home, "win32")).toBe(binary);
+    expect(await which("other-mcp.exe", home, "win32")).toBe(binary);
+    expect(await which(resolve(home, "server-mcp"), "", "win32")).toBe(shim);
+    expect(await which("missing-mcp", home, "win32")).toBeNull();
   });
 });
 
