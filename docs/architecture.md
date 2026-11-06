@@ -610,7 +610,12 @@ pin the Pi runtime and transcript format they were written with.
 
 `vp run desktop:package` builds the renderer and the main process from a copy of the source, so a
 Folio running from the checkout keeps its files, and electron-builder makes
-`release/mac-arm64/Folio.app` and a disk image for Apple silicon (`scripts/package.ts`).
+`release/mac-arm64/Folio.app` and a disk image for Apple silicon (`scripts/package.ts`). On
+Windows it makes `release/win-unpacked/Folio.exe` and an installer for x64,
+`Folio-<version>-x64-setup.exe`, which installs for the student alone, with no administrator,
+into their own programs folder with a Start menu entry. Its icon is the same drawing at 256
+pixels, and it is unsigned unless `CSC_LINK` names a code-signing certificate, so SmartScreen
+warns before its first run.
 
 - The app's archive, `app.asar`, holds the main process, its preload, the renderer and only the
   packages the main process loads: those are `dependencies` in `package.json`. The renderer's
@@ -619,7 +624,7 @@ Folio running from the checkout keeps its files, and electron-builder makes
 - Electron's fuses make the app run only its own archive, checked against a hash in its signed
   `Info.plist`, and ignore `ELECTRON_RUN_AS_NODE` and `NODE_OPTIONS`. The inspector flags stay on
   so the real-window checks can drive the packaged app (`FOLIO_E2E_APP=…/Folio.app`).
-- It is signed ad-hoc with the hardened runtime. `CSC_NAME` or `CSC_LINK` signs it with a
+- On a Mac it is signed ad-hoc with the hardened runtime. `CSC_NAME` or `CSC_LINK` signs it with a
   Developer ID instead, and Apple's notarization credentials in the environment notarize it.
 
 `vp run desktop:install` then puts the app in /Applications (`scripts/install.ts`). It refuses
@@ -633,14 +638,18 @@ quarantined, so it opens without Gatekeeper's prompt.
 CI (`.github/workflows/ci.yml`) runs the checks and unit tests on Linux, and on macOS the
 real-window checks, then the same checks on the packaged app and the install checks
 (`tests/electron/install.e2e.ts`). On Windows it runs the unit tests and the real-window checks
-on a fresh build; Folio isn't packaged for Windows yet. That job reports on its own, outside the
-CI check, until it has shown it passes reliably. Tests that write many small files run several
+on a fresh build, and packages Folio to run the same packaging checks as on macOS on
+`Folio.exe`, then opens it and asks it to close. Both are part of the CI check, so nothing merges
+before Windows passes too. Tests that write many small files run several
 times slower there, so a test gets 20 seconds on Windows, and checks of a file's permissions
-look only at whether it may be written (`tests/fixtures/modes.ts`), which is all Windows keeps. After a push to `main` whose checks, tests and builds pass,
-it builds the app for others (`FOLIO_DISTRIBUTE=1`: the inspector flags off), opens it on an
-empty home and quits it,
-then replaces the disk image on the rolling `nightly` pre-release and moves its tag to that
-commit. The download link never changes, and there are no versioned releases to cut. The
+look only at whether it may be written (`tests/fixtures/modes.ts`), which is all Windows keeps.
+
+After a push to `main` whose checks, tests and builds pass, CI builds the app for others
+(`FOLIO_DISTRIBUTE=1`: the inspector flags off) on macOS and on Windows, and opens each on an
+empty home and quits it. The macOS job then replaces the disk image on the rolling `nightly`
+pre-release, moves its tag to that commit and writes its notes. The Windows job waits for it and
+then replaces the installer beside it, unless a newer push has moved the tag on meanwhile, so the
+two downloads are always from one commit. The download link never changes, and there are no versioned releases to cut. The
 real-window job reports on its own and does not hold the nightly back: those checks were written
 on a Mac much faster than GitHub's virtual ones.
 

@@ -19,8 +19,8 @@ Report a security problem privately instead, as [SECURITY.md](SECURITY.md) descr
   what the slides teach, not how they look"). "Fixes #12" in the description closes the issue.
 - The **CI** check must pass. It covers formatting, lint and types, the Svelte checks, the unit
   tests and the builds on Linux, and, when the app or its checks change, Folio in a real window
-  on a fresh build and as the packaged app on macOS. A Windows job runs the unit tests and Folio
-  in a real window too; it reports on its own for now.
+  on a fresh build and as the packaged app on macOS. The same checks run on Windows: the unit
+  tests, Folio in a real window and the packaged app.
 - Before opening a pull request, run `vp check`, `vp run check:ui` and `vp test`. Check interface
   changes in the browser preview (`vp dev`), and in a real window (`vp run test:electron`) when
   they cross the Electron bridge.

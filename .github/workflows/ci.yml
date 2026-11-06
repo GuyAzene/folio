@@ -164,8 +164,7 @@ jobs:
           FOLIO_E2E_APP: ${{ github.workspace }}/release/mac-arm64/Folio.app
 
   # Folio on Windows: the unit tests, then the real-window checks on a fresh build, as the macOS
-  # window job runs them. It reports on its own, like the nightly build, until it has shown it
-  # passes reliably; packaging for Windows comes later.
+  # window job runs them.
   windows:
     name: "Windows: tests and Folio in a real window"
     needs: changes
@@ -192,6 +191,40 @@ jobs:
       - name: Folio in a real window
         if: ${{ !cancelled() }}
         run: vp node --test $TEST_FLAGS tests/electron/*.e2e.ts
+
+  # Folio packaged for Windows, with the checks of what packaging can break, as on macOS.
+  windows-packaged:
+    name: "Windows: packaged app"
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
+    runs-on: windows-2025
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: voidzero-dev/setup-vp@cab1ab9eaff52d4857875f4f2c016e36af8f2c76 # v1.22.0
+        with:
+          node-version-file: .node-version
+          sfw: true
+          cache: false
+      - name: Electron
+        run: vp node node_modules/electron/install.js
+      - name: Package Folio for Windows
+        run: vp run desktop:package
+      - name: The packaged app in a real window
+        run: >-
+          vp node --test $TEST_FLAGS
+          tests/electron/window.e2e.ts tests/electron/runtime.e2e.ts
+          tests/electron/instance.e2e.ts tests/electron/sandbox.e2e.ts
+          tests/electron/diagrams.e2e.ts
+        env:
+          FOLIO_E2E_APP: ${{ github.workspace }}/release/win-unpacked/Folio.exe
+      # The nightly's check of the build for others, tried here on every change.
+      - name: Open and quit the packaged app
+        shell: pwsh
+        run: .github/scripts/open-and-quit.ps1
 
   # On a pull request that changes the app, the README pictures are retaken from the preview
   # (`vp run screenshots`), and those that look different are committed to the pull request's
@@ -268,7 +301,7 @@ jobs:
   ci:
     name: CI
     if: always()
-    needs: [changes, check, window, packaged, pictures]
+    needs: [changes, check, window, packaged, windows, windows-packaged, pictures]
     runs-on: ubuntu-latest
     steps:
       - name: Every job passed or had nothing to check
@@ -324,11 +357,15 @@ jobs:
           cat > notes.md <<EOF
           The newest Folio, built from [\`${GITHUB_SHA::7}\`](https://github.com/$GITHUB_REPOSITORY/commit/$GITHUB_SHA) on $(date -u '+%Y-%m-%d %H:%M UTC'). It is rebuilt after every change to \`main\`, so this page always has the latest.
 
-          **Install:** download \`Folio-arm64.dmg\` (Apple silicon Macs), open it and drag Folio to Applications.
+          **Install on a Mac:** download \`Folio-arm64.dmg\` (Apple silicon Macs), open it and drag Folio to Applications.
 
-          **First open:** Folio is not signed with an Apple Developer ID, so macOS says it could not verify it. Open **System Settings → Privacy & Security**, scroll down to the line about Folio, and choose **Open Anyway**. A newer download may ask again.
+          **First open on a Mac:** Folio is not signed with an Apple Developer ID, so macOS says it could not verify it. Open **System Settings → Privacy & Security**, scroll down to the line about Folio, and choose **Open Anyway**. A newer download may ask again.
 
-          Your courses, notes and chats stay in \`~/.folio\` on your Mac. Folio connects to your own ChatGPT account.
+          **Install on Windows:** download \`Folio-x64-setup.exe\` (64-bit Windows 10 or 11) and run it. It installs Folio for you alone, with no administrator, and opens it. It is built from the same commit and put up a few minutes after the disk image.
+
+          **First run on Windows:** Folio is not signed with a code-signing certificate, so Windows says it protected your PC. Choose **More info**, then **Run anyway**.
+
+          Your courses, notes and chats stay in \`.folio\` in your home folder. Folio connects to your own ChatGPT account.
           EOF
           if gh release view nightly >/dev/null 2>&1; then
             gh release edit nightly --prerelease --title "Folio nightly" --notes-file notes.md
@@ -337,3 +374,48 @@ jobs:
               --notes-file notes.md
           fi
           gh release upload nightly Folio-arm64.dmg --clobber
+
+  # The Windows installer for the same nightly release, built for others like the Mac's disk
+  # image, opened and closed once, then put beside it. It waits for the Mac's job, which creates
+  # the release, moves its tag to this commit and writes its notes, so the two never pair
+  # downloads from different commits; if that job fails, the release keeps its earlier pair.
+  nightly-windows:
+    name: Nightly build for Windows
+    needs: [check, nightly]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: windows-2025
+    timeout-minutes: 30
+    permissions:
+      # Replaces the release's installer.
+      contents: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: voidzero-dev/setup-vp@cab1ab9eaff52d4857875f4f2c016e36af8f2c76 # v1.22.0
+        with:
+          node-version-file: .node-version
+          sfw: true
+          cache: false
+      - name: Electron
+        run: vp node node_modules/electron/install.js
+      - name: Package Folio for others
+        run: vp run desktop:package
+        env:
+          FOLIO_DISTRIBUTE: "1"
+      - name: Open and quit the packaged app
+        shell: pwsh
+        run: .github/scripts/open-and-quit.ps1
+      - name: Publish the installer
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # A newer push may have moved the tag on meanwhile; its own run puts up its installer.
+          tagged=$(gh api "repos/$GITHUB_REPOSITORY/git/refs/tags/nightly" --jq .object.sha)
+          if [ "$tagged" != "$GITHUB_SHA" ]; then
+            echo "**Nightly for Windows:** the tag moved on to ${tagged::7}; not uploading ${GITHUB_SHA::7}." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          cp release/Folio-*-x64-setup.exe Folio-x64-setup.exe
+          gh release upload nightly Folio-x64-setup.exe --clobber
