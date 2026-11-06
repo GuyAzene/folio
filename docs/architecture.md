@@ -647,8 +647,9 @@ look only at whether it may be written (`tests/fixtures/modes.ts`), which is all
 After a push to `main` whose checks, tests and builds pass, CI builds the app for others
 (`FOLIO_DISTRIBUTE=1`: the inspector flags off) on macOS and on Windows, and opens each on an
 empty home and quits it. The macOS job then replaces the disk image on the rolling `nightly`
-pre-release, moves its tag to that commit and writes its notes, and the Windows job replaces the
-installer beside it. The download link never changes, and there are no versioned releases to cut. The
+pre-release, moves its tag to that commit and writes its notes. The Windows job waits for it and
+then replaces the installer beside it, unless a newer push has moved the tag on meanwhile, so the
+two downloads are always from one commit. The download link never changes, and there are no versioned releases to cut. The
 real-window job reports on its own and does not hold the nightly back: those checks were written
 on a Mac much faster than GitHub's virtual ones.
 

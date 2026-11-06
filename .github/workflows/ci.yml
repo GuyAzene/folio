@@ -363,7 +363,7 @@ jobs:
 
           **First open on a Mac:** Folio is not signed with an Apple Developer ID, so macOS says it could not verify it. Open **System Settings → Privacy & Security**, scroll down to the line about Folio, and choose **Open Anyway**. A newer download may ask again.
 
-          **Install on Windows:** download \`Folio-x64-setup.exe\` (64-bit Windows 10 or 11) and run it. It installs Folio for you alone, with no administrator, and opens it.
+          **Install on Windows:** download \`Folio-x64-setup.exe\` (64-bit Windows 10 or 11) and run it. It installs Folio for you alone, with no administrator, and opens it. It is built from the same commit and put up a few minutes after the disk image.
 
           **First run on Windows:** Folio is not signed with a code-signing certificate, so Windows says it protected your PC. Choose **More info**, then **Run anyway**.
 
@@ -378,10 +378,12 @@ jobs:
           gh release upload nightly Folio-arm64.dmg --clobber
 
   # The Windows installer for the same nightly release, built for others like the Mac's disk
-  # image, opened and closed once, then put beside it. The Mac's job writes the release's notes.
+  # image, opened and closed once, then put beside it. It waits for the Mac's job, which creates
+  # the release, moves its tag to this commit and writes its notes, so the two never pair
+  # downloads from different commits; if that job fails, the release keeps its earlier pair.
   nightly-windows:
     name: Nightly build for Windows
-    needs: [check]
+    needs: [check, nightly]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: windows-2025
     timeout-minutes: 30
@@ -411,5 +413,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # A newer push may have moved the tag on meanwhile; its own run puts up its installer.
+          tagged=$(gh api "repos/$GITHUB_REPOSITORY/git/refs/tags/nightly" --jq .object.sha)
+          if [ "$tagged" != "$GITHUB_SHA" ]; then
+            echo "**Nightly for Windows:** the tag moved on to ${tagged::7}; not uploading ${GITHUB_SHA::7}." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           cp release/Folio-*-x64-setup.exe Folio-x64-setup.exe
           gh release upload nightly Folio-x64-setup.exe --clobber
