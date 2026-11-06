@@ -256,6 +256,7 @@ describe("the tutor's controls", () => {
     const { tools } = await runtimes.course(algorithms.id, "chat", grants);
     const page = await run(tools, "read_page", { documentId: file.fileId, page: 1 });
     expect(page.content[0]!.text).toContain("A file the student added to this chat");
+    expect(page.content[0]!.text).toContain("from the PDF's own fonts");
     expect(await library.listDocuments({ courseId: algorithms.id })).toEqual([]);
     const added = await run(tools, "add_file", { fileId: file.fileId });
     expect(added.details.action?.summary).toBe("Added “Tirgul 3” to Algorithms as a recitation");

@@ -7,7 +7,7 @@ import {
   textColumn,
   type SourceDocument,
 } from "../ingest/pages.ts";
-import { pdfPageText } from "./pdf.ts";
+import { pdfPageText, type PageTextOptions } from "./pdf.ts";
 import type { DocumentRecord, LibraryStore } from "./store.ts";
 
 /**
@@ -25,8 +25,9 @@ export class PageReader {
     this.#library = library;
   }
 
-  async text(document: DocumentRecord, page: number): Promise<string> {
-    return pdfPageText(await this.#document(document), page);
+  /** The page's text; with `emphasis`, its bold and italic marked as its fonts give them. */
+  async text(document: DocumentRecord, page: number, options?: PageTextOptions): Promise<string> {
+    return pdfPageText(await this.#document(document), page, options);
   }
 
   /** The page as a JPEG (about 100–200 KB). */
@@ -35,8 +36,13 @@ export class PageReader {
   }
 
   /** A page of a PDF the student added to a chat, which `load` reads and verifies. */
-  async fileText(fileId: string, page: number, load: () => Promise<Uint8Array>): Promise<string> {
-    return pdfPageText(await this.#source(`file:${fileId}`, load), page);
+  async fileText(
+    fileId: string,
+    page: number,
+    load: () => Promise<Uint8Array>,
+    options?: PageTextOptions,
+  ): Promise<string> {
+    return pdfPageText(await this.#source(`file:${fileId}`, load), page, options);
   }
 
   fileImage(fileId: string, page: number, load: () => Promise<Uint8Array>): Promise<Uint8Array> {
@@ -109,7 +115,8 @@ export class PageReader {
   #source(key: string, load: () => Promise<Uint8Array>): Promise<SourceDocument> {
     let opening = this.#open.get(key);
     if (!opening) {
-      opening = load().then((data) => openSource(data));
+      // Font names let a page's text mark its bold and italic.
+      opening = load().then((data) => openSource(data, { fontNames: true }));
       opening.catch(() => this.#open.delete(key));
       this.#open.set(key, opening);
       // Keep a few documents open; release the oldest.
