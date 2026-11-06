@@ -34,24 +34,30 @@ export async function pdfPageCount(data: Uint8Array): Promise<number> {
 export interface PageTextOptions {
   /**
    * Mark bold text `**…**` and italic text `*…*`, as the page's fonts name their styles, and
-   * write an asterisk printed on the page as `\*`. Fonts are named only in a document opened
-   * with `fontNames` (`openSource` in ingest/pages.ts); in any other, nothing is marked.
+   * write an asterisk printed on the page as `\*` (and a backslash that could escape one as
+   * `\\`). Fonts are named only in a document opened with `fontNames` (`openSource` in
+   * ingest/pages.ts); in any other, nothing is marked.
    */
   emphasis?: boolean;
+  /** Stops waiting for the page's fonts. */
+  signal?: AbortSignal;
 }
 
 /** The page's text layer in reading order; empty for scanned pages. */
 export async function pdfPageText(
   document: PDFDocumentProxy,
   pageNumber: number,
-  { emphasis = false }: PageTextOptions = {},
+  { emphasis = false, signal }: PageTextOptions = {},
 ): Promise<string> {
   const page = await document.getPage(pageNumber);
   try {
     const content = await page.getTextContent();
     const runs: TextRun[] = content.items.flatMap((item) => ("str" in item ? [item] : []));
     const text = emphasis
-      ? markedText(runs, await pageFontEmphasis(page, new Set(runs.map((run) => run.fontName))))
+      ? markedText(
+          runs,
+          await pageFontEmphasis(page, new Set(runs.map((run) => run.fontName)), { signal }),
+        )
       : runs.map((run) => (run.hasEOL ? `${run.str}\n` : run.str)).join("");
     return text
       .replace(/[ \t]+\n/g, "\n")
@@ -69,6 +75,8 @@ export interface Emphasis {
 }
 
 const PLAIN: Emphasis = { bold: false, italic: false };
+/** How long a page's fonts may take to arrive; past it, the fonts still missing read as plain. */
+const FONT_WAIT_MS = 5_000;
 /**
  * Fonts whose styles are not emphasis: math fonts, whose italics are math letters (Cambria Math,
  * Latin Modern Math, TeX's CMMI, CMSY and CMEX, the AMS and Euler fonts), and symbol fonts.
@@ -99,28 +107,34 @@ export function fontEmphasis(fontName: string): Emphasis {
 
 /**
  * The emphasis of these fonts of a page, by the IDs its text runs give them, read from the
- * fonts' own names; a font whose name can't be read is plain. pdf.js names fonts only in a
- * document opened with `fontNames`, and hands a page's fonts over only once it lays the page
- * out, so a page whose fonts haven't arrived, because it hasn't been drawn, is laid out first.
+ * fonts' own names. pdf.js names fonts only in a document opened with `fontNames`, and hands a
+ * page's fonts over only once it lays the page out, so a page whose fonts haven't arrived,
+ * because it hasn't been drawn, is laid out first. The marks are a help, not a must: a font
+ * whose name can't be read, or that hasn't arrived after `wait` milliseconds, is plain. Throws
+ * only when `signal` aborts.
  */
 export async function pageFontEmphasis(
   page: PDFPageProxy,
   fontIds: Iterable<string>,
+  { signal, wait = FONT_WAIT_MS }: { signal?: AbortSignal; wait?: number } = {},
 ): Promise<Map<string, Emphasis>> {
   const wanted = new Set(fontIds);
   const fonts = page.commonObjs;
   if ([...wanted].some((id) => !fonts.has(id))) {
-    const layout = await page.getOperatorList({ annotationMode: AnnotationMode.DISABLE });
-    // pdf.js sends each font before the layout that sets it, and settles it soon after.
-    const used = new Set<string>();
-    layout.fnArray.forEach((fn, index) => {
-      if (fn === OPS.setFont) used.add(String(layout.argsArray[index]?.[0]));
-    });
-    await Promise.all(
-      [...used]
-        .filter((id) => wanted.has(id))
-        .map((id) => new Promise((settled) => fonts.get(id, settled))),
-    );
+    const arrived = (async () => {
+      const layout = await page.getOperatorList({ annotationMode: AnnotationMode.DISABLE });
+      // pdf.js sends each font before the layout that sets it, and settles it soon after.
+      const used = new Set<string>();
+      layout.fnArray.forEach((fn, index) => {
+        if (fn === OPS.setFont) used.add(String(layout.argsArray[index]?.[0]));
+      });
+      await Promise.all(
+        [...used]
+          .filter((id) => wanted.has(id))
+          .map((id) => new Promise((settled) => fonts.get(id, settled))),
+      );
+    })();
+    await settledWithin(arrived, wait, signal);
   }
   const emphasis = new Map<string, Emphasis>();
   for (const id of wanted) {
@@ -129,6 +143,29 @@ export async function pageFontEmphasis(
     emphasis.set(id, typeof name === "string" ? fontEmphasis(name) : PLAIN);
   }
   return emphasis;
+}
+
+/**
+ * Waits for `work` to settle, either way, for at most `ms` milliseconds; rejects only when
+ * `signal` aborts. Whatever `work` still does afterwards goes on unwatched.
+ */
+async function settledWithin(work: Promise<unknown>, ms: number, signal?: AbortSignal) {
+  signal?.throwIfAborted();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let aborted: (() => void) | undefined;
+  try {
+    await Promise.race([
+      work.catch(() => undefined),
+      new Promise((resolve) => (timer = setTimeout(resolve, ms))),
+      new Promise((_, reject) => {
+        aborted = () => reject(signal!.reason);
+        signal?.addEventListener("abort", aborted, { once: true });
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+    if (aborted) signal?.removeEventListener("abort", aborted);
+  }
 }
 
 /** One run of pdf.js's text layer: text in one font. */
@@ -171,7 +208,7 @@ function markedText(runs: readonly TextRun[], emphasis: ReadonlyMap<string, Emph
           text += MARKS[mark];
           open.push(mark);
         }
-      text += core.replaceAll("*", "\\*");
+      text += escaped(core);
       space = trail;
     } else {
       space += run.str;
@@ -184,4 +221,21 @@ function markedText(runs: readonly TextRun[], emphasis: ReadonlyMap<string, Emph
   }
   closeFrom(0);
   return text + space;
+}
+
+/**
+ * A run's own text with its asterisks escaped, and any backslash that could read as escaping
+ * one (before an asterisk, or before the mark that may follow the run), so neither passes for a
+ * mark. Other backslashes, as in code or paths, stay as printed.
+ */
+function escaped(core: string): string {
+  let text = "";
+  for (let index = 0; index < core.length; index++) {
+    const char = core[index]!;
+    const next = core[index + 1];
+    if (char === "*") text += "\\*";
+    else if (char === "\\" && (next === undefined || next === "*")) text += "\\\\";
+    else text += char;
+  }
+  return text;
 }

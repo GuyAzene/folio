@@ -43,6 +43,16 @@ const NOTE_COLUMN = 720;
 const TYPICAL_COLUMN = 0.75;
 
 /**
+ * At most `limit` characters of a page's text, cut at the end of a line, where every bold or
+ * italic mark has closed; only a first line longer than the limit is cut inside it.
+ */
+export function pageTextWithin(text: string, limit = MAX_PAGE_CHARACTERS): string {
+  if (text.length <= limit) return text;
+  const end = text.lastIndexOf("\n", limit);
+  return `${text.slice(0, end > 0 ? end : limit)}\n[Page text truncated]`;
+}
+
+/**
  * How wide a figure is drawn in a note: as wide against the note's column as it was against its
  * page's text column, so it keeps its printed size.
  */
@@ -223,7 +233,12 @@ export function createRuntimes(
   }
 
   /** A page of a file the student added to the chat, read where they added it. */
-  async function readFilePage(reach: Reach, fileId: string, page: unknown): Promise<PageRead> {
+  async function readFilePage(
+    reach: Reach,
+    fileId: string,
+    page: unknown,
+    signal?: AbortSignal,
+  ): Promise<PageRead> {
     const file = reach.grants().files?.find((each) => each.fileId === fileId);
     if (!file || !options.files)
       throw new LibraryError("The student didn't add that file to this chat.");
@@ -234,17 +249,15 @@ export function createRuntimes(
     const pdf = file.fileKind === "pdf";
     // The image first: drawing the page hands over the fonts its text's marks come from.
     const image = pdf ? await pages.fileImage(fileId, page as number, load) : null;
-    let text = pdf
-      ? await pages.fileText(fileId, page as number, load, { emphasis: true })
+    const text = pdf
+      ? await pages.fileText(fileId, page as number, load, { emphasis: true, signal })
       : new TextDecoder().decode(await load());
-    if (text.length > MAX_PAGE_CHARACTERS)
-      text = `${text.slice(0, MAX_PAGE_CHARACTERS)}\n[Page text truncated]`;
     return {
       documentId: fileId,
       title: file.name,
       page: page as number,
       pages: count,
-      text,
+      text: pageTextWithin(text),
       emphasis: pdf,
       image,
       where: "A file the student added to this chat, not part of any course",
@@ -302,7 +315,7 @@ export function createRuntimes(
     };
   }
 
-  async function readPage(reach: Reach, request: unknown): Promise<PageRead> {
+  async function readPage(reach: Reach, request: unknown, signal?: AbortSignal): Promise<PageRead> {
     const { documentId, page, region } = onlyKeys(
       request,
       ["documentId", "page", "region"],
@@ -326,7 +339,7 @@ export function createRuntimes(
             : (await library.course((await library.document(zoomed.documentId)).courseId)).name,
       };
     }
-    if (isFileId(documentId)) return readFilePage(reach, documentId, page);
+    if (isFileId(documentId)) return readFilePage(reach, documentId, page, signal);
     const document = await documentIn(reach, documentId);
     const count = pageCount(document);
     if (!Number.isInteger(page) || (page as number) < 1 || (page as number) > count)
@@ -334,17 +347,15 @@ export function createRuntimes(
     const pdf = document.kind === "pdf";
     // The image first: drawing the page hands over the fonts its text's marks come from.
     const image = pdf ? await pages.image(document, page as number) : null;
-    let text = pdf
-      ? await pages.text(document, page as number, { emphasis: true })
+    const text = pdf
+      ? await pages.text(document, page as number, { emphasis: true, signal })
       : new TextDecoder().decode((await library.readOriginal(document.id)).data);
-    if (text.length > MAX_PAGE_CHARACTERS)
-      text = `${text.slice(0, MAX_PAGE_CHARACTERS)}\n[Page text truncated]`;
     return {
       documentId: document.id,
       title: document.title,
       page: page as number,
       pages: count,
-      text,
+      text: pageTextWithin(text),
       emphasis: pdf,
       image,
       where: (await library.course(document.courseId)).name,
@@ -473,7 +484,7 @@ export function createRuntimes(
       }),
       execute: async (_toolCallId, params, signal) => {
         signal?.throwIfAborted();
-        const reading = await readPage(reach, params);
+        const reading = await readPage(reach, params, signal);
         const body = reading.text
           ? reading.emphasis
             ? `${EMPHASIS_NOTE}\n\n${reading.text}`
