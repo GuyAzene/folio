@@ -103,6 +103,9 @@ export class NoteCapture {
         nodeIntegration: false,
         backgroundThrottling: false,
         spellcheck: false,
+        // Windows hardly draws a window that is never shown, so a screenshot there can wait for
+        // a frame that never comes; drawn offscreen, the page has frames of its own.
+        offscreen: process.platform === "win32",
       },
     });
     this.#open.add(window);

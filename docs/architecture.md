@@ -61,7 +61,9 @@ When the tutor looks at a note (`view_note`), the main process opens a hidden wi
 `capture.html` (`src/desktop/note-capture.ts`) for that one drawing and closes it afterwards. It
 runs in an in-memory session of its own, so it shares no storage with the window, with no
 preload and so no IPC, and under the same rules: no permissions, no network, no downloads, no
-navigation. A stopped reply or a quit closes it at once.
+navigation. A stopped reply or a quit closes it at once. On Windows it draws offscreen: Windows
+hardly draws a window that is never shown, so a screenshot of one can wait for a frame that never
+comes.
 
 Replies and notes are Markdown sanitized by DOMPurify. Math leaves the sanitizer as an inert
 placeholder carrying its TeX percent-encoded (the sanitizer drops attributes such as `E[X]>0` or
