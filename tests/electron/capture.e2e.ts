@@ -186,6 +186,24 @@ before(async () => {
     ({ app: electron }, inject) => {
       electron.on("web-contents-created", (_event, contents) => {
         process.stderr.write(`[capture] DBG created ${contents.id}\n`);
+        const started = Date.now();
+        const stamp = () => `${contents.id} +${Date.now() - started}ms`;
+        const script = contents.executeJavaScript.bind(contents);
+        contents.executeJavaScript = async (code: string, gesture?: boolean) => {
+          const name = code.slice(0, 40);
+          process.stderr.write(`[capture] DBG js ${stamp()} start ${name}\n`);
+          const result = await script(code, gesture);
+          process.stderr.write(`[capture] DBG js ${stamp()} done ${name}\n`);
+          return result;
+        };
+        const tools = contents.debugger;
+        const command = tools.sendCommand.bind(tools);
+        tools.sendCommand = async (method: string, params?: object) => {
+          process.stderr.write(`[capture] DBG cdp ${stamp()} start ${method}\n`);
+          const result = await command(method, params);
+          process.stderr.write(`[capture] DBG cdp ${stamp()} done ${method}\n`);
+          return result;
+        };
         contents.on("console-message", (...args: unknown[]) => {
           const first = args[0] as { message?: string };
           const message = typeof args[2] === "string" ? args[2] : first?.message;
@@ -197,6 +215,16 @@ before(async () => {
     `(() => {
     const started = performance.now();
     let total = 0;
+    let asked = 0;
+    let fired = 0;
+    const raf = window.requestAnimationFrame.bind(window);
+    window.requestAnimationFrame = (callback) => {
+      asked++;
+      return raf((time) => {
+        fired++;
+        callback(time);
+      });
+    };
     const counts = {};
     new MutationObserver((records) => {
       for (const record of records) {
@@ -210,7 +238,7 @@ before(async () => {
     setInterval(() => {
       const maths = [...document.querySelectorAll(".math")].map((m) => (m.classList.contains("math-wide") ? "W" : "n") + Math.round(m.getBoundingClientRect().width) + "x" + Math.round(m.getBoundingClientRect().height));
       const top = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 4);
-      console.log("DBG t=" + Math.round(performance.now() - started) + " muts=" + total + " page=" + document.documentElement.scrollWidth + "x" + document.documentElement.scrollHeight + " view=" + innerWidth + "x" + innerHeight + " math=" + maths.join(",") + " top=" + JSON.stringify(top));
+      console.log("DBG t=" + Math.round(performance.now() - started) + " muts=" + total + " page=" + document.documentElement.scrollWidth + "x" + document.documentElement.scrollHeight + " view=" + innerWidth + "x" + innerHeight + " raf=" + fired + "/" + asked + " fonts=" + document.fonts.status + " math=" + maths.join(",") + " top=" + JSON.stringify(top));
       for (const key of Object.keys(counts)) delete counts[key];
     }, 250);
     console.log("DBG injected " + location.href);
