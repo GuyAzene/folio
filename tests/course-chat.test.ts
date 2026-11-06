@@ -310,6 +310,40 @@ describe("pages as images", () => {
     );
   });
 
+  it("mark the bold and italic the PDF's fonts give, and say that is where the marks come from", async () => {
+    const { runtimes, library, home, algorithms } = await setup();
+    const path = resolve(home, "assignment.pdf");
+    await writeFile(
+      path,
+      syntheticPdf([
+        [
+          [
+            { text: "Prove that the algorithm ", font: "Helvetica" },
+            { text: "always terminates", font: "Helvetica-Bold" },
+            { text: ".", font: "Helvetica" },
+          ],
+        ],
+        // A page with no text layer, as a scan has.
+        [],
+      ]),
+    );
+    const assignment = (await library.importFile(algorithms.id, path)).document;
+    const { tools } = await runtimes.course(algorithms.id, randomUUID());
+    const readPage = tools.find((candidate) => candidate.name === "read_page")!;
+    expect(readPage.description).toContain("as the PDF's own fonts name them");
+    expect(readPage.description).toContain("A scanned or image-only page has no text");
+    const text = async (page: number) => {
+      const result = await readPage.execute("call", { documentId: assignment.id, page });
+      return (result.content[0] as { text: string }).text;
+    };
+    const first = await text(1);
+    expect(first).toContain("from the PDF's own fonts");
+    expect(first).toContain("Prove that the algorithm **always terminates**.");
+    // Read again, from the page image Folio kept: still marked.
+    expect(await text(1)).toBe(first);
+    expect(await text(2)).toContain("nothing on it is marked bold or italic");
+  });
+
   it("send only the most recent page images, while the saved chat keeps them all", () => {
     const image = { type: "image" as const, data: "AAAA", mimeType: "image/jpeg" };
     const turns = Array.from({ length: 8 }, (_, n) => ({

@@ -175,6 +175,12 @@ request resends the conversation, so at most the six most recent messages with i
 and earlier ones say an image was there. Older images are let go five at a time rather than one
 per new image, so most requests repeat the one before.
 
+In a PDF page's text, `read_page` marks bold `**…**` and italic `*…*` from the fonts' own names
+(`Calibri-Bold`, `Arial,Italic`, TeX's `CMBX10`), never in math fonts, so a copy keeps the PDF's
+emphasis exactly instead of guessing it from the image. pdf.js names a page's fonts only once it
+lays the page out, so the page image is drawn first. Only `read_page` marks them: ingestion,
+study notes and search keep the plain text layer.
+
 Long chats are trimmed in the same spirit, and only as a question is sent, so a reopened chat
 sends exactly what it sent before. Past a quarter of the model's context, tool results before the
 last four questions reach the model as one-line notes of what they were (and earlier visuals as

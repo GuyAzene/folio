@@ -28,6 +28,9 @@ import {
 } from "./store.ts";
 
 const MAX_PAGE_CHARACTERS = 40_000;
+/** Heads a PDF page's text, whose bold and italic are marked from the PDF's fonts. */
+const EMPHASIS_NOTE =
+  "[Bold is marked **…** and italic *…*, from the PDF's own fonts; an asterisk printed on the page reads \\*.]";
 /**
  * Pictures of notes (`view_note`) and figures cropped into notes in one reply, at most: enough to
  * look at a long workbook in both views a few times over, with close-ups.
@@ -38,6 +41,16 @@ const MAX_FIGURES = 12;
 const NOTE_COLUMN = 720;
 /** A page's text column, as a fraction of its width, when its text layer can't tell. */
 const TYPICAL_COLUMN = 0.75;
+
+/**
+ * At most `limit` characters of a page's text, cut at the end of a line, where every bold or
+ * italic mark has closed; only a first line longer than the limit is cut inside it.
+ */
+export function pageTextWithin(text: string, limit = MAX_PAGE_CHARACTERS): string {
+  if (text.length <= limit) return text;
+  const end = text.lastIndexOf("\n", limit);
+  return `${text.slice(0, end > 0 ? end : limit)}\n[Page text truncated]`;
+}
 
 /**
  * How wide a figure is drawn in a note: as wide against the note's column as it was against its
@@ -64,6 +77,15 @@ export interface PageReading {
   title: string;
   page: number;
   pages: number;
+}
+
+/** A page as read_page returns it. */
+interface PageRead extends PageReading {
+  text: string;
+  /** The text is a PDF page's, with its bold and italic marked from the PDF's fonts. */
+  emphasis: boolean;
+  image: Uint8Array | null;
+  where: string;
 }
 
 /**
@@ -215,7 +237,8 @@ export function createRuntimes(
     reach: Reach,
     fileId: string,
     page: unknown,
-  ): Promise<PageReading & { text: string; image: Uint8Array | null; where: string }> {
+    signal?: AbortSignal,
+  ): Promise<PageRead> {
     const file = reach.grants().files?.find((each) => each.fileId === fileId);
     if (!file || !options.files)
       throw new LibraryError("The student didn't add that file to this chat.");
@@ -223,19 +246,20 @@ export function createRuntimes(
     if (!Number.isInteger(page) || (page as number) < 1 || (page as number) > count)
       throw new LibraryError(`“${file.name}” has ${count} page${count === 1 ? "" : "s"}.`);
     const load = () => options.files!.read({ fileId, kind: file.fileKind });
-    let text =
-      file.fileKind === "pdf"
-        ? await pages.fileText(fileId, page as number, load)
-        : new TextDecoder().decode(await load());
-    if (text.length > MAX_PAGE_CHARACTERS)
-      text = `${text.slice(0, MAX_PAGE_CHARACTERS)}\n[Page text truncated]`;
+    const pdf = file.fileKind === "pdf";
+    // The image first: drawing the page hands over the fonts its text's marks come from.
+    const image = pdf ? await pages.fileImage(fileId, page as number, load) : null;
+    const text = pdf
+      ? await pages.fileText(fileId, page as number, load, { emphasis: true, signal })
+      : new TextDecoder().decode(await load());
     return {
       documentId: fileId,
       title: file.name,
       page: page as number,
       pages: count,
-      text,
-      image: file.fileKind === "pdf" ? await pages.fileImage(fileId, page as number, load) : null,
+      text: pageTextWithin(text),
+      emphasis: pdf,
+      image,
       where: "A file the student added to this chat, not part of any course",
     };
   }
@@ -291,10 +315,7 @@ export function createRuntimes(
     };
   }
 
-  async function readPage(
-    reach: Reach,
-    request: unknown,
-  ): Promise<PageReading & { text: string; image: Uint8Array | null; where: string }> {
+  async function readPage(reach: Reach, request: unknown, signal?: AbortSignal): Promise<PageRead> {
     const { documentId, page, region } = onlyKeys(
       request,
       ["documentId", "page", "region"],
@@ -309,7 +330,8 @@ export function createRuntimes(
         title: zoomed.title,
         page: zoomed.page,
         pages: zoomed.pages,
-        text: "[A close-up of part of the page. Read the page without region for its text.]",
+        text: "[A close-up of part of the page. Read the page without region for its text, where bold and italic are marked from the PDF's fonts.]",
+        emphasis: false,
         image: zoomed.data,
         where:
           typeof documentId === "string" && isFileId(documentId)
@@ -317,26 +339,25 @@ export function createRuntimes(
             : (await library.course((await library.document(zoomed.documentId)).courseId)).name,
       };
     }
-    if (isFileId(documentId)) return readFilePage(reach, documentId, page);
+    if (isFileId(documentId)) return readFilePage(reach, documentId, page, signal);
     const document = await documentIn(reach, documentId);
     const count = pageCount(document);
     if (!Number.isInteger(page) || (page as number) < 1 || (page as number) > count)
       throw new LibraryError(`“${document.title}” has ${count} page${count === 1 ? "" : "s"}.`);
-    let text: string;
-    if (document.kind === "pdf") {
-      text = await pages.text(document, page as number);
-    } else {
-      text = new TextDecoder().decode((await library.readOriginal(document.id)).data);
-    }
-    if (text.length > MAX_PAGE_CHARACTERS)
-      text = `${text.slice(0, MAX_PAGE_CHARACTERS)}\n[Page text truncated]`;
+    const pdf = document.kind === "pdf";
+    // The image first: drawing the page hands over the fonts its text's marks come from.
+    const image = pdf ? await pages.image(document, page as number) : null;
+    const text = pdf
+      ? await pages.text(document, page as number, { emphasis: true, signal })
+      : new TextDecoder().decode((await library.readOriginal(document.id)).data);
     return {
       documentId: document.id,
       title: document.title,
       page: page as number,
       pages: count,
-      text,
-      image: document.kind === "pdf" ? await pages.image(document, page as number) : null,
+      text: pageTextWithin(text),
+      emphasis: pdf,
+      image,
       where: (await library.course(document.courseId)).name,
     };
   }
@@ -445,7 +466,7 @@ export function createRuntimes(
     const readPageTool: AgentTool = {
       name: "read_page",
       label: "Read a course page",
-      description: `Read one page of a document in ${where}, or of a file the student added to this chat. Returns the page's text, the page itself as an image (so diagrams, drawings and formulas are seen as the student sees them), and how to cite it.`,
+      description: `Read one page of a document in ${where}, or of a file the student added to this chat. Returns the page's text, the page itself as an image (so diagrams, drawings and formulas are seen as the student sees them), and how to cite it. In a PDF page's text, **…** marks bold and *…* italic as the PDF's own fonts name them, so where emphasis starts and ends is exact, not read off the image; math letters are not marked. A scanned or image-only page has no text, so nothing on it is marked.`,
       parameters: object({
         documentId: Type.String({
           description:
@@ -463,12 +484,14 @@ export function createRuntimes(
       }),
       execute: async (_toolCallId, params, signal) => {
         signal?.throwIfAborted();
-        const reading = await readPage(reach, params);
-        const body =
-          reading.text ||
-          (reading.image
-            ? "[This page has no text layer, for example a scanned page or a diagram; read it from the image.]"
-            : "[This page has no text.]");
+        const reading = await readPage(reach, params, signal);
+        const body = reading.text
+          ? reading.emphasis
+            ? `${EMPHASIS_NOTE}\n\n${reading.text}`
+            : reading.text
+          : reading.image
+            ? "[This page has no text layer, for example a scanned page or a diagram, so nothing on it is marked bold or italic; read it from the image.]"
+            : "[This page has no text.]";
         return {
           content: [
             {

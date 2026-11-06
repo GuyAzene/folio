@@ -41,13 +41,22 @@ function bundledData(): Record<string, string> {
   }
 }
 
-/** Opens a PDF for reading only: no scripts, no embedded font faces, no network. */
-export function openSource(data: Uint8Array): Promise<SourceDocument> {
+/**
+ * Opens a PDF for reading only: no scripts, no embedded font faces, no network. With
+ * `fontNames`, pdf.js keeps each font's own name (such as `Calibri-Bold`), which
+ * `pageFontEmphasis` in library/pdf.ts reads, and keeps the fonts' data while the document is
+ * open.
+ */
+export function openSource(
+  data: Uint8Array,
+  { fontNames = false }: { fontNames?: boolean } = {},
+): Promise<SourceDocument> {
   return getDocument({
     // pdf.js transfers the buffer it is given; keep the caller's copy intact.
     data: data.slice(),
     disableFontFace: true,
     useSystemFonts: false,
+    fontExtraProperties: fontNames,
     verbosity: 0,
     ...bundledData(),
   }).promise;
