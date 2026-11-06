@@ -29,6 +29,7 @@ let lineCount = 0;
 
 const FONTS = [
   '17px "Newsreader Variable"',
+  'italic 17px "Newsreader Variable"',
   '17px "Frank Ruhl Libre Variable"',
   '14px "Inter Variable"',
   '14px "Noto Sans Hebrew Variable"',

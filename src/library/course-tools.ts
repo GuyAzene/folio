@@ -28,11 +28,26 @@ import {
 } from "./store.ts";
 
 const MAX_PAGE_CHARACTERS = 40_000;
-/** Pictures of notes (`view_note`) and figures cropped into notes in one reply, at most. */
-const MAX_VIEWS = 24;
+/**
+ * Pictures of notes (`view_note`) and figures cropped into notes in one reply, at most: enough to
+ * look at a long workbook in both views a few times over, with close-ups.
+ */
+const MAX_VIEWS = 48;
 const MAX_FIGURES = 12;
-/** A figure is shown as wide on the note's 720-pixel column as it was on its page, within reason. */
+/** A note's column, in pixels: the width of its text. */
 const NOTE_COLUMN = 720;
+/** A page's text column, as a fraction of its width, when its text layer can't tell. */
+const TYPICAL_COLUMN = 0.75;
+
+/**
+ * How wide a figure is drawn in a note: as wide against the note's column as it was against its
+ * page's text column, so it keeps its printed size.
+ */
+export function figureWidth(region: RegionBox, column: [number, number] | null): number {
+  const span = column ? column[1] - column[0] : TYPICAL_COLUMN;
+  const width = ((region[2] - region[0]) / span) * NOTE_COLUMN;
+  return Math.round(Math.min(NOTE_COLUMN, Math.max(120, width)));
+}
 /** When the tutor searches the web, and how it keeps the web apart from the course. */
 const WEB_RULE = [
   "You can search the web with search_web. Search when the student asks you to, or when what they ask for goes beyond their course material: more depth, another explanation, history, applications or references, or something the course does not cover. Do not search for what the course already answers.",
@@ -234,8 +249,16 @@ export function createRuntimes(
     documentId: unknown,
     page: unknown,
     region: RegionBox,
-    render: { maxEdge?: number; format?: "jpeg" | "png" },
-  ): Promise<{ data: Uint8Array; documentId: string; title: string; page: number; pages: number }> {
+    render: { maxEdge?: number; format?: "jpeg" | "png"; column?: boolean },
+  ): Promise<{
+    data: Uint8Array;
+    documentId: string;
+    title: string;
+    page: number;
+    pages: number;
+    /** With `column`: where the page's text column runs, as fractions of its width. */
+    column: [number, number] | null;
+  }> {
     if (typeof documentId === "string" && isFileId(documentId)) {
       const file = reach.grants().files?.find((each) => each.fileId === documentId);
       if (!file || !filesOption)
@@ -244,14 +267,13 @@ export function createRuntimes(
       const count = file.pages ?? 1;
       if (!Number.isInteger(page) || (page as number) < 1 || (page as number) > count)
         throw new LibraryError(`“${file.name}” has ${count} page${count === 1 ? "" : "s"}.`);
-      const data = await pages.fileRegion(
-        documentId,
-        page as number,
-        () => filesOption.read({ fileId: documentId, kind: file.fileKind }),
-        region,
-        render,
-      );
-      return { data, documentId, title: file.name, page: page as number, pages: count };
+      const load = () => filesOption.read({ fileId: documentId, kind: file.fileKind });
+      const data = await pages.fileRegion(documentId, page as number, load, region, render);
+      // The column only sizes a figure: a text layer that can't be read leaves the usual size.
+      const column = render.column
+        ? await pages.fileColumn(documentId, page as number, load).catch(() => null)
+        : null;
+      return { data, documentId, title: file.name, page: page as number, pages: count, column };
     }
     const document = await documentIn(reach, documentId);
     if (document.kind !== "pdf") throw new LibraryError(`“${document.title}” isn't a PDF.`);
@@ -265,6 +287,7 @@ export function createRuntimes(
       title: document.title,
       page: page as number,
       pages: count,
+      column: render.column ? await pages.column(document, page as number).catch(() => null) : null,
     };
   }
 
@@ -805,12 +828,11 @@ export function createRuntimes(
         signal?.throwIfAborted();
         const crop = await pageRegion(reach, input.documentId, input.page, region, {
           format: "png",
+          column: true,
         });
         reply.figures++;
         const saved = await options.assets!.save(note.courseId, crop.data);
-        const width = Math.round(
-          Math.min(NOTE_COLUMN, Math.max(120, (region[2] - region[0]) * NOTE_COLUMN)),
-        );
+        const width = figureWidth(region, crop.column);
         const markdown = `![${alt || "Figure"}|${width}](${saved.path})`;
         const preview = await pageRegion(reach, input.documentId, input.page, region, {
           format: "jpeg",

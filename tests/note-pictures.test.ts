@@ -8,7 +8,9 @@ import { readableText, styleColors } from "../app/lib/readable-text.ts";
 import { noteAssetResponse } from "../src/desktop/note-asset-protocol.ts";
 import { chatView } from "../src/desktop/view.ts";
 import { assetUrl, imageSize, parseAssetUrl } from "../src/library/asset-names.ts";
-import { createRuntimes } from "../src/library/course-tools.ts";
+import { closeSource, openSource, textColumn } from "../src/ingest/pages.ts";
+import { createRuntimes, figureWidth } from "../src/library/course-tools.ts";
+import { PageReader } from "../src/library/page-reader.ts";
 import { pixelSize } from "../src/library/images.ts";
 import { MAX_ASSET_BYTES, NoteAssets } from "../src/library/note-assets.ts";
 import {
@@ -24,7 +26,7 @@ import { noteHeadings } from "../src/library/note-meta.ts";
 import { LibraryStore } from "../src/library/store.ts";
 import type { SessionRecord } from "../src/session-store.ts";
 import { withoutMarkup } from "../src/text.ts";
-import { modelContextMessages, stubOf } from "../src/transcript.ts";
+import { MAX_IMAGES, modelContextMessages, stubOf } from "../src/transcript.ts";
 import { SYNTHETIC_LECTURE, syntheticPdf } from "./fixtures/synthetic-pdf.ts";
 
 // Synthetic notes, pictures and pages only.
@@ -441,11 +443,11 @@ describe("the tutor's view_note", () => {
       tool("view_note").execute("v3", { noteId: note.id, view: "print" }),
     ).rejects.toThrow("edit or read");
     chat.beforeSend!({ webSearch: false });
-    for (let look = 0; look < 24; look++)
+    for (let look = 0; look < 48; look++)
       await tool("view_note").execute(`l${look}`, { noteId: note.id, view: "edit" });
     await expect(
-      tool("view_note").execute("l24", { noteId: note.id, view: "edit" }),
-    ).rejects.toThrow("24 times");
+      tool("view_note").execute("l48", { noteId: note.id, view: "edit" }),
+    ).rejects.toThrow("48 times");
     chat.beforeSend!({ webSearch: false });
     await tool("view_note").execute("next", { noteId: note.id, view: "edit" });
   });
@@ -487,7 +489,8 @@ describe("a closer look at a page, and figures from it", () => {
       alt: "A [gadget] | two nodes",
     });
     const said = (result.content[0] as { text: string }).text;
-    const markdown = /!\[A gadget two nodes\|360\]\(assets\/([0-9a-f]{64})\.png\)/.exec(said);
+    // Half the page's width, against the typical column of a page with too little text to measure.
+    const markdown = /!\[A gadget two nodes\|480\]\(assets\/([0-9a-f]{64})\.png\)/.exec(said);
     expect(markdown, said).not.toBeNull();
     const file = resolve(
       library.courseDirectory(course.id),
@@ -521,6 +524,60 @@ describe("a closer look at a page, and figures from it", () => {
   });
 });
 
+describe("a figure's printed size", () => {
+  it("falls back to the usual size when the page's text layer can't be read", async () => {
+    const { library, notes, assets, course, handout, note } = await setup();
+    class Unmeasurable extends PageReader {
+      override async column(): Promise<[number, number] | null> {
+        throw new Error("A text layer that can't be read");
+      }
+    }
+    const pages = new Unmeasurable(library);
+    try {
+      const chat = await createRuntimes(library, { notes, assets, pages }).course(
+        course.id,
+        "00000000-0000-4000-8000-0000000000d2",
+      );
+      const figure = chat.tools.find((tool) => tool.name === "add_note_figure")!;
+      const result = await figure.execute("f1", {
+        noteId: note.id,
+        documentId: handout.id,
+        page: 1,
+        region: [0.1, 0.1, 0.6, 0.4],
+        alt: "A gadget",
+      });
+      expect((result.content[0] as { text: string }).text).toContain("![A gadget|480](assets/");
+    } finally {
+      await pages.close();
+    }
+  });
+
+  it("is as wide against the note's column as it was against the page's text column", () => {
+    expect(figureWidth([0.288, 0.1, 0.67, 0.2], [0.15, 0.85])).toBe(393);
+    // Wider than the text, as a figure in the margins can be: no wider than the note's column.
+    expect(figureWidth([0.1, 0.5, 0.94, 0.9], [0.15, 0.85])).toBe(720);
+    expect(figureWidth([0.5, 0.5, 0.52, 0.6], null)).toBe(120);
+    expect(figureWidth([0.25, 0, 0.625, 1], null)).toBe(360);
+  });
+
+  it("measures the text column from the page's text layer, when it has enough text", async () => {
+    const lines = Array.from({ length: 12 }, (_, line) =>
+      line % 3 ? "Every line of this synthetic page starts at the same margin." : "Short line.",
+    );
+    const doc = await openSource(syntheticPdf([lines, ["Too little text."]]));
+    try {
+      const column = await textColumn(doc, 1);
+      // The lines start 72 points into a 612-point page.
+      expect(column![0]).toBeCloseTo(72 / 612, 2);
+      expect(column![1]).toBeGreaterThan(column![0] + 0.2);
+      expect(column![1]).toBeLessThanOrEqual(1);
+      expect(await textColumn(doc, 2)).toBeNull();
+    } finally {
+      await closeSource(doc);
+    }
+  });
+});
+
 describe("pictures in a long chat", () => {
   const result = (toolName: string, details: object) =>
     ({
@@ -535,6 +592,49 @@ describe("pictures in a long chat", () => {
       isError: false,
       timestamp: 0,
     }) as unknown as AgentMessage;
+
+  /** A question, then each result after the call that asked for it, all in one reply. */
+  const oneReply = (results: AgentMessage[]): AgentMessage[] => [
+    { role: "user", content: "Make the workbook.", timestamp: 0 } as AgentMessage,
+    ...results.flatMap((each) => {
+      const { toolCallId: id, toolName: name } = each as { toolCallId: string; toolName: string };
+      return [
+        {
+          role: "assistant",
+          content: [{ type: "toolCall", id, name, arguments: {} }],
+          api: "openai-responses",
+          provider: "openai",
+          model: "gpt-6.1-sol",
+          usage: {
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 0,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          },
+          stopReason: "toolUse",
+          timestamp: 0,
+        } as unknown as AgentMessage,
+        each,
+      ];
+    }),
+  ];
+
+  it("send only the latest few, even after every look and figure one reply may take", () => {
+    // 48 looks at the note and 12 figures: the most one reply may take.
+    const results = [
+      ...Array.from({ length: 48 }, () => result("view_note", { title: "Exercise 9" })),
+      ...Array.from({ length: 12 }, () => result("add_note_figure", { source: "Handout" })),
+    ];
+    const images = modelContextMessages(oneReply(results))
+      .filter((message) => message.role === "toolResult")
+      .map((message) => (message as { content: { type: string }[] }).content[1]!.type);
+    const kept = images.filter((type) => type === "image").length;
+    expect(kept).toBeGreaterThanOrEqual(2);
+    expect(kept).toBeLessThanOrEqual(MAX_IMAGES);
+    expect(images.at(-1)).toBe("image");
+  });
 
   it("say what an earlier picture of a note or figure was, and leave page wording as it was", () => {
     expect(stubOf({ toolName: "view_note", details: { title: "Exercise 9", view: "edit" } })).toBe(
@@ -551,34 +651,7 @@ describe("pictures in a long chat", () => {
       result("add_note_figure", { source: "Handout", page: 1 }),
       ...Array.from({ length: 2 }, () => result("read_page", { title: "Handout", page: 1 })),
     ];
-    // A question, then each result after the call that asked for it.
-    const messages: AgentMessage[] = [
-      { role: "user", content: "Make the workbook.", timestamp: 0 } as AgentMessage,
-      ...results.flatMap((each) => {
-        const { toolCallId: id, toolName: name } = each as { toolCallId: string; toolName: string };
-        return [
-          {
-            role: "assistant",
-            content: [{ type: "toolCall", id, name, arguments: {} }],
-            api: "openai-responses",
-            provider: "openai",
-            model: "gpt-6.1-sol",
-            usage: {
-              input: 0,
-              output: 0,
-              cacheRead: 0,
-              cacheWrite: 0,
-              totalTokens: 0,
-              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-            },
-            stopReason: "toolUse",
-            timestamp: 0,
-          } as unknown as AgentMessage,
-          each,
-        ];
-      }),
-    ];
-    const sent = modelContextMessages(messages)
+    const sent = modelContextMessages(oneReply(results))
       .filter((message) => message.role === "toolResult")
       .map((message) => (message as { content: { type: string; text?: string }[] }).content[1]);
     expect(sent[0]).toEqual({

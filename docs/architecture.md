@@ -458,9 +458,15 @@ the same way:
   read its words without the tags.
 - Math is drawn at the reading size (`--reading-math`), and an inline formula breaks between its
   terms in a left-to-right line. One still wider than its line scrolls inside itself
-  (`app/lib/wide-math.ts`) instead of pushing the page sideways.
+  (`app/lib/wide-math.ts`) instead of pushing the page sideways. KaTeX's stylesheet sits outside
+  Tailwind's layers and would beat any rule inside one, so Folio's rules for KaTeX's classes sit
+  outside them too.
+- A note shows emphasis as written, italics included, in both views; Folio's own interface and
+  replies set no italic type. Empty lines beyond the one between two blocks keep their height
+  when read, as in the editor: the space a workbook leaves for an answer.
 - Figures are image files beside the course's notes, named by their SHA-256 and written
   `![What it shows|360](assets/<file>)`, the number being the width (`src/library/note-assets.ts`).
+  A figure sits in its line, so a centered block centers it.
   A figure is never deleted with a note, so undo, history and the Trash find it where it was. A
   figure the tutor cropped but never placed stays in the folder too; a later sweep may clear the
   figures that no note, earlier version or Trash entry names.
@@ -471,8 +477,9 @@ it into pictures 784 pixels wide, between blocks, with which lines each shows. A
 passage comes at twice the size. The drawing also says what looked broken: a formula KaTeX
 can't draw, anything wider than the column, HTML shown as text, a figure that doesn't load, a
 colored block hard to read in either theme. `add_note_figure` crops a region of a course PDF
-page into a figure and returns the Markdown that shows it; placing it is an ordinary `edit_note`,
-which the student can undo.
+page into a figure and returns the Markdown that shows it, as wide against the note's column as
+it was against the page's text column (measured from the text layer); placing it is an ordinary
+`edit_note`, which the student can undo. A reply may look at notes 48 times and add 12 figures.
 
 All notes live in one notebook, a place of its own in the sidebar: a list grouped by when each
 note last changed (pinned notes first) beside the open note. Courses are the folders and `#tags`

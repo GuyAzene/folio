@@ -172,6 +172,20 @@ describe("notes in the reading view", () => {
       '<p dir="rtl"><span class="line" dir="rtl">שלום עולם</span><span class="line" dir="ltr">hello world</span></p>\n',
     );
   });
+
+  it("keeps the empty lines left under a question, beyond the one between blocks", () => {
+    const gap = (lines: number) =>
+      `<div class="note-gap" aria-hidden="true">${"<br>".repeat(lines)}</div>`;
+    expect(html("Show it.\n\n\n\n## Next", { note: true })).toContain(
+      `<p dir="ltr">Show it.</p>\n${gap(2)}\n<h2`,
+    );
+    expect(html("Show it.\n\n\n\n## Next", { note: true, sourceLines: true })).toContain(
+      `${gap(2)}\n<h2 dir="ltr" data-line="5">`,
+    );
+    expect(html("One.\n\nTwo.", { note: true })).not.toContain("note-gap");
+    // A reply is not a page with space to write in.
+    expect(html("One.\n\n\n\nTwo.")).not.toContain("note-gap");
+  });
 });
 
 describe("diagrams", () => {

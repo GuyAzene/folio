@@ -176,9 +176,6 @@
 /* Rendered Markdown in Folio's replies. */
 /* Long-form reading (notes, Markdown documents): larger headings than chat replies. */
 @utility prose-reading {
-  & .katex {
-    font-size: var(--reading-math);
-  }
   & h1 {
     font-size: 28px;
     line-height: 36px;
@@ -344,9 +341,6 @@
     overflow-x: auto;
     overflow-y: hidden;
   }
-  & .math .katex-display {
-    margin: 0.4em 0;
-  }
   /* An inline formula breaks across lines only between its terms, and only in a line that reads
      left to right: split inside Hebrew text, its pieces read in the wrong order. */
   & .math[data-mode="inline"] {
@@ -447,6 +441,39 @@
 /* KaTeX's fonts have no Hebrew: Hebrew inside \text{} falls back to the Hebrew serif. */
 .katex {
   font-family: KaTeX_Main, "Frank Ruhl Libre Variable", math, "Times New Roman", serif;
+}
+
+/* KaTeX's own stylesheet is outside Tailwind's layers, so it beats any rule inside one: Folio's
+   size and spacing for KaTeX's classes sit outside the layers too. */
+.prose-reading .katex {
+  font-size: var(--reading-math);
+}
+.prose-folio .math .katex-display {
+  margin: 0.4em 0;
+}
+
+/* Notes and documents show emphasis as written, so a workbook keeps its PDF's italics. Folio's
+   own interface and replies set no italic type: there, emphasis is a weight (prose-folio). */
+.prose-reading em,
+.prose-reading i {
+  font-style: italic;
+  font-weight: inherit;
+}
+
+/* A figure sits in its line, as text does, so a centered block centers it; Tailwind's base would
+   make it a block of its own, always at the left. In the base layer with Tailwind's own rule, so a
+   utility on an image still wins. */
+@layer base {
+  .prose-reading img {
+    display: inline-block;
+    vertical-align: bottom;
+  }
+}
+
+/* Empty lines a note leaves, beyond the one between blocks, keep their space when read: the space
+   left under a question for its answer. */
+.note-gap {
+  user-select: none;
 }
 
 /* In dark mode the ticked box is light, so its check is dark. */

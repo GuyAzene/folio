@@ -49,8 +49,8 @@ export const noteTheme = EditorView.theme({
 
   // Inline
   ".cm-strong": { fontWeight: "600" },
-  // Folio sets no italic type; emphasis is a weight, as in the reading view.
-  ".cm-em": { fontWeight: "500" },
+  // A note shows emphasis as written, as the reading view does; Folio's own interface sets none.
+  ".cm-em": { fontStyle: "italic" },
   ".cm-strike": { textDecoration: "line-through", color: "var(--text-3)" },
   ".cm-inline-code": {
     fontFamily: "var(--font-mono)",
@@ -71,7 +71,12 @@ export const noteTheme = EditorView.theme({
   ".cm-html-tag": { fontFamily: "var(--font-mono)", fontSize: "0.8em", color: "var(--text-3)" },
   ".cm-comment, .cm-comment-block": { color: "var(--text-4)" },
   ".cm-link-reference": { color: "var(--text-3)" },
-  ".cm-image": { maxWidth: "100%", borderRadius: "8px", verticalAlign: "bottom" },
+  ".cm-image": {
+    display: "inline-block",
+    maxWidth: "100%",
+    borderRadius: "8px",
+    verticalAlign: "bottom",
+  },
   ".cm-image-missing": {
     fontFamily: "var(--font-sans)",
     fontSize: "13px",

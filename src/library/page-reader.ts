@@ -4,6 +4,7 @@ import {
   openSource,
   renderPageJpeg,
   renderRegion,
+  textColumn,
   type SourceDocument,
 } from "../ingest/pages.ts";
 import { pdfPageText } from "./pdf.ts";
@@ -64,6 +65,19 @@ export class PageReader {
   ): Promise<Uint8Array> {
     const doc = await this.#source(`file:${fileId}`, load);
     return (await renderRegion(doc, page, region, options)).data;
+  }
+
+  /** Where a page's text column runs, as fractions of its width; null when it can't tell. */
+  async column(document: DocumentRecord, page: number): Promise<[number, number] | null> {
+    return textColumn(await this.#document(document), page);
+  }
+
+  async fileColumn(
+    fileId: string,
+    page: number,
+    load: () => Promise<Uint8Array>,
+  ): Promise<[number, number] | null> {
+    return textColumn(await this.#source(`file:${fileId}`, load), page);
   }
 
   #image(hash: string, page: number, open: () => Promise<SourceDocument>): Promise<Uint8Array> {
