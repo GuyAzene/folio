@@ -145,7 +145,7 @@ describe("bold and italic from a PDF's fonts", () => {
   it("marks nothing in a document opened without font names", async () => {
     const data = syntheticPdf(ASSIGNMENT);
     expect(await textOf(data, 1, { emphasis: true })).toBe(
-      (await textOf(syntheticPdf(PLAIN), 1)).replace("*", "\\*"),
+      (await textOf(syntheticPdf(PLAIN), 1)).replaceAll("*", "\\*"),
     );
   });
 
