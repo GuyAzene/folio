@@ -187,8 +187,10 @@ jobs:
         run: vp node node_modules/electron/install.js
       - name: Tests
         run: vp test
-      # `vp run test:electron`, with the flags above.
+      # `vp run test:electron`, with the flags above; after failed unit tests too, so one run
+      # shows everything that fails on Windows.
       - name: Folio in a real window
+        if: ${{ !cancelled() }}
         run: vp node --test $TEST_FLAGS tests/electron/*.e2e.ts
       - name: Pictures of the window
         if: always()

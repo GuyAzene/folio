@@ -6,6 +6,7 @@ import {
   mkdtemp,
   readdir,
   readFile,
+  realpath,
   rm,
   stat,
   symlink,
@@ -62,7 +63,9 @@ async function fingerprint(): Promise<string> {
 export function buildApp(): Promise<string> {
   built ??= (async () => {
     if (process.env.FOLIO_E2E_APP) return process.env.FOLIO_E2E_APP;
-    const dir = resolve(tmpdir(), `folio-e2e-app-${await fingerprint()}`);
+    // The temporary folder's real path: Windows may give it a short name, as RUNNER~1, which
+    // Vite resolves to the long one, and then refuses the pages as outside the build.
+    const dir = resolve(await realpath(tmpdir()), `folio-e2e-app-${await fingerprint()}`);
     const done = resolve(dir, ".built");
     const exists = (path: string) =>
       stat(path).then(

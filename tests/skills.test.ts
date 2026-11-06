@@ -182,7 +182,7 @@ describe("the routines Folio finds", () => {
     const many = resolve(root, "study-skills");
     await writeSkill(many, "feynman", skillMd("feynman", "Teach it back."));
     const single = await writeSkill(root, "exam-prep", skillMd("exam-prep", "Plan exam prep."));
-    state.switches = { on: [`${many}/feynman`, single], off: [], folders: [many, single] };
+    state.switches = { on: [resolve(many, "feynman"), single], off: [], folders: [many, single] };
     expect((await library.active()).map((skill) => skill.name)).toEqual(["feynman", "exam-prep"]);
   });
 

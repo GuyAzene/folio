@@ -399,7 +399,8 @@ async function syncTree(path: string): Promise<void> {
     const child = resolve(path, entry.name);
     if (entry.isDirectory()) await syncTree(child);
     else {
-      const handle = await open(child, "r");
+      // Windows flushes only a file opened for writing.
+      const handle = await open(child, process.platform === "win32" ? "r+" : "r");
       try {
         await handle.sync();
       } finally {
