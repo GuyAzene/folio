@@ -5,7 +5,7 @@
 <h1 align="center">Folio</h1>
 
 <p align="center">
-  A local-first study workspace for your Mac, with a tutor that reads your course with you.
+  A local-first study workspace for Mac and Windows, with a tutor that reads your course with you.
 </p>
 
 <p align="center">
@@ -13,10 +13,11 @@
   <a href="https://github.com/GuyAzene/folio/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/GuyAzene/folio?label=release&color=ffe433&labelColor=1f2328"></a>
   <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-ffe433?labelColor=1f2328"></a>
   <img alt="macOS on Apple silicon" src="https://img.shields.io/badge/macOS-Apple%20silicon-ffe433?labelColor=1f2328">
+  <img alt="Windows x64, nightly" src="https://img.shields.io/badge/Windows-x64%2C%20nightly-ffe433?labelColor=1f2328">
 </p>
 
 <p align="center">
-  <a href="#try-folio"><b>Download for Mac</b></a> ·
+  <a href="#try-folio"><b>Download for Mac or Windows</b></a> ·
   <a href="#what-it-does">What it does</a> ·
   <a href="https://github.com/users/GuyAzene/projects/1">Roadmap</a> ·
   <a href="CONTRIBUTING.md">Contributing</a>
@@ -32,8 +33,9 @@ your own notes. Its tutor answers from your course's own pages and cites them. I
 lectures into notes you can browse, and it never changes your files.
 
 > [!NOTE]
-> Folio is early and in active development. It is built and tested on macOS, and the tutor runs
-> on your ChatGPT plan or on your own API keys.
+> Folio is early and in active development. It is tested on macOS and Windows on every change;
+> Windows builds come from the nightly build for now. The tutor runs on your ChatGPT plan or on
+> your own API keys.
 
 ## What it does
 
@@ -102,25 +104,34 @@ lectures into notes you can browse, and it never changes your files.
 
 ## Try Folio
 
-Download the disk image from the **[latest release](https://github.com/GuyAzene/folio/releases/latest)**,
-open it and drag Folio to Applications. It needs a Mac with Apple silicon and a ChatGPT plan or an
-API key. Each release lists what changed and how to check that the download is the one this
-repository built.
+Folio needs a ChatGPT plan or an API key.
 
-For the newest Folio between releases, the
-[nightly build](https://github.com/GuyAzene/folio/releases/tag/nightly) is rebuilt after every
-change to `main`:
+**On a Mac** (Apple silicon): download the disk image from the
+**[latest release](https://github.com/GuyAzene/folio/releases/latest)**, open it and drag Folio to
+Applications. Each release lists what changed and how to check that the download is the one this
+repository built. For the newest Folio between releases, the
+[nightly build](https://github.com/GuyAzene/folio/releases/tag/nightly) has
 **[Folio-arm64.dmg](https://github.com/GuyAzene/folio/releases/download/nightly/Folio-arm64.dmg)**.
 
 Folio is not signed with an Apple Developer ID, so the first time you open it macOS says it could
 not verify it. Open **System Settings → Privacy & Security**, scroll down to the line about Folio
-and choose **Open Anyway**. A newer download may ask again. For the same reason Folio can't update itself:
-when a newer release is out, a line in the sidebar links to its page.
+and choose **Open Anyway**. A newer download may ask again.
+
+**On Windows** (64-bit Windows 10 or 11): Windows builds are nightly for now. Download
+**[Folio-x64-setup.exe](https://github.com/GuyAzene/folio/releases/download/nightly/Folio-x64-setup.exe)**
+from the [nightly build](https://github.com/GuyAzene/folio/releases/tag/nightly) and run it. It
+installs Folio for you alone, with no administrator, adds it to the Start menu and opens it.
+Folio is not signed with a code-signing certificate, so Windows says it protected your PC: choose
+**More info**, then **Run anyway**.
+
+The nightly build is rebuilt after every change to `main`, so it is the newest Folio and may be
+rougher than a release. Folio can't update itself: when a newer release is out, a line in the
+sidebar links to its page.
 
 ## Getting started
 
-You need macOS, the [Vite+](https://viteplus.dev/guide) CLI (`vp`) and a ChatGPT plan or an API
-key. Folio pins Node 24.22.1 in `.node-version`; `vp` installs and uses it.
+You need macOS or Windows, the [Vite+](https://viteplus.dev/guide) CLI (`vp`) and a ChatGPT plan
+or an API key. Folio pins Node 24.22.1 in `.node-version`; `vp` installs and uses it.
 
 ```sh
 vp install --frozen-lockfile
@@ -131,6 +142,8 @@ vp run desktop                             # the app, with hot reload for the in
 To run the production build instead, use `vp run desktop:build`, then `vp run desktop:start`.
 
 ### Installing Folio as an app
+
+On a Mac:
 
 ```sh
 vp run desktop:install
@@ -150,8 +163,12 @@ The app is signed ad-hoc, so it runs on the Mac that built it. Another Mac may r
 until builds are signed with a Developer ID and notarized; `scripts/package.ts` names the
 environment variables that turn both on.
 
-To connect, choose **Connect ChatGPT** in the composer or in Settings (⌘,). Your browser opens
-ChatGPT's sign-in. Folio registers with your ChatGPT account once; signing out and in again reuses
+On Windows, `vp run desktop:package` builds `release/win-unpacked/Folio.exe` and its installer,
+`release/Folio-<version>-x64-setup.exe`; run the installer to put Folio in your programs. Quit
+Folio before building again, since Windows won't replace the files of a program that is running.
+
+To connect, choose **Connect ChatGPT** in the composer or in Settings (⌘, or Ctrl+,). Your
+browser opens ChatGPT's sign-in. Folio registers with your ChatGPT account once; signing out and in again reuses
 that registration, so ChatGPT's settings list one Folio. To use your own API key for OpenAI, Anthropic, Google Gemini or OpenRouter,
 add it in **Settings → Connections**: Folio checks it with the provider before keeping it, and
 each provider bills its key for what Folio asks. ChatGPT is the only plan Folio can sign in to.
@@ -176,6 +193,8 @@ since Folio's Pi release. Leave the file alone and everything runs on ChatGPT, a
 
 ### Keyboard
 
+On Windows, Ctrl stands in for ⌘ and Alt for ⌥, and Folio's own labels say so.
+
 | Keys | Action |
 | --- | --- |
 | Enter / Shift+Enter | Send / new line |
@@ -190,10 +209,11 @@ since Folio's Pi release. Leave the file alone and everything runs on ChatGPT, a
 
 ## Your data
 
-Everything Folio keeps stays in `~/.folio/` (or the folder `FOLIO_HOME` points to), readable
-only by you: your courses and their read-only originals, your notes, your chats, study notes and
-open tabs. Only what a question needs goes to the service its model runs on: your message, the
-pages and images the tutor reads, and what you added. Signing out, or removing a key, removes it
+Everything Folio keeps stays in `~/.folio/` (on Windows, `.folio` in your user folder; or the
+folder `FOLIO_HOME` points to), readable only by you: your courses and their read-only
+originals, your notes, your chats, study notes and open tabs. Only what a question needs goes to
+the service its model runs on: your message, the pages and images the tutor reads, and what you
+added. Signing out, or removing a key, removes it
 and keeps everything else. API keys stay in `keys.json`, apart from `config.json`, which never
 holds one. MCP servers you connect get only what the tutor writes into a call, which you see
 before you allow it; their settings and keys stay in `mcp.json`. Once a day Folio asks GitHub
@@ -208,8 +228,8 @@ ideas are welcome as [issues](https://github.com/GuyAzene/folio/issues/new/choos
 
 ## Built with
 
-- [Electron](https://www.electronjs.org/) for the Mac app, with the interface in
-  [Svelte 5](https://svelte.dev/), [Tailwind CSS](https://tailwindcss.com/) and
+- [Electron](https://www.electronjs.org/) for the desktop app on macOS and Windows, with the
+  interface in [Svelte 5](https://svelte.dev/), [Tailwind CSS](https://tailwindcss.com/) and
   [Bits UI](https://bits-ui.com/)
 - [Pi](https://pi.dev/) for the tutor's connections to models and its agent loop
 - [pdf.js](https://mozilla.github.io/pdf.js/) for reading, [CodeMirror](https://codemirror.net/)
@@ -225,8 +245,8 @@ vp test             # deterministic tests: no network, no real accounts
 vp run test:electron # Folio in a real window: security rules, diagrams, demos
 vp run study:report # where each study's time went, from jobs.sqlite (read-only; --job, --since)
 FOLIO_BENCH=1 vp run study:bench # study synthetic lectures with ChatGPT and score the notes
-vp run desktop:package # Folio.app and its disk image, in release/
-vp run desktop:install # the same, then Folio.app into /Applications
+vp run desktop:package # Folio.app and its disk image, or Folio.exe and its installer, in release/
+vp run desktop:install # on a Mac, the same, then Folio.app into /Applications
 vp build && vp pack # renderer, CLI and Electron bundles
 vp dev              # the interface alone, in a browser, with synthetic data
 vp run screenshots  # the README's pictures that changed, from that preview, into a temporary folder
@@ -241,7 +261,8 @@ which is handy for checking layouts. A terminal client with a small synthetic de
 ships: run `vp run chat`, and `vp run chat --help` for its options.
 
 `FOLIO_E2E_APP=release/mac-arm64/Folio.app vp run test:electron` runs the real-window checks
-against the packaged app instead of a fresh build.
+against the packaged app instead of a fresh build; on Windows, name
+`release/win-unpacked/Folio.exe`.
 
 Read [AGENTS.md](AGENTS.md) for how changes are made and checked, and
 [docs/architecture.md](docs/architecture.md) for how the pieces fit together.
