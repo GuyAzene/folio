@@ -193,6 +193,41 @@ jobs:
         if: ${{ !cancelled() }}
         run: vp node --test $TEST_FLAGS tests/electron/*.e2e.ts
 
+  # Folio packaged for Windows, with the checks of what packaging can break, as on macOS. It
+  # reports on its own too.
+  windows-packaged:
+    name: "Windows: packaged app"
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
+    runs-on: windows-2025
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: voidzero-dev/setup-vp@cab1ab9eaff52d4857875f4f2c016e36af8f2c76 # v1.22.0
+        with:
+          node-version-file: .node-version
+          sfw: true
+          cache: false
+      - name: Electron
+        run: vp node node_modules/electron/install.js
+      - name: Package Folio for Windows
+        run: vp run desktop:package
+      - name: The packaged app in a real window
+        run: >-
+          vp node --test $TEST_FLAGS
+          tests/electron/window.e2e.ts tests/electron/runtime.e2e.ts
+          tests/electron/instance.e2e.ts tests/electron/sandbox.e2e.ts
+          tests/electron/diagrams.e2e.ts
+        env:
+          FOLIO_E2E_APP: ${{ github.workspace }}/release/win-unpacked/Folio.exe
+      # The nightly's check of the build for others, tried here on every change.
+      - name: Open and quit the packaged app
+        shell: pwsh
+        run: .github/scripts/open-and-quit.ps1
+
   # On a pull request that changes the app, the README pictures are retaken from the preview
   # (`vp run screenshots`), and those that look different are committed to the pull request's
   # branch, so they are reviewed with the change. A push with the workflow's token starts no
@@ -324,11 +359,15 @@ jobs:
           cat > notes.md <<EOF
           The newest Folio, built from [\`${GITHUB_SHA::7}\`](https://github.com/$GITHUB_REPOSITORY/commit/$GITHUB_SHA) on $(date -u '+%Y-%m-%d %H:%M UTC'). It is rebuilt after every change to \`main\`, so this page always has the latest.
 
-          **Install:** download \`Folio-arm64.dmg\` (Apple silicon Macs), open it and drag Folio to Applications.
+          **Install on a Mac:** download \`Folio-arm64.dmg\` (Apple silicon Macs), open it and drag Folio to Applications.
 
-          **First open:** Folio is not signed with an Apple Developer ID, so macOS says it could not verify it. Open **System Settings → Privacy & Security**, scroll down to the line about Folio, and choose **Open Anyway**. A newer download may ask again.
+          **First open on a Mac:** Folio is not signed with an Apple Developer ID, so macOS says it could not verify it. Open **System Settings → Privacy & Security**, scroll down to the line about Folio, and choose **Open Anyway**. A newer download may ask again.
 
-          Your courses, notes and chats stay in \`~/.folio\` on your Mac. Folio connects to your own ChatGPT account.
+          **Install on Windows:** download \`Folio-x64-setup.exe\` (64-bit Windows 10 or 11) and run it. It installs Folio for you alone, with no administrator, and opens it.
+
+          **First run on Windows:** Folio is not signed with a code-signing certificate, so Windows says it protected your PC. Choose **More info**, then **Run anyway**.
+
+          Your courses, notes and chats stay in \`.folio\` in your home folder. Folio connects to your own ChatGPT account.
           EOF
           if gh release view nightly >/dev/null 2>&1; then
             gh release edit nightly --prerelease --title "Folio nightly" --notes-file notes.md
@@ -337,3 +376,40 @@ jobs:
               --notes-file notes.md
           fi
           gh release upload nightly Folio-arm64.dmg --clobber
+
+  # The Windows installer for the same nightly release, built for others like the Mac's disk
+  # image, opened and closed once, then put beside it. The Mac's job writes the release's notes.
+  nightly-windows:
+    name: Nightly build for Windows
+    needs: [check]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: windows-2025
+    timeout-minutes: 30
+    permissions:
+      # Replaces the release's installer.
+      contents: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: voidzero-dev/setup-vp@cab1ab9eaff52d4857875f4f2c016e36af8f2c76 # v1.22.0
+        with:
+          node-version-file: .node-version
+          sfw: true
+          cache: false
+      - name: Electron
+        run: vp node node_modules/electron/install.js
+      - name: Package Folio for others
+        run: vp run desktop:package
+        env:
+          FOLIO_DISTRIBUTE: "1"
+      - name: Open and quit the packaged app
+        shell: pwsh
+        run: .github/scripts/open-and-quit.ps1
+      - name: Publish the installer
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp release/Folio-*-x64-setup.exe Folio-x64-setup.exe
+          gh release upload nightly Folio-x64-setup.exe --clobber
