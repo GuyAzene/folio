@@ -1,5 +1,5 @@
 import { lstat, mkdir, open, readdir, readFile, realpath, stat } from "node:fs/promises";
-import { basename, extname, relative, resolve, sep } from "node:path";
+import { basename, extname, isAbsolute, relative, resolve, sep } from "node:path";
 import { privateDirectory, writeAtomic } from "../files.ts";
 import {
   MAX_SKILL_BYTES,
@@ -130,10 +130,12 @@ export class SkillLibrary {
     return this.#folio;
   }
 
-  /** A path with ~ for the home folder, as config.json keeps it. */
+  /** A path with ~ for the home folder and forward slashes after it, as config.json keeps it. */
   key(path: string): string {
     const part = relative(this.#user, path);
-    return part && !part.startsWith("..") && !part.startsWith(sep) ? `~/${part}` : path;
+    return part && !part.startsWith("..") && !isAbsolute(part)
+      ? `~/${part.split(sep).join("/")}`
+      : path;
   }
 
   /** A key back to a path. */

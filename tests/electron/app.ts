@@ -89,8 +89,8 @@ export function buildApp(): Promise<string> {
       // A junction on Windows, which needs no administrator, as a folder link would.
       const link = process.platform === "win32" ? "junction" : "dir";
       await symlink(resolve(ROOT, "node_modules"), resolve(dir, "node_modules"), link);
-      // On Windows vp may be a .cmd shim, which only a shell starts.
-      const options = { cwd: dir, stdio: "ignore", shell: process.platform === "win32" } as const;
+      // On Windows vp may be a .cmd shim, which only a shell starts. A failed build says why.
+      const options = { cwd: dir, stdio: "pipe", shell: process.platform === "win32" } as const;
       execFileSync("vp", ["build"], options);
       execFileSync("vp", ["pack"], options);
       await writeFile(done, "");

@@ -1,5 +1,5 @@
 import { lstat, readdir } from "node:fs/promises";
-import { basename, extname, join, relative } from "node:path";
+import { basename, extname, join, relative, sep } from "node:path";
 import { DEFAULT_CATEGORIES, guessCategory, type Category } from "./categories.ts";
 import { LibraryError, titleFromName, type DocumentRole } from "./store.ts";
 
@@ -77,7 +77,8 @@ export async function scanFolder(
       }
       files.push({
         path,
-        name: relative(root, path),
+        // With forward slashes on Windows too, as the window shows it.
+        name: relative(root, path).split(sep).join("/"),
         title: titleFromName(entry.name),
         ...guessed(entry.name, kind),
         kind,

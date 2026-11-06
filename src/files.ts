@@ -48,13 +48,23 @@ export async function writeAtomic(
     }
     await options.check?.();
     await rename(temporary, target);
-    const directory = await open(dirname(target), "r");
-    try {
-      await directory.sync();
-    } finally {
-      await directory.close();
-    }
+    await syncDirectory(dirname(target));
   } finally {
     await rm(temporary, { force: true });
+  }
+}
+
+/**
+ * Flushes a folder's list of names to disk, so a rename into it survives a crash. Windows can't
+ * open a folder to flush it, and its file system keeps a rename in its own journal, so there it
+ * does nothing.
+ */
+export async function syncDirectory(path: string): Promise<void> {
+  if (process.platform === "win32") return;
+  const handle = await open(path, "r");
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
   }
 }

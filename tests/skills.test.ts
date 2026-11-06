@@ -140,7 +140,7 @@ describe("the routines Folio finds", () => {
 
     let found = await library.scan();
     expect(found.skills.map((skill) => [skill.key, skill.from, skill.on])).toEqual([
-      [`${home}/skills/quiz-me`, "Folio", true],
+      [resolve(home, "skills", "quiz-me"), "Folio", true],
       ["~/study/pdf", "~/study", false],
       ["~/study/quiz-me", "~/study", false],
     ]);
@@ -159,7 +159,7 @@ describe("the routines Folio finds", () => {
     ]);
 
     // Folio's own turned off, the added folder's of the same name is used.
-    state.switches = { ...state.switches, off: [`${home}/skills/quiz-me`] };
+    state.switches = { ...state.switches, off: [resolve(home, "skills", "quiz-me")] };
     expect((await library.active()).map((skill) => `${skill.from}:${skill.name}`)).toEqual([
       "~/study:pdf",
       "~/study:quiz-me",
@@ -326,7 +326,7 @@ describe("the use_skill tool and /name", () => {
       /^<folio_skill name="quiz-me">\nDo it step by step\.\n<\/folio_skill>/,
     );
     expect(started.block).toContain('started their routine "quiz-me"');
-    state.switches = { on: [], off: [`${home}/skills/quiz-me`], folders: [] };
+    state.switches = { on: [], off: [resolve(home, "skills", "quiz-me")], folders: [] };
     await expect(skillCommand(library, "quiz-me")).rejects.toThrow(
       /no routine "quiz-me" turned on/,
     );
