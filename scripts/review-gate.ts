@@ -389,12 +389,17 @@ export type GateInput = {
  * with the owner to merge, or free to merge.
  */
 export type Lane = "wait" | "fix" | "owner" | "merge";
+/**
+ * The gate fails only when there is something to fix. Waiting for the review and waiting for the
+ * owner both leave it pending: neither is a failure, so neither shows a red cross or sends
+ * GitHub's failure email, and either still holds the merge once the check is required.
+ */
 export type Gate =
-  | { status: "in_progress"; lane: "wait"; title: string; summary: string }
+  | { status: "in_progress"; lane: "wait" | "owner"; title: string; summary: string }
   | {
       status: "completed";
       conclusion: "success" | "failure";
-      lane: Exclude<Lane, "wait">;
+      lane: "fix" | "merge";
       title: string;
       summary: string;
     };
@@ -421,10 +426,16 @@ const waiting = (title: string, summary: string): Gate => ({
   title,
   summary,
 });
-const fails = (lane: "fix" | "owner", title: string, summary: string): Gate => ({
+const owners = (title: string, summary: string): Gate => ({
+  status: "in_progress",
+  lane: "owner",
+  title,
+  summary: `${summary}\n\nNothing failed: this check stays pending until the owner merges.`,
+});
+const fails = (title: string, summary: string): Gate => ({
   status: "completed",
   conclusion: "failure",
-  lane,
+  lane: "fix",
   title,
   summary,
 });
@@ -434,15 +445,13 @@ const plural = (count: number, word: string) => `${count} ${word}${count === 1 ?
 export const decideGate = (input: GateInput): Gate => {
   const commit = `\`${short(input.reviewed)}\``;
   if (input.author === DEPENDABOT) {
-    return fails(
-      "owner",
+    return owners(
       "A dependency update: waits for the owner",
       "Claude doesn't review Dependabot's pull requests, and every dependency update is the owner's to merge.",
     );
   }
   if (input.fork) {
-    return fails(
-      "owner",
+    return owners(
       "From another repository: waits for the owner",
       "Claude reviews only this repository's own branches, so the owner looks at this one.",
     );
@@ -462,8 +471,7 @@ export const decideGate = (input: GateInput): Gate => {
     if (input.review.state === "reviewing") {
       return waiting(`Reviewing ${short(input.reviewed)}`, `Claude is reviewing ${commit}.`);
     }
-    return fails(
-      "owner",
+    return owners(
       "The review couldn't run: waits for the owner",
       `Claude's review of ${commit} ${input.review.why}. Running the review again may work once the plan allows it; otherwise the owner merges this one.`,
     );
@@ -472,14 +480,12 @@ export const decideGate = (input: GateInput): Gate => {
   if (open.length) {
     const list = open.map((item) => `- **${item.id}** ${place(item)}${item.title}`).join("\n");
     if (round >= ROUNDS) {
-      return fails(
-        "owner",
+      return owners(
         `${plural(open.length, "serious finding")} after ${round} rounds: waits for the owner`,
         `Still open in ${commit}:\n\n${list}\n\nThe owner decides from here.`,
       );
     }
     return fails(
-      "fix",
       `${plural(open.length, "serious finding")} open`,
       `Open in ${commit}:\n\n${list}\n\nPush a fix and the next review checks it. If a finding is wrong, say why in a reply on the pull request; it then waits for the owner.`,
     );
@@ -489,8 +495,7 @@ export const decideGate = (input: GateInput): Gate => {
     ...input.areas.map((area) => `it touches ${area}`),
   ];
   if (reasons.length) {
-    return fails(
-      "owner",
+    return owners(
       "Reviewed, nothing serious: waits for the owner",
       `Nothing serious is open in ${commit}, but the owner merges this pull request because ${reasons.join(", and ")}.`,
     );

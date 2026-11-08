@@ -239,7 +239,8 @@ describe("the gate", () => {
     for (let round = 0; round < ROUNDS; round++)
       verdict = buildVerdict(verdict, review([bug]), HEAD, null);
     expect(decideGate(gate({ verdict }))).toMatchObject({
-      conclusion: "failure",
+      status: "in_progress",
+      lane: "owner",
       title: `${ROUNDS} serious findings after ${ROUNDS} rounds: waits for the owner`,
     });
   });
@@ -260,7 +261,8 @@ describe("the gate", () => {
         gate({ verdict: null, review: { state: "failed", why: "ended without a verdict" } }),
       ),
     ).toMatchObject({
-      conclusion: "failure",
+      status: "in_progress",
+      lane: "owner",
       title: "The review couldn't run: waits for the owner",
     });
   });
@@ -274,20 +276,48 @@ describe("the gate", () => {
 
   it("leaves to the owner what touches an owner area or carries the label", () => {
     expect(decideGate(gate({ areas: ["the checks and the review gate"] }))).toMatchObject({
-      conclusion: "failure",
+      status: "in_progress",
+      lane: "owner",
       summary: expect.stringContaining("it touches the checks and the review gate"),
     });
     expect(decideGate(gate({ labels: [OWNER_LABEL] }))).toMatchObject({
-      conclusion: "failure",
+      status: "in_progress",
+      lane: "owner",
       title: "Reviewed, nothing serious: waits for the owner",
     });
   });
 
   it("leaves dependency updates to the owner, and waits on drafts", () => {
     expect(decideGate(gate({ author: "dependabot[bot]" }))).toMatchObject({
-      conclusion: "failure",
+      status: "in_progress",
+      lane: "owner",
     });
     expect(decideGate(gate({ draft: true }))).toMatchObject({ status: "in_progress" });
+  });
+
+  it("fails only when there is something to fix, never to say it waits for the owner", () => {
+    const open = buildVerdict(null, review([bug]), HEAD, null);
+    let stuck: Verdict | null = null;
+    for (let round = 0; round < ROUNDS; round++)
+      stuck = buildVerdict(stuck, review([bug]), HEAD, null);
+    const owners = [
+      gate({ author: "dependabot[bot]" }),
+      gate({ fork: true }),
+      gate({ verdict: null, review: { state: "failed", why: "ended without a verdict" } }),
+      gate({ verdict: stuck }),
+      gate({ labels: [OWNER_LABEL] }),
+      gate({ areas: ["the checks and the review gate"] }),
+    ].map(decideGate);
+    for (const result of owners) {
+      expect(result).toMatchObject({ status: "in_progress", lane: "owner" });
+      expect(result).not.toHaveProperty("conclusion");
+      expect(result.summary).toContain("Nothing failed");
+    }
+    expect(decideGate(gate({ verdict: open }))).toMatchObject({
+      status: "completed",
+      conclusion: "failure",
+      lane: "fix",
+    });
   });
 
   it("says which lane it leaves the pull request in, for the line's waiter", () => {
@@ -306,7 +336,8 @@ describe("the gate", () => {
     expect(
       decideGate(gate({ fork: true, verdict: null, review: { state: "none" } })),
     ).toMatchObject({
-      conclusion: "failure",
+      status: "in_progress",
+      lane: "owner",
       title: "From another repository: waits for the owner",
     });
   });

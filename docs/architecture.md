@@ -694,11 +694,14 @@ open. A finding is serious only when it is a real bug, a broken promise or a sec
 lines the pull request changed; everything else is a note. Claude answers in JSON
 (`--json-schema`), and `scripts/review-gate.ts` posts that as a comment and as a "Review verdict"
 check holding the open findings. The "Review gate" check on the pull request's latest commit then
-passes once the newest review left nothing serious open, waits while a review is due or under way,
-and fails, saying why, while a serious finding is open or when the owner merges this one: the pull
-request touches an area in `.github/owner-areas.txt` (a rename counts at both ends) or carries
-the "needs owner" label, comes from Dependabot or another repository, still has serious findings
-after three rounds, or couldn't be reviewed after a second try. A commit of only the README's
+passes once the newest review left nothing serious open, fails while a serious finding is open,
+and otherwise stays pending, saying why: while a review is due or under way, or when the owner
+merges this one because the pull request touches an area in `.github/owner-areas.txt` (a rename
+counts at both ends) or carries the "needs owner" label, comes from Dependabot or another
+repository, still has serious findings after three rounds, or couldn't be reviewed after a second
+try. Only something to fix is a failure, with its red cross and GitHub's failure email; a pull
+request waiting for the owner isn't, and once the gate is required the owner merges it past the
+pending check, which an admin may. A commit of only the README's
 pictures carries the last review over, and the pictures job starts the gate on it. The gate reads
 the pull request only through the API, so a pull request can't change the gate that judges it.
 Merging doesn't wait for the gate yet.
