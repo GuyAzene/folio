@@ -19,8 +19,10 @@ on:
 
 permissions: {}
 
+# One run per pull request at a time, whatever started it, so an older run can't post its check
+# after a newer one.
 concurrency:
-  group: review-gate-${{ github.event.pull_request.number || inputs.pr || github.event.workflow_run.head_branch }}
+  group: review-gate-${{ github.event.pull_request.number || inputs.pr || github.event.workflow_run.pull_requests[0].number || github.event.workflow_run.head_branch }}
   cancel-in-progress: true
 
 jobs:

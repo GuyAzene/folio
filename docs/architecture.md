@@ -684,8 +684,9 @@ verdict" check holding the open findings. The Review gate workflow then sets the
 check on the pull request's latest commit: it passes once the newest review left nothing serious
 open, waits while a review is due or under way, and fails, saying why, while a serious finding is
 open or when the owner merges this one: the pull request touches an area in
-`.github/owner-areas.txt` or carries the "needs owner" label, comes from Dependabot, still has
-serious findings after three rounds, or couldn't be reviewed after a second try. A commit of only
+`.github/owner-areas.txt` (a rename counts at both ends) or carries the "needs owner" label,
+comes from Dependabot or another repository, still has serious findings after three rounds, or
+couldn't be reviewed after a second try. A commit of only
 the README's pictures carries the last review over, and the pictures job starts the gate on it.
 The gate runs from `main` (`pull_request_target`, `workflow_run`) and reads the pull request only
 through the API, so a pull request can't change the gate that judges it; the verdict and the

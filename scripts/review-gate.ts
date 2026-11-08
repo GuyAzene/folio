@@ -81,11 +81,15 @@ export const REVIEW_SCHEMA = {
 };
 
 const short = (sha: string) => sha.slice(0, 7);
+// A verdict travels in a check run's text, which GitHub caps at 65,535 characters.
+const NOTES = 10;
+const clip = (text: string, length: number) =>
+  text.length > length ? `${text.slice(0, length)}…` : text;
 const note = (from: Note): Note => ({
-  title: from.title,
-  ...(from.file ? { file: from.file } : {}),
+  title: clip(from.title, 300),
+  ...(from.file ? { file: clip(from.file, 300) } : {}),
   ...(typeof from.line === "number" ? { line: from.line } : {}),
-  why: from.why,
+  why: clip(from.why, 1500),
 });
 const place = (from: Note) =>
   from.file ? `\`${from.file}${typeof from.line === "number" ? `:${from.line}` : ""}\` ` : "";
@@ -151,7 +155,10 @@ export const buildVerdict = (
     round: (previous?.round ?? 0) + 1,
     open: [...earlier.filter((item) => !fixedIds.has(item.id)), ...found],
     fixed: earlier.filter((item) => fixedIds.has(item.id)),
-    notes: review.findings.filter((item) => !item.serious).map(note),
+    notes: review.findings
+      .filter((item) => !item.serious)
+      .slice(0, NOTES)
+      .map(note),
     next,
   };
 };
@@ -173,7 +180,7 @@ export const reviewPrompt = (scope: {
   const earlier = scope.previous?.open.length
     ? [
         "",
-        "Serious findings from earlier reviews that are still open. For each one, say in `earlier` whether the code at the head commit fixes it, by its id:",
+        "Serious findings from earlier reviews that are still open. For each one, say in `earlier` whether the code at the head commit fixes it, by its id, and don't report it again in `findings`:",
         ...scope.previous.open.map(
           (item) => `- ${item.id} ${place(item)}${item.title}. ${item.why}`,
         ),
@@ -255,6 +262,8 @@ export const renderComment = (verdict: Verdict, review: Review) => {
 export type ReviewRun = { status: string; conclusion: string | null } | null;
 export type GateInput = {
   draft: boolean;
+  /** From another repository, whose branches Claude doesn't review. */
+  fork: boolean;
   author: string;
   labels: string[];
   /** Why the owner merges this one: areas from owner-areas.txt the pull request touches. */
@@ -288,6 +297,12 @@ export const decideGate = (input: GateInput): Gate => {
     return fails(
       "A dependency update: waits for the owner",
       "Claude doesn't review Dependabot's pull requests, and every dependency update is the owner's to merge.",
+    );
+  }
+  if (input.fork) {
+    return fails(
+      "From another repository: waits for the owner",
+      "Claude reviews only this repository's own branches, so the owner looks at this one.",
     );
   }
   if (input.draft)
@@ -492,8 +507,15 @@ export type PullRequest = {
   draft: boolean;
   user: { login: string };
   labels: { name: string }[];
-  head: { sha: string; ref: string };
+  head: { sha: string; ref: string; repo: { full_name: string } | null };
 };
+
+type ChangedFile = { filename: string; previous_filename?: string };
+/** Both ends of a rename count, so moving a file can't take it out of an area. */
+export const paths = (files: ChangedFile[]) =>
+  files.flatMap((file) =>
+    file.previous_filename ? [file.filename, file.previous_filename] : [file.filename],
+  );
 
 export const findPullRequest = async () => {
   const number = process.env.PR;
@@ -508,18 +530,16 @@ export const findPullRequest = async () => {
 
 /** What the gate says about a pull request, read from GitHub without changing anything. */
 export const judge = async (pr: PullRequest) => {
-  const files = (await everyPage<{ filename: string }>(`${repo()}/pulls/${pr.number}/files`)).map(
-    (file) => file.filename,
-  );
+  const files = paths(await everyPage<ChangedFile>(`${repo()}/pulls/${pr.number}/files`));
   // Skip the commits at the top that only retake the README's pictures, a few at most.
   const shas = (await prCommits(pr.number)).map((commit) => commit.sha);
   let reviewed = pr.head.sha;
   for (const sha of shas.slice(1).reverse().slice(0, 5)) {
     if (sha !== reviewed) break;
-    const commit = await request<{ files: { filename: string }[]; parents: { sha: string }[] }>(
+    const commit = await request<{ files: ChangedFile[]; parents: { sha: string }[] }>(
       `${repo()}/commits/${sha}`,
     );
-    if (!onlyPictures(commit.files.map((file) => file.filename))) break;
+    if (!onlyPictures(paths(commit.files))) break;
     reviewed = commit.parents[0]!.sha;
   }
   const [review, verdictRun] = await Promise.all([
@@ -528,6 +548,7 @@ export const judge = async (pr: PullRequest) => {
   ]);
   return decideGate({
     draft: pr.draft,
+    fork: pr.head.repo?.full_name !== env("GITHUB_REPOSITORY"),
     author: pr.user.login,
     labels: pr.labels.map((label) => label.name),
     areas: touchedAreas(files, parseAreas(readFileSync(".github/owner-areas.txt", "utf8"))),

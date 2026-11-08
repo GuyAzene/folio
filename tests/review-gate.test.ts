@@ -9,6 +9,7 @@ import {
   parseAreas,
   parseReview,
   parseVerdict,
+  paths,
   renderComment,
   reviewArgs,
   reviewPrompt,
@@ -37,6 +38,7 @@ const nit = { title: "Name it after what it does", serious: false, why: "Clearer
 
 const gate = (overrides: Partial<GateInput> = {}): GateInput => ({
   draft: false,
+  fork: false,
   author: "someone",
   labels: [],
   areas: [],
@@ -81,6 +83,14 @@ describe("a review's verdict", () => {
     const first = buildVerdict(null, review([bug]), EARLIER, null);
     const second = buildVerdict(first, review([], [{ id: "F9", fixed: true }]), HEAD, EARLIER);
     expect(second.open.map((item) => item.id)).toEqual(["F1"]);
+  });
+
+  it("keeps few notes and clips long text, so it fits in a check run", () => {
+    const long = { ...nit, why: "x".repeat(10_000) };
+    const verdict = buildVerdict(null, review(Array.from({ length: 50 }, () => long)), HEAD, null);
+    expect(verdict.notes).toHaveLength(10);
+    expect(verdict.notes[0]!.why.length).toBeLessThan(2000);
+    expect(JSON.stringify(verdict).length).toBeLessThan(65_535);
   });
 
   it("survives the round trip through a check run, and refuses anything else", () => {
@@ -130,6 +140,7 @@ describe("the review's instructions", () => {
     expect(prompt).toContain(`git diff ${EARLIER} ${HEAD}`);
     expect(prompt).toContain("review round 2");
     expect(prompt).toContain(`- F1 \`src/jobs/run.ts:12\` ${bug.title}.`);
+    expect(prompt).toContain("don't report it again");
   });
 
   it("cut a very long description", () => {
@@ -228,6 +239,13 @@ describe("the gate", () => {
     });
     expect(decideGate(gate({ draft: true }))).toMatchObject({ status: "in_progress" });
   });
+
+  it("leaves a pull request from another repository to the owner, unreviewed", () => {
+    expect(decideGate(gate({ fork: true, verdict: null, review: null }))).toMatchObject({
+      conclusion: "failure",
+      title: "From another repository: waits for the owner",
+    });
+  });
 });
 
 describe("owner areas", () => {
@@ -251,6 +269,11 @@ describe("owner areas", () => {
     ]);
     expect(touchedAreas(["README.md", "app/App.svelte", "src/notes.ts"], areas)).toEqual([]);
   });
+
+  it("catch a file renamed out of an area", () => {
+    const renamed = paths([{ filename: "src/sign-in.ts", previous_filename: "src/auth.ts" }]);
+    expect(touchedAreas(renamed, areas)).toEqual(["sign-in, keys and the app's hardening"]);
+  });
 });
 
 describe("picture commits", () => {
@@ -258,5 +281,10 @@ describe("picture commits", () => {
     expect(onlyPictures(["docs/images/hero-light.webp", "docs/images/hero-dark.webp"])).toBe(true);
     expect(onlyPictures(["docs/images/hero-light.webp", "README.md"])).toBe(false);
     expect(onlyPictures([])).toBe(false);
+  });
+
+  it("don't include a file moved in among the pictures", () => {
+    const moved = paths([{ filename: "docs/images/x.webp", previous_filename: "src/auth.ts" }]);
+    expect(onlyPictures(moved)).toBe(false);
   });
 });
