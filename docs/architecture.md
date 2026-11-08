@@ -644,8 +644,11 @@ before Windows passes too. Tests that write many small files run several
 times slower there, so a test gets 20 seconds on Windows, and checks of a file's permissions
 look only at whether it may be written (`tests/fixtures/modes.ts`), which is all Windows keeps.
 A test's wait for background work gets three seconds, five on Windows (`tests/setup.ts`), since
-GitHub's runners are busy machines. Electron's binary, and electron-builder's tools where a job
-packages Folio, come from downloads kept between runs for each lockfile
+GitHub's runners are busy machines. A wait that sets its own time for heavier work, such as a
+whole study job or a chat of dozens of saved turns, gets three times that on Windows
+(`tests/windows.ts`), where that work runs ten to twenty times slower than on a Mac. Electron's
+binary, and electron-builder's tools where a job packages Folio, come from downloads kept between
+runs for each lockfile
 (`.github/actions/electron`), because GitHub's release downloads time out now and then. Electron's
 is kept as soon as it is fetched, so a job that fails later still keeps it. Installing Electron and
 packaging run through `.github/scripts/retry-downloads.sh`, which runs them again for four minutes

@@ -10,6 +10,7 @@ import { Conversation } from "../src/conversation.ts";
 import { createSessionStore, type SessionStore } from "../src/session-store.ts";
 import { modelContextMessages, stubOf } from "../src/transcript.ts";
 import { chatView } from "../src/desktop/view.ts";
+import { forWork } from "./windows.ts";
 
 // Synthetic chats only. A small context makes a chat "long" after a few questions.
 const model: Model<Api> = {
@@ -162,8 +163,9 @@ function breaks(requests: TranscriptContext[]): number {
   return count;
 }
 
-// Each of these runs dozens of saved turns, which takes a few seconds when the suite runs at once.
-describe("long chats", { timeout: 30_000 }, () => {
+// Each of these runs dozens of saved turns, which takes a few seconds when the suite runs at once,
+// and more than thirty on GitHub's Windows machines.
+describe("long chats", { timeout: forWork(30_000) }, () => {
   it("shorten earlier tool results in batches, only ever moving forward", async () => {
     const requests: TranscriptContext[] = [];
     const { chat } = await open(
