@@ -403,7 +403,7 @@ const ship = async (number: string | undefined, minutes: number) => {
     say("Nothing holds it back: having GitHub merge it (squash).");
     try {
       say(
-        (await arm(pr.number)) === "merged"
+        (await arm(pr.number, pr.head)) === "merged"
           ? "GitHub's rules already allowed it, so it merged at once."
           : "Auto-merge is on.",
       );
@@ -424,15 +424,22 @@ const ship = async (number: string | undefined, minutes: number) => {
 /**
  * Has GitHub merge a pull request, squashed: auto-merge, which waits for GitHub's rules. GitHub
  * won't queue one its rules already let merge (it answers that it's in "clean status"); that one
- * is merged at once, as auto-merge would have. Never `--admin`, so never past a rule.
+ * is merged at once, as auto-merge would have. Never `--admin`, so never past a rule. Both are
+ * pinned to the commit that passed, so a push in between makes GitHub refuse rather than merge a
+ * commit nobody checked.
  */
-export const arm = async (number: number, run: (args: string[]) => Promise<unknown> = gh) => {
+export const arm = async (
+  number: number,
+  head: string,
+  run: (args: string[]) => Promise<unknown> = gh,
+) => {
+  const merge = ["pr", "merge", String(number), "--squash", "--match-head-commit", head];
   try {
-    await run(["pr", "merge", String(number), "--auto", "--squash"]);
+    await run([...merge, "--auto"]);
     return "queued" as const;
   } catch (error) {
     if (!/clean status/i.test((error as Error).message)) throw error;
-    await run(["pr", "merge", String(number), "--squash"]);
+    await run(merge);
     return "merged" as const;
   }
 };
