@@ -37,6 +37,24 @@ import {
 const HEAD = "a".repeat(40);
 const EARLIER = "b".repeat(40);
 
+// What Claude's arguments deny, from their one --disallowedTools flag: were there two, a CLI or
+// action that keeps only the last would drop whatever the first one denied.
+const denied = (args: string) => {
+  const flags = [...args.matchAll(/^--disallowedTools "([^"]+)"$/gm)];
+  expect(flags).toHaveLength(1);
+  expect(args.match(/--disallowedTools/g)).toHaveLength(1);
+  return flags[0]![1]!.split(",");
+};
+// Where a pinned action keeps tokens and the runner keeps its environment, denied in both
+// workflows even though reads outside the working directories are already blocked.
+const CREDENTIALS = [
+  "Read(/.git)",
+  "Read(/.git/**)",
+  "Read(//proc/**)",
+  "Read(~/.claude/**)",
+  "Read(~/.config/gh/**)",
+];
+
 const review = (findings: Review["findings"] = [], earlier: Review["earlier"] = []): Review => ({
   summary: "Looks at the change.",
   earlier,
@@ -171,12 +189,33 @@ describe("the review's instructions", () => {
 
   it("let Claude only read: no git, whose --output writes files, no shell, and none of the pull request's settings", () => {
     const args = reviewArgs();
-    expect(args).toContain('--allowedTools "Read,Grep,Glob"\n');
+    expect(args).toContain('--tools "Read,Grep,Glob"\n');
     expect(args).toMatch(/--disallowedTools "Bash,Edit,Write,/);
     expect(args).toContain("--setting-sources user");
     const prompt = reviewPrompt(scope);
     expect(prompt).toContain("you can't run anything");
     expect(prompt).not.toContain("git diff");
+  });
+
+  it("confines review reads to the checkout and the prepared diff and log, excluding .git", () => {
+    const args = reviewArgs();
+    expect(args.match(/^--add-dir .+$/gm)).toEqual(["--add-dir /tmp/review"]);
+    expect(args.match(/^--allowedTools .+$/gm)).toEqual([
+      '--allowedTools "Read(/**),Read(//tmp/review/**)"',
+    ]);
+    expect(args).toContain(
+      '--settings \'{"permissions":{"blockReadsOutsideWorkingDirectories":true}}\'',
+    );
+    expect(denied(args)).toEqual(
+      expect.arrayContaining(["Bash", "WebFetch", "mcp__*", ...CREDENTIALS]),
+    );
+  });
+
+  it("deny the runner's temporary folder, which the review job shares the path of", () => {
+    expect(denied(reviewArgs("/home/runner/work/_temp"))).toContain(
+      "Read(//home/runner/work/_temp/**)",
+    );
+    expect(denied(reviewArgs()).filter((rule) => rule.includes("_temp"))).toEqual([]);
   });
 
   it("start over from the whole pull request when the last reviewed commit is gone", () => {
@@ -592,6 +631,8 @@ describe("the signed commands", () => {
     vi.stubEnv("GITHUB_TOKEN", WORKFLOW_TOKEN);
     vi.stubEnv("APP_TOKEN", APP_TOKEN);
     vi.stubEnv("PR", "7");
+    // As on a runner, so the tests don't depend on where they run.
+    vi.stubEnv("RUNNER_TEMP", "/runner/temp");
     vi.spyOn(console, "log").mockImplementation(() => {});
   });
   afterEach(() => {
@@ -610,7 +651,8 @@ describe("the signed commands", () => {
     ]);
     expect(values.check).toBe(String(verdictRuns()[0]!.id));
     expect(values.prompt).toContain(CHANGES.diff);
-    expect(values.args).toBe(reviewArgs());
+    expect(values.args).toBe(reviewArgs("/runner/temp"));
+    expect(denied(values.args!)).toContain("Read(//runner/temp/**)");
   });
 
   it("start one review of a commit however many times the signal comes", async () => {
@@ -769,6 +811,7 @@ describe("the Review workflow", () => {
   };
   type Job = {
     if?: string;
+    "runs-on"?: string;
     environment?: { name: string; deployment: boolean };
     permissions?: Record<string, string>;
     steps: Step[];
@@ -789,6 +832,11 @@ describe("the Review workflow", () => {
     expect(Object.keys(workflow.on).sort()).toEqual(["workflow_dispatch", "workflow_run"]);
     expect(workflow.on.workflow_run).toMatchObject({ workflows: ["Pull request"] });
     expect(workflow.permissions).toEqual({});
+  });
+
+  it("makes Claude's arguments on the same kind of runner as the review, whose temporary folder they deny", () => {
+    expect(workflow.jobs.start?.["runs-on"]).toBe("ubuntu-latest");
+    expect(workflow.jobs.review?.["runs-on"]).toBe(workflow.jobs.start?.["runs-on"]);
   });
 
   it("gives the app's key only to jobs in the main-only environment", () => {
@@ -822,7 +870,11 @@ describe("the Review workflow", () => {
     ]);
     const leaveOut = job.steps.find((step) => step.run?.startsWith("rm -rf .claude"));
     for (const path of [".claude", ".mcp.json", "CLAUDE.md"]) expect(leaveOut?.run).toContain(path);
-    for (const step of job.steps.filter((item) => item.uses?.startsWith("anthropics/")))
+    const claude = job.steps.filter((item) =>
+      item.uses?.startsWith("anthropics/claude-code-action@"),
+    );
+    expect(claude).toHaveLength(2);
+    for (const step of claude)
       expect(step.with?.claude_args).toBe("${{ needs.start.outputs.args }}");
   });
 
@@ -846,5 +898,29 @@ describe("the Review workflow", () => {
     expect(signal.permissions).toEqual({});
     expect(raw).not.toContain("${{ secrets");
     expect(raw).not.toMatch(/uses:/);
+  });
+});
+
+describe("the @claude workflow", () => {
+  it("confines file tools to the checkout and downloaded images and denies shell access", () => {
+    const workflow = parse(readFileSync(".github/workflows/claude.yml", "utf8")) as {
+      jobs: { answer: { steps: { uses?: string; with?: { claude_args?: string } }[] } };
+    };
+    const claude = workflow.jobs.answer.steps.filter((step) =>
+      step.uses?.startsWith("anthropics/claude-code-action@"),
+    );
+    expect(claude).toHaveLength(1);
+    const args = claude[0]?.with?.claude_args ?? "";
+    expect(args).toContain('--tools "Read,Grep,Glob"');
+    expect(args).toContain("--setting-sources user");
+    expect(args).toContain("--strict-mcp-config");
+    expect(args).toContain(
+      '--settings \'{"permissions":{"blockReadsOutsideWorkingDirectories":true}}\'',
+    );
+    expect(args.match(/^--add-dir .+$/gm)).toEqual(["--add-dir /tmp/github-images"]);
+    expect(args).not.toContain("--allowedTools");
+    expect(denied(args)).toEqual(
+      expect.arrayContaining(["Bash", "Read(/${{ runner.temp }}/**)", ...CREDENTIALS]),
+    );
   });
 });
