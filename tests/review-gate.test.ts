@@ -9,6 +9,7 @@ import {
   parseAreas,
   parseReview,
   parseVerdict,
+  parseGateNote,
   paths,
   renderComment,
   reviewArgs,
@@ -240,6 +241,18 @@ describe("the gate", () => {
     expect(decideGate(gate({ draft: true }))).toMatchObject({ status: "in_progress" });
   });
 
+  it("says which lane it leaves the pull request in, for the line's waiter", () => {
+    const open = buildVerdict(null, review([bug]), HEAD, null);
+    expect(decideGate(gate()).lane).toBe("merge");
+    expect(decideGate(gate({ verdict: open })).lane).toBe("fix");
+    expect(decideGate(gate({ labels: [OWNER_LABEL] })).lane).toBe("owner");
+    expect(decideGate(gate({ verdict: null, review: null })).lane).toBe("wait");
+    const note = { version: 1, lane: "fix", reviewed: HEAD };
+    expect(parseGateNote(JSON.stringify(note))).toEqual(note);
+    expect(parseGateNote(JSON.stringify({ ...note, lane: "merge please" }))).toBeNull();
+    expect(parseGateNote("not json")).toBeNull();
+  });
+
   it("leaves a pull request from another repository to the owner, unreviewed", () => {
     expect(decideGate(gate({ fork: true, verdict: null, review: null }))).toMatchObject({
       conclusion: "failure",
@@ -256,12 +269,15 @@ describe("owner areas", () => {
     expect(areas.every((area) => area.globs.length > 0)).toBe(true);
   });
 
-  it("catch the gate itself, dependencies and saved data, and nothing else", () => {
+  it("catch the gate itself, the agents' rules, dependencies and saved data, and nothing else", () => {
     expect(touchedAreas([".github/workflows/ci.yml"], areas)).toEqual([
       "the checks and the review gate",
     ]);
     expect(touchedAreas(["scripts/review-gate.ts"], areas)).toEqual([
       "the checks and the review gate",
+    ]);
+    expect(touchedAreas(["AGENTS.md", ".agents/skills/ship/SKILL.md"], areas)).toEqual([
+      "how agents work and ship",
     ]);
     expect(touchedAreas(["package-lock.json", "src/library/store.ts"], areas)).toEqual([
       "dependencies and the toolchain",

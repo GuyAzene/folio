@@ -6,6 +6,13 @@
 .github/**
 scripts/review-gate.ts
 
+# The rules agents work by, so an agent can't loosen its own and merge that.
+[how agents work and ship]
+AGENTS.md
+.agents/**
+.claude/skills/**
+scripts/line.ts
+
 [dependencies and the toolchain]
 package.json
 package-lock.json

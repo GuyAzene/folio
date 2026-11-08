@@ -56,8 +56,9 @@ jobs:
           elif files=$(git diff --name-only "$range" 2>/dev/null) && [ -n "$files" ]; then
             count=$(wc -l <<< "$files" | tr -d ' ')
             # Docs, Markdown at the root and in .github, GitHub's templates and settings, the
-            # license and unit tests: nothing the macOS and Windows jobs build or check.
-            others=$(grep -Ev '^(docs/.*|[^/]+\.md|\.github/([^/]+\.md|ISSUE_TEMPLATE/.*|release\.yml|dependabot\.yml)|LICENSE|\.gitignore|tests/.*\.test\.ts)$' <<< "$files" || true)
+            # agents' skills, the license and unit tests: nothing the macOS and Windows jobs
+            # build or check.
+            others=$(grep -Ev '^(docs/.*|[^/]+\.md|\.github/([^/]+\.md|ISSUE_TEMPLATE/.*|release\.yml|dependabot\.yml)|\.agents/skills/.*|\.claude/skills/.*|LICENSE|\.gitignore|tests/.*\.test\.ts)$' <<< "$files" || true)
             if [ -n "$others" ]; then
               app=true
               why="$(wc -l <<< "$others" | tr -d ' ') of $count changed files are the app, its build or its checks"
