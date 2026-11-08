@@ -95,8 +95,11 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["tests/**/*.test.ts"],
-    // Windows runs the tests that write many files several times slower than a Mac does.
-    testTimeout: process.platform === "win32" ? 20_000 : 5_000,
+    // Room for a test's setup beyond its longest wait for background work (forWork in
+    // tests/windows.ts), so a slow machine fails that wait with its own message, not this limit.
+    // GitHub's Linux runners can be fifty times slower than a Mac at the tests that write many
+    // files, and Windows slower still.
+    testTimeout: process.platform === "win32" ? 20_000 : 10_000,
     // And gives their waits longer there.
     setupFiles: ["tests/setup.ts"],
   },

@@ -4,7 +4,7 @@ import { vi } from "vitest";
 // the background work a test waits for, such as a queue starting the next job once files are
 // written, can take more than a second on a busy machine, and GitHub's runners run several test
 // files at once. A wait that is met returns at once. Windows, several times slower at writing
-// many files, gets five seconds; elsewhere three, within the five a test gets.
+// many files, gets five seconds; elsewhere three, within the ten a test gets.
 const timeout = process.platform === "win32" ? 5_000 : 3_000;
 const waitFor = vi.waitFor.bind(vi);
 vi.waitFor = ((callback, options) =>
