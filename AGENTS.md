@@ -79,14 +79,16 @@ through `.claude/skills/`. Read-only work, such as a question, an explanation, a
 investigation, needs none of it: no worktree, branch or pull request. Once it leads to an edit,
 that edit is isolated first.
 
-1. **Plan** (`folio-plan`): every question asked up front, then what "done" looks like.
-2. **Isolate** (`folio-isolate`): its own worktree and branch from the newest `main`, before the
+1. **Scope** (`scope`): every question asked up front, then what "done" looks like.
+2. **Isolate** (`isolate`): its own worktree and branch from the newest `main`, before the
    first edit, every time, even for one line of README.
-3. **Build**, by the rules above.
-4. **Prove** (`folio-prove`): the checks, and evidence that it does what "done" says.
-5. **Ship** (`folio-ship`): the pull request. `vp node scripts/line.ts ship` waits for CI and
+3. **Build** (`build`), by the rules above and the boundaries in
+   [docs/architecture.md](docs/architecture.md).
+4. **Prove** (`prove`): the checks, and evidence that it does what "done" says: the failure
+   before a fix, and a before and an after for what the student sees.
+5. **Ship** (`ship`): the pull request. `vp node scripts/line.ts ship` waits for CI and
    Claude's review of the newest commit, and says what's next.
-6. **Land** (`folio-land`): `vp node scripts/line.ts land` waits for the merge and for `main` to
+6. **Land** (`land`): `vp node scripts/line.ts land` waits for the merge and for `main` to
    stay green.
 
 A small change, such as README text, skips the questions and the evidence, but still gets its own
@@ -115,8 +117,8 @@ task:
    `notes-overflow-4f2a`, and `<agent>` is `claude`, `codex` or `cursor`. If the name is taken,
    pick another: never force or reuse one.
 
-`folio-isolate` adds the overlap check and the install. The worktree stays until its pull request
-merges or closes, and `folio-land` removes it.
+`isolate` adds the overlap check and the install. The worktree stays until its pull request
+merges or closes, and `land` removes it.
 
 ### Working alongside other agents
 
@@ -136,9 +138,13 @@ merges or closes, and `folio-land` removes it.
   a port answers your own process before trusting what it serves.
 - If a conflict can't be resolved with confidence, stop and say what it is.
 
+### Merging
+
 Agents don't decide to merge. Once CI and the review gate pass on the newest commit, the ship wait
 has GitHub merge it: it turns auto-merge on, or merges at once when GitHub's rules already allow
-it. That is the only place anything merges. The owner merges instead when the pull request
+it. That is the only place anything merges. The review's notes hold it too, until the agent has
+fixed the ones that are right and in scope and answered the rest on the pull request; after three
+rounds they no longer hold it. The owner merges instead when the pull request
 touches an area in [`.github/owner-areas.txt`](.github/owner-areas.txt), carries the
 `needs owner` label, has a serious finding its author disputes, or still has serious findings
 after three reviews. Never turn auto-merge off, merge past a rule (`--admin`) or push to `main`,
@@ -152,3 +158,20 @@ Once the owner says go, the work goes on until it ends in one of these, said in 
   sign-in, an install, a permission), or GitHub isn't answering. Say exactly what.
 
 Nothing else is a reason to stop or to ask.
+
+## Writing for people
+
+Run `unslop` over anything a person will read before you commit, post or send it: commit
+messages, the pull request's title and description, docs, code comments and replies. Apply it to
+text you wrote or changed, not to prose you didn't touch. Issues, pull requests and commits are
+public.
+
+## Where the line comes from
+
+The line follows [rstack](https://github.com/michaelshimeles/rstack)'s workflow: isolate first,
+build within the project's own structure, prove with evidence, and loop on review until nothing
+worth fixing is left. `isolate`, `build` and `prove` are Folio's own versions
+of its `new-feature`, `code-structure` and `evidence-driven-testing`. `ship` takes the
+review loop's rules from `greploop`, with Claude's review in place of Greptile. `unslop` is
+rstack's `unslop`, from Cursor's pstack, unchanged; its MIT license is in its
+folder.

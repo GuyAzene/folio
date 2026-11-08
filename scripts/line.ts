@@ -3,7 +3,9 @@
 //
 //   vp node scripts/line.ts ship [pr]   until CI and the review gate have both spoken on the pull
 //                                       request's newest commit; when nothing holds it back,
-//                                       has GitHub merge it
+//                                       has GitHub merge it. The review's notes hold it back
+//                                       too, until they're fixed or, with --notes-answered
+//                                       <commit>, answered on the pull request
 //   vp node scripts/line.ts land [pr]   until the pull request has merged and main's CI on the
 //                                       merge has finished, every job of it
 //
@@ -20,6 +22,7 @@ import {
   ACTIONS_APP,
   GATE_CHECK,
   REVIEW_APP,
+  ROUNDS,
   VERDICT_CHECK,
   parseGateNote,
   parseVerdict,
@@ -74,12 +77,16 @@ export const failedChecks = (checks: Check[]) =>
     .filter((check) => check.name !== CI_CHECK && check.name !== GATE_CHECK)
     .map((check) => `${check.name}: ${check.conclusion}`);
 
-/** What a ship wait knows now: still waiting, or done with an outcome and what to do next. */
+/**
+ * What a ship wait knows now: still waiting, or done with an outcome and what to do next.
+ * `answered` is the commit whose review's notes the agent answered on the pull request.
+ */
 export const readShip = (
   pr: Pull,
   checks: Check[],
   verdict: Verdict | null,
   note: GateNote | null,
+  answered = "",
 ): Step => {
   if (pr.state === "MERGED")
     return {
@@ -125,12 +132,34 @@ export const readShip = (
     );
     return { done: true, outcome: "fix", lines };
   }
+  // Notes don't fail the gate, but the line fixes or answers them before anything merges, so a
+  // review stops only when nothing worth doing is left. After the last round, they stay open.
+  const notes = verdict && verdict.sha === note.reviewed ? verdict.notes : [];
+  const reviewed = short(note.reviewed);
+  const lastRound = (verdict?.round ?? 0) >= ROUNDS;
+  if (notes.length && !lastRound && !(answered.length >= 7 && note.reviewed.startsWith(answered)))
+    return {
+      done: true,
+      outcome: "fix",
+      lines: [
+        `#${pr.number} at ${short(pr.head)} passed, but the review of ${reviewed} left notes:`,
+        ...notes.map((item) => `- ${item.title}${place(item)}. ${item.why}`),
+        "Fix the ones that are right and within this pull request's scope, run the checks, push, and ship again. Don't change correct code just to satisfy the review.",
+        `For each note you leave, reply on the pull request with why, then ship again with --notes-answered ${reviewed}.`,
+      ],
+    };
+  const leftOpen = notes.length
+    ? [
+        `Notes ${lastRound ? `left open after ${verdict!.round} rounds` : "answered on the pull request"}: ${notes.map((item) => item.title).join("; ")}.`,
+      ]
+    : [];
   if (note.lane === "owner")
     return {
       done: true,
       outcome: "owner",
       lines: [
         `#${pr.number} passed CI and waits for the owner to merge it: ${gate.title ?? "the review gate"}.`,
+        ...leftOpen,
         "Tell the owner in one line, then stop. Don't merge it, and don't turn auto-merge on.",
       ],
     };
@@ -141,6 +170,7 @@ export const readShip = (
       pr.autoMerge
         ? `#${pr.number} passed CI and the review gate, and auto-merge is on: GitHub merges it. Next: land.`
         : `#${pr.number} passed CI and the review gate. Next: land.`,
+      ...leftOpen,
     ],
   };
 };
@@ -378,7 +408,7 @@ const wait = async (minutes: number, look: () => Promise<Step>): Promise<Outcome
   }
 };
 
-const ship = async (number: string | undefined, minutes: number) => {
+const ship = async (number: string | undefined, minutes: number, answered = "") => {
   let head = "";
   let seen = new Map<string, string>();
   let failed = new Set<string>();
@@ -403,8 +433,8 @@ const ship = async (number: string | undefined, minutes: number) => {
     if (pr.state === "OPEN")
       for (const line of failedSteps(failed, await jobsOn(pr.head))) say(line);
     const note = parseGateNote(ours(checks, GATE_CHECK)?.text);
-    const verdict = note?.lane === "fix" ? await verdictOn(note.reviewed) : null;
-    const step = readShip(pr, checks, verdict, note);
+    const verdict = note && note.lane !== "wait" ? await verdictOn(note.reviewed) : null;
+    const step = readShip(pr, checks, verdict, note, answered);
     if (!step.done || step.outcome !== "done" || pr.state !== "OPEN" || pr.autoMerge) return step;
     // The one place anything merges: CI and the gate passed on this very commit. GitHub still
     // merges only once its own rules allow it, and nothing here turns auto-merge off.
@@ -425,7 +455,7 @@ const ship = async (number: string | undefined, minutes: number) => {
         ],
       };
     }
-    return readShip(await pull(number), checks, verdict, note);
+    return readShip(await pull(number), checks, verdict, note, answered);
   });
 };
 
@@ -478,11 +508,22 @@ const commands: Record<string, typeof ship> = { ship, land };
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const [name, ...rest] = process.argv.slice(2);
-  const at = rest.indexOf("--minutes");
-  const minutes = at >= 0 ? Number(rest.splice(at, 2)[1]) : 60;
+  const option = (flag: string) => {
+    const at = rest.indexOf(flag);
+    return at >= 0 ? (rest.splice(at, 2)[1] ?? "") : undefined;
+  };
+  const minutes = Number(option("--minutes") ?? 60);
+  const answered = option("--notes-answered");
   const command = commands[name ?? ""];
-  if (!command || !(minutes > 0) || rest.length > 1) {
-    console.error("Usage: vp node scripts/line.ts ship|land [pull request] [--minutes 60]");
+  if (
+    !command ||
+    !(minutes > 0) ||
+    rest.length > 1 ||
+    (answered !== undefined && (name !== "ship" || answered.length < 7))
+  ) {
+    console.error(
+      "Usage: vp node scripts/line.ts ship|land [pull request] [--minutes 60] [--notes-answered <commit>]",
+    );
     process.exit(EXIT.fix);
   }
   // Found once up front, so a wrong number or a branch without a pull request fails at once
@@ -494,5 +535,5 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     say(`No such pull request: ${(error as Error).message.split("\n")[0]}`);
     process.exit(EXIT.fix);
   }
-  process.exit(EXIT[await command(number, minutes)]);
+  process.exit(EXIT[await command(number, minutes, answered)]);
 }

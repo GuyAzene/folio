@@ -1,5 +1,5 @@
 ---
-name: folio-isolate
+name: isolate
 description: Use before the first edit to the Folio repository, for any feature, fix or docs change, even one line. Gives the task its own git worktree and branch from the latest main, keeps a worktree the environment already made for it, and checks open pull requests for overlap. Read-only questions, reviews and investigations need none.
 ---
 
@@ -59,8 +59,8 @@ session was given.
   development Folios at once, and check that a port answers your own process before trusting it.
 - Each worktree has its own `package-lock.json`. Resolve a conflict in it by regenerating it with
   `vp install`, never by hand.
-- The worktree stays until the pull request merges or closes; [folio-land](../folio-land/SKILL.md)
+- The worktree stays until the pull request merges or closes; [land](../land/SKILL.md)
   removes it with its branch.
 
 Next: build, by the rules in [AGENTS.md](../../../AGENTS.md), then
-[folio-prove](../folio-prove/SKILL.md).
+[prove](../prove/SKILL.md).

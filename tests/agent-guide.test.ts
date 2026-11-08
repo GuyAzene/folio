@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { existsSync, lstatSync, readFileSync, readdirSync, readlinkSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -7,6 +8,9 @@ import { describe, expect, it } from "vitest";
 const SKILLS = ".agents/skills";
 const skills = readdirSync(SKILLS).filter((name) => existsSync(join(SKILLS, name, "SKILL.md")));
 const guide = readFileSync("AGENTS.md", "utf8");
+/** Whether git would leave a path out of a commit; `git check-ignore` exits 1 when it wouldn't. */
+const gitIgnored = (path: string) =>
+  spawnSync("git", ["check-ignore", "--quiet", "--no-index", path]).status === 0;
 
 describe("the agents' guide", () => {
   it("is what Claude Code loads too, which reads CLAUDE.md and not AGENTS.md", () => {
@@ -15,7 +19,7 @@ describe("the agents' guide", () => {
   });
 
   it("says itself to isolate before the first edit, since a skill's description may not reach an agent", () => {
-    expect(guide).toContain("folio-isolate");
+    expect(guide).toContain("(`isolate`)");
     expect(guide).toContain("before the first edit");
     expect(guide).toMatch(/git worktree add \.\.\/folio-<task> -b <agent>\/<task> origin\/main/);
     expect(guide).toContain("git branch --show-current");
@@ -28,10 +32,42 @@ describe("the agents' guide", () => {
       const front = /^---\nname: (.+)\ndescription: (.+)\n---\n/.exec(text);
       expect(front?.[1], name).toBe(name);
       expect(front?.[2]?.length, name).toBeGreaterThan(40);
+      // Git keeps it as a link. Windows reads its target back with backslashes, and a checkout
+      // without links writes the target into a small file instead.
       const link = join(".claude/skills", name);
-      expect(lstatSync(link).isSymbolicLink(), link).toBe(true);
-      expect(readlinkSync(link)).toBe(`../../${SKILLS}/${name}`);
+      const target = lstatSync(link).isSymbolicLink()
+        ? readlinkSync(link)
+        : readFileSync(link, "utf8");
+      expect(target.replaceAll("\\", "/"), link).toBe(`../../${SKILLS}/${name}`);
     }
+  });
+
+  it("links only to skills that git keeps", () => {
+    for (const name of readdirSync(".claude/skills")) {
+      expect(existsSync(join(SKILLS, name, "SKILL.md")), name).toBe(true);
+      expect(gitIgnored(join(SKILLS, name, "SKILL.md")), name).toBe(false);
+    }
+  });
+
+  it("names no skill after a command the agents already have, which it would shadow or lose to", () => {
+    // Claude Code's /plan, and commands the agents commonly build in.
+    const builtIn = [
+      "plan",
+      "review",
+      "init",
+      "help",
+      "clear",
+      "compact",
+      "model",
+      "status",
+      "diff",
+    ];
+    expect(skills.filter((name) => builtIn.includes(name))).toEqual([]);
+  });
+
+  it("names every skill, and keeps the license of one that comes from elsewhere", () => {
+    for (const name of skills) expect(guide, name).toContain(`\`${name}\``);
+    expect(readFileSync(join(SKILLS, "unslop", "LICENSE"), "utf8")).toContain("MIT License");
   });
 
   it("only links to files that exist", () => {

@@ -15,6 +15,7 @@ import {
   ACTIONS_APP,
   GATE_CHECK,
   REVIEW_APP,
+  ROUNDS,
   buildVerdict,
   type GateNote,
   type Lane,
@@ -128,6 +129,57 @@ describe("ship", () => {
     );
     expect(step).toMatchObject({ done: true, outcome: "owner" });
     expect(step.done && step.lines.join("\n")).toContain("don't turn auto-merge on");
+  });
+
+  describe("the review's notes", () => {
+    const naming = {
+      title: "Rename run to start",
+      file: "src/jobs/run.ts",
+      line: 3,
+      serious: false,
+      why: "It reads better.",
+    };
+    const withNotes = buildVerdict(
+      null,
+      { summary: "", earlier: [], findings: [naming] },
+      HEAD,
+      null,
+    );
+    const passed = [check("CI", "success"), gate("merge")];
+
+    it("hold a pass until they're fixed or answered, without merging", () => {
+      const step = readShip(pull(), passed, withNotes, note("merge"));
+      expect(step).toMatchObject({ done: true, outcome: "fix" });
+      const text = step.done ? step.lines.join("\n") : "";
+      expect(text).toContain("Rename run to start (src/jobs/run.ts:3). It reads better.");
+      expect(text).toContain("--notes-answered aaaaaaa");
+      expect(text).toContain("Don't change correct code");
+    });
+
+    it("let it go once answered, for the review of that commit only", () => {
+      expect(readShip(pull(), passed, withNotes, note("merge"), "aaaaaaa")).toMatchObject({
+        done: true,
+        outcome: "done",
+      });
+      expect(readShip(pull(), passed, withNotes, note("merge"), "bbbbbbb")).toMatchObject({
+        outcome: "fix",
+      });
+    });
+
+    it("come before the owner's merge too", () => {
+      expect(
+        readShip(pull(), [check("CI", "success"), gate("owner")], withNotes, note("owner")),
+      ).toMatchObject({
+        outcome: "fix",
+      });
+    });
+
+    it("stop holding it after the last round, and are listed as left open", () => {
+      const last = { ...withNotes, round: ROUNDS };
+      const step = readShip(pull(), passed, last, note("merge"));
+      expect(step).toMatchObject({ done: true, outcome: "done" });
+      expect(step.done && step.lines.join("\n")).toContain("left open after 3 rounds");
+    });
   });
 
   it("says what to do with a draft, a merged and a closed pull request", () => {
