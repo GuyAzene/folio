@@ -1,0 +1,22 @@
+name: Pull request
+
+# Tells the Review workflow, which runs from main, that a pull request changed. It does nothing
+# else and holds no permissions or secrets. Whatever a pull request changes here, its review and
+# its gate are still decided by main's code; one that stops this signal gets no gate at all.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft, labeled, unlabeled]
+
+permissions: {}
+
+jobs:
+  signal:
+    name: Signal the review
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Signal
+        env:
+          PR: ${{ github.event.number }}
+          ACTION: ${{ github.event.action }}
+        run: echo "#$PR $ACTION. The Review workflow on main takes it from here."
