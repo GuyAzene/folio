@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { chmod, lstat, mkdir, open, readFile, realpath, rename, rm } from "node:fs/promises";
+import { chmod, lstat, mkdir, open, readFile, realpath, rm } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { setTimeout } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
@@ -22,6 +22,7 @@ import {
   type ChatGPTRegistration,
 } from "./chatgpt-sign-in.ts";
 import { keyProviders } from "./connections.ts";
+import { replaceFile } from "./files.ts";
 import { folioHome } from "./home.ts";
 import { CONNECTIONS, connectionOf, type ConnectionId } from "./model-refs.ts";
 
@@ -234,7 +235,7 @@ export class FolioCredentialStore implements CredentialStore {
       } finally {
         await handle.close();
       }
-      await rename(temporary, file);
+      await replaceFile(temporary, file);
     } finally {
       await rm(temporary, { force: true });
     }

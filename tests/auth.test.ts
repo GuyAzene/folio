@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, open, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { setTimeout } from "node:timers/promises";
@@ -268,6 +268,24 @@ describe("Folio's API keys", () => {
     expect(await models.getAuth("anthropic")).toBeUndefined();
     expect([...(await readConnections(store))].sort()).toEqual(["chatgpt", "openrouter"]);
     expect(await readFile(resolve(home, "connection.json"), "utf8")).toBe(signIn);
+  });
+
+  it("save a key while something else is reading the key file for a moment", async () => {
+    const home = await makeHome();
+    const file = resolve(home, "keys.json");
+    const { store } = await createFolioModels({ home });
+    await store.modify("anthropic", async () => key("sk-ant-synthetic-0123"));
+    // A reader holding the file, as an editor or an antivirus scan does.
+    const reader = await open(file, "r");
+    const released = setTimeout(300).then(() => reader.close());
+    try {
+      await store.modify("anthropic", async () => key("sk-ant-synthetic-4567"));
+    } finally {
+      await released;
+    }
+    expect(JSON.parse(await readFile(file, "utf8")).keys.anthropic.key).toBe(
+      "sk-ant-synthetic-4567",
+    );
   });
 
   it("never read a key from the shell or a provider's own sign-in", async () => {
