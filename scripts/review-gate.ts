@@ -232,13 +232,22 @@ export const reviewPrompt = (scope: {
 /**
  * Claude can read and search the checkout and the prepared diff and log. The action puts its
  * GitHub token in the checkout's Git config, so .git is excluded even with credentials disabled
- * at checkout. Project settings, hooks and MCP servers from the pull request stay unloaded.
+ * at checkout. The process environment, the runner's temporary folder, and Claude's and gh's
+ * own folders are excluded too, as in the @claude workflow, though reads outside the working
+ * directories are blocked already. `temp` is the runner's temporary folder: these arguments are
+ * made in the start job, on the same kind of runner as the review, so its path is the same.
+ * Every deny goes in one flag, so none depends on how repeated flags are merged.
  */
-export const reviewArgs = () =>
+export const reviewArgs = (temp?: string) =>
   [
     `--tools "Read,Grep,Glob"`,
     `--allowedTools "Read(/**),Read(//tmp/review/**)"`,
-    `--disallowedTools "Bash,Edit,Write,NotebookEdit,WebFetch,WebSearch,mcp__*,Read(/.git),Read(/.git/**)"`,
+    `--disallowedTools "${[
+      "Bash,Edit,Write,NotebookEdit,WebFetch,WebSearch,mcp__*",
+      "Read(/.git),Read(/.git/**),Read(//proc/**)",
+      ...(temp ? [`Read(/${temp}/**)`] : []),
+      "Read(~/.claude/**),Read(~/.config/gh/**)",
+    ].join(",")}"`,
     "--add-dir /tmp/review",
     `--settings '{"permissions":{"blockReadsOutsideWorkingDirectories":true}}'`,
     "--setting-sources user",
@@ -737,7 +746,7 @@ const start = async () => {
       since,
     }),
   );
-  output("args", reviewArgs());
+  output("args", reviewArgs(process.env.RUNNER_TEMP));
   console.log(`#${pr.number} ${short(reviewed)}: review started.`);
 };
 

@@ -40,10 +40,10 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           # Tag mode adds blanket read and git permissions. Keep its reply tool and downloaded
           # thread images, but exclude shell commands, project settings and runner credentials.
+          # Every deny goes in one flag, so none depends on how repeated flags are merged.
           claude_args: |
             --tools "Read,Grep,Glob"
-            --disallowedTools "Bash,Edit,Write,MultiEdit,NotebookEdit,Read(/.git),Read(/.git/**)"
-            --disallowedTools "Read(//proc/**),Read(/${{ runner.temp }}/**),Read(~/.claude/**),Read(~/.config/gh/**)"
+            --disallowedTools "Bash,Edit,Write,MultiEdit,NotebookEdit,Read(/.git),Read(/.git/**),Read(//proc/**),Read(/${{ runner.temp }}/**),Read(~/.claude/**),Read(~/.config/gh/**)"
             --add-dir /tmp/github-images
             --settings '{"permissions":{"blockReadsOutsideWorkingDirectories":true}}'
             --setting-sources user

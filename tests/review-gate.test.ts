@@ -37,6 +37,24 @@ import {
 const HEAD = "a".repeat(40);
 const EARLIER = "b".repeat(40);
 
+// What Claude's arguments deny, from their one --disallowedTools flag: were there two, a CLI or
+// action that keeps only the last would drop whatever the first one denied.
+const denied = (args: string) => {
+  const flags = [...args.matchAll(/^--disallowedTools "([^"]+)"$/gm)];
+  expect(flags).toHaveLength(1);
+  expect(args.match(/--disallowedTools/g)).toHaveLength(1);
+  return flags[0]![1]!.split(",");
+};
+// Where a pinned action keeps tokens and the runner keeps its environment, denied in both
+// workflows even though reads outside the working directories are already blocked.
+const CREDENTIALS = [
+  "Read(/.git)",
+  "Read(/.git/**)",
+  "Read(//proc/**)",
+  "Read(~/.claude/**)",
+  "Read(~/.config/gh/**)",
+];
+
 const review = (findings: Review["findings"] = [], earlier: Review["earlier"] = []): Review => ({
   summary: "Looks at the change.",
   earlier,
@@ -188,7 +206,16 @@ describe("the review's instructions", () => {
     expect(args).toContain(
       '--settings \'{"permissions":{"blockReadsOutsideWorkingDirectories":true}}\'',
     );
-    expect(args).toMatch(/--disallowedTools "[^"]*Read\(\/\.git\),Read\(\/\.git\/\*\*\)/);
+    expect(denied(args)).toEqual(
+      expect.arrayContaining(["Bash", "WebFetch", "mcp__*", ...CREDENTIALS]),
+    );
+  });
+
+  it("deny the runner's temporary folder, which the review job shares the path of", () => {
+    expect(denied(reviewArgs("/home/runner/work/_temp"))).toContain(
+      "Read(//home/runner/work/_temp/**)",
+    );
+    expect(denied(reviewArgs()).filter((rule) => rule.includes("_temp"))).toEqual([]);
   });
 
   it("start over from the whole pull request when the last reviewed commit is gone", () => {
@@ -781,6 +808,7 @@ describe("the Review workflow", () => {
   };
   type Job = {
     if?: string;
+    "runs-on"?: string;
     environment?: { name: string; deployment: boolean };
     permissions?: Record<string, string>;
     steps: Step[];
@@ -801,6 +829,11 @@ describe("the Review workflow", () => {
     expect(Object.keys(workflow.on).sort()).toEqual(["workflow_dispatch", "workflow_run"]);
     expect(workflow.on.workflow_run).toMatchObject({ workflows: ["Pull request"] });
     expect(workflow.permissions).toEqual({});
+  });
+
+  it("makes Claude's arguments on the same kind of runner as the review, whose temporary folder they deny", () => {
+    expect(workflow.jobs.start?.["runs-on"]).toBe("ubuntu-latest");
+    expect(workflow.jobs.review?.["runs-on"]).toBe(workflow.jobs.start?.["runs-on"]);
   });
 
   it("gives the app's key only to jobs in the main-only environment", () => {
@@ -883,19 +916,8 @@ describe("the @claude workflow", () => {
     );
     expect(args.match(/^--add-dir .+$/gm)).toEqual(["--add-dir /tmp/github-images"]);
     expect(args).not.toContain("--allowedTools");
-    const deny = [...args.matchAll(/^--disallowedTools "([^"]+)"$/gm)].flatMap((match) =>
-      match[1]!.split(","),
-    );
-    expect(deny).toEqual(
-      expect.arrayContaining([
-        "Bash",
-        "Read(/.git)",
-        "Read(/.git/**)",
-        "Read(//proc/**)",
-        "Read(/${{ runner.temp }}/**)",
-        "Read(~/.claude/**)",
-        "Read(~/.config/gh/**)",
-      ]),
+    expect(denied(args)).toEqual(
+      expect.arrayContaining(["Bash", "Read(/${{ runner.temp }}/**)", ...CREDENTIALS]),
     );
   });
 });

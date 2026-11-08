@@ -720,10 +720,15 @@ tried again at the next signal.
 
 The `@claude` workflow uses the thread context and images the action collects. It can read and
 search the checkout and `/tmp/github-images`, and uses the action's comment tool to reply. Both
-workflows limit file tools to their working directories and explicitly exclude `.git`, where
-the pinned action puts its GitHub token. Both deny shell access, including the Git commands the
-action adds for `@claude`. Claude Code enforces these rules at the tool level and still uses the
-OAuth token in its process environment to authenticate.
+workflows limit file tools to their working directories and also exclude by name `.git`, where
+the pinned action puts its GitHub token, `/proc`, where the process environment can be read,
+the runner's temporary folder, and Claude's and gh's own folders. Each lists its denies in one
+`--disallowedTools` flag, so none depends on how repeated flags are merged. The review's
+arguments are made in the start job, so they name the runner's temporary folder as that job
+sees it; both jobs run on the same kind of runner, which the tests check. Both deny shell
+access, including the Git commands the action adds for `@claude`. Claude Code enforces these
+rules at the tool level and still uses the OAuth token in its process environment to
+authenticate.
 
 Who can write the gate. Only a GitHub App can make a check run, so no person's login can make a
 verdict or a gate. The verdict and the gate that count are made by Folio's own GitHub App,
