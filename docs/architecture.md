@@ -753,10 +753,19 @@ counting CI only from GitHub Actions and the verdict and the gate only from the 
 gate marks its lane (wait, fix, owner or merge). It lists the serious findings or failed jobs to fix, or says the owner merges
 this one. On a pass it turns auto-merge on, or merges at once when GitHub answers that its rules
 already allow the merge ("clean status"); it is the one place anything merges, never past a rule
-and never with auto-merge turned off. `land` waits for the
+and never with auto-merge turned off. The review's notes hold a pass too: `ship` ends with
+something to fix until they're fixed or, with `--notes-answered <commit>`, answered on the pull
+request, and they stop holding it after the third round. `land` waits for the
 merge and then for every job of `main`'s CI on it, following a newer run when another push
 cancelled that one. Both ask GitHub through the gh CLI, print a line whenever something changes,
 and end with an exit code for what's next.
+
+Every agent reads one guide. Codex and Cursor read `AGENTS.md` from the root, and Claude Code reads
+`CLAUDE.md`, which only imports it, so a Claude session in a worktree outside the owner's
+checkout gets the same rules. `AGENTS.md` itself says how to isolate a task before its first
+edit, because a skill's description doesn't always reach the agent: with many skills installed,
+Claude Code lists some by name only. `tests/agent-guide.test.ts` holds the guide to that, and
+checks that every skill has its link in `.claude/skills/` and that the guide's links resolve.
 
 A quit signal (SIGTERM, as the installer sends) quits Folio as ⌘Q does: chats settle first.
 

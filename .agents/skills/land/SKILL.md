@@ -1,5 +1,5 @@
 ---
-name: folio-land
+name: land
 description: Finish a Folio task after ship. Wait until its pull request has merged and main's CI on the merge is green, then clean up the worktree and branch. If main turns red, fixing it comes first. Use after ship ends with done.
 ---
 

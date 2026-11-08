@@ -3,6 +3,8 @@ node_modules/
 dist/
 dist-desktop/
 build/
+# The build skill is a folder of the agents' guide, not output.
+!.agents/skills/build/
 release/
 coverage/
 *.tsbuildinfo
@@ -41,3 +43,6 @@ sessions/
 # Local working files and personal agent instructions
 .private/
 CLAUDE.local.md
+
+# Evidence a change was proven with: captures and notes, never committed
+.artifacts/

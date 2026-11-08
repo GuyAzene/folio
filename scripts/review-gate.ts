@@ -280,7 +280,11 @@ export const renderComment = (verdict: Verdict, review: Review) => {
       "",
     );
   if (verdict.notes.length)
-    lines.push("**Notes**, which don't hold the merge:", ...listed(verdict.notes.slice(0, 10)), "");
+    lines.push(
+      "**Notes**, which don't fail the gate. The author fixes the ones that are right and in scope, and answers the rest here, before it merges:",
+      ...listed(verdict.notes.slice(0, 10)),
+      "",
+    );
   lines.push(
     verdict.since
       ? `_Reviewed the changes since \`${short(verdict.since)}\`._`

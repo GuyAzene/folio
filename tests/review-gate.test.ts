@@ -385,6 +385,7 @@ describe("owner areas", () => {
     expect(touchedAreas(["AGENTS.md", ".agents/skills/ship/SKILL.md"], areas)).toEqual([
       "how agents work and ship",
     ]);
+    expect(touchedAreas(["CLAUDE.md"], areas)).toEqual(["how agents work and ship"]);
     expect(touchedAreas(["package-lock.json", "src/library/store.ts"], areas)).toEqual([
       "dependencies and the toolchain",
       "how Folio saves the student's data",

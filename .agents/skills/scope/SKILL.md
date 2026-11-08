@@ -1,9 +1,9 @@
 ---
-name: folio-plan
+name: scope
 description: The first step of any task that changes Folio, before any code. Ask the owner every question the task needs up front, then write down what done looks like, so the rest of the work runs without asking. Use whenever the owner hands over a feature, a fix or a change.
 ---
 
-# Plan
+# Scope
 
 The owner hands a task over and may then be away. A question asked halfway through waits until
 they're back, so every question is asked now, while they're here.
@@ -26,9 +26,9 @@ they're back, so every question is asked now, while they're here.
 ## Scaled to the change
 
 - **Small** (a typo, README text, a comment): no questions. Say in one line what you'll change,
-  and go.
+  and go, still isolated first.
 - **Usual** (a fix or a feature): the steps above.
 - **Large or unclear** (a new area of the app, a change to how data is saved): the steps above,
   plus a short written design for the owner to agree to before any code.
 
-Next: [folio-isolate](../folio-isolate/SKILL.md).
+Next, before the first edit: [isolate](../isolate/SKILL.md).

@@ -4,6 +4,7 @@ import {
   arm,
   failedChecks,
   failedSteps,
+  parseArgs,
   progress,
   readLand,
   readShip,
@@ -15,6 +16,7 @@ import {
   ACTIONS_APP,
   GATE_CHECK,
   REVIEW_APP,
+  ROUNDS,
   buildVerdict,
   type GateNote,
   type Lane,
@@ -86,15 +88,30 @@ describe("ship", () => {
     });
   });
 
+  const clean = buildVerdict(null, { summary: "", earlier: [], findings: [] }, HEAD, null);
+
   it("passes once CI and the gate both passed", () => {
     expect(
       readShip(
         pull({ autoMerge: true }),
         [check("CI", "success"), gate("merge")],
-        null,
+        clean,
         note("merge"),
       ),
     ).toMatchObject({ done: true, outcome: "done" });
+  });
+
+  it("waits to read the verdict of a pass, rather than merging past notes it couldn't see", () => {
+    const passed = [check("CI", "success"), gate("merge")];
+    const waiting = { done: false, waitingFor: "the review's verdict on aaaaaaa" };
+    expect(readShip(pull(), passed, null, note("merge"))).toEqual(waiting);
+    const older = buildVerdict(
+      null,
+      { summary: "", earlier: [], findings: [] },
+      "d".repeat(40),
+      null,
+    );
+    expect(readShip(pull(), passed, older, note("merge"))).toEqual(waiting);
   });
 
   it("lists the serious findings to fix, with where they are", () => {
@@ -128,6 +145,90 @@ describe("ship", () => {
     );
     expect(step).toMatchObject({ done: true, outcome: "owner" });
     expect(step.done && step.lines.join("\n")).toContain("don't turn auto-merge on");
+  });
+
+  describe("the review's notes", () => {
+    const naming = {
+      title: "Rename run to start",
+      file: "src/jobs/run.ts",
+      line: 3,
+      serious: false,
+      why: "It reads better.",
+    };
+    const withNotes = buildVerdict(
+      null,
+      { summary: "", earlier: [], findings: [naming] },
+      HEAD,
+      null,
+    );
+    const passed = [check("CI", "success"), gate("merge")];
+
+    it("hold a pass until they're fixed or answered, without merging", () => {
+      const step = readShip(pull(), passed, withNotes, note("merge"));
+      expect(step).toMatchObject({ done: true, outcome: "fix" });
+      const text = step.done ? step.lines.join("\n") : "";
+      expect(text).toContain("Rename run to start (src/jobs/run.ts:3). It reads better.");
+      expect(text).toContain("--notes-answered aaaaaaa");
+      expect(text).toContain("Don't change correct code");
+    });
+
+    it("let it go once answered, for the review of that commit only", () => {
+      expect(readShip(pull(), passed, withNotes, note("merge"), "aaaaaaa")).toMatchObject({
+        done: true,
+        outcome: "done",
+      });
+      expect(readShip(pull(), passed, withNotes, note("merge"), "bbbbbbb")).toMatchObject({
+        outcome: "fix",
+      });
+      // Too short to name one commit.
+      expect(readShip(pull(), passed, withNotes, note("merge"), "aaa")).toMatchObject({
+        outcome: "fix",
+      });
+    });
+
+    it("come before the owner's merge too", () => {
+      expect(
+        readShip(pull(), [check("CI", "success"), gate("owner")], withNotes, note("owner")),
+      ).toMatchObject({
+        outcome: "fix",
+      });
+    });
+
+    it("stop holding it after the last round, and are listed as left open", () => {
+      const last = { ...withNotes, round: ROUNDS };
+      const step = readShip(pull(), passed, last, note("merge"));
+      expect(step).toMatchObject({ done: true, outcome: "done" });
+      expect(step.done && step.lines.join("\n")).toContain("left open after 3 rounds");
+      const owners = readShip(pull(), [check("CI", "success"), gate("owner")], last, note("owner"));
+      expect(owners).toMatchObject({ done: true, outcome: "owner" });
+      expect(owners.done && owners.lines.join("\n")).toContain("left open after 3 rounds");
+    });
+  });
+
+  describe("its arguments", () => {
+    it("take a pull request, --minutes and --notes-answered", () => {
+      expect(parseArgs(["ship"])).toEqual({ name: "ship", minutes: 60 });
+      expect(parseArgs(["ship", "38", "--minutes", "5", "--notes-answered", "77d2814"])).toEqual({
+        name: "ship",
+        pr: "38",
+        minutes: 5,
+        answered: "77d2814",
+      });
+      expect(parseArgs(["land", "38"])).toEqual({ name: "land", pr: "38", minutes: 60 });
+    });
+
+    it("refuse what they can't use, so the usage is printed", () => {
+      for (const args of [
+        [],
+        ["deploy"],
+        ["ship", "1", "2"],
+        ["ship", "--minutes", "0"],
+        ["ship", "--notes-answered"],
+        ["ship", "--notes-answered", "77d"],
+        ["land", "38", "--notes-answered", "77d2814"],
+      ])
+        expect(parseArgs(args), args.join(" ")).toBeNull();
+    });
   });
 
   it("says what to do with a draft, a merged and a closed pull request", () => {
