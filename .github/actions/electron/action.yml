@@ -16,6 +16,12 @@ runs:
           ~/AppData/Local/electron/Cache
           ~/AppData/Local/electron-builder/Cache
         key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
+    # When nothing is kept yet and GitHub's download fails, npmmirror's copy of the same release
+    # is fetched instead. install.js checks either against the checksums.json Electron's package
+    # ships, pinned by the lockfile, so a copy that differs is refused.
     - name: Electron's binary
       shell: bash
-      run: vp node node_modules/electron/install.js
+      run: |
+        vp node node_modules/electron/install.js && exit 0
+        echo "::warning::GitHub's download of Electron failed; fetching npmmirror's copy, checked against Electron's checksums."
+        ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ vp node node_modules/electron/install.js

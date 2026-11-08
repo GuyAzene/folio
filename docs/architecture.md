@@ -646,7 +646,9 @@ look only at whether it may be written (`tests/fixtures/modes.ts`), which is all
 A test's wait for background work gets three seconds, five on Windows (`tests/setup.ts`), since
 GitHub's runners are busy machines. Electron's binary and electron-builder's tools come from
 downloads kept between runs for each lockfile (`.github/actions/electron`), because GitHub's
-release downloads time out now and then.
+release downloads time out now and then. With nothing kept yet, a failed download of Electron
+falls back to npmmirror's copy, which `install.js` checks against the checksums Electron's
+package ships.
 
 After a push to `main` whose checks, tests and builds pass, CI builds the app for others
 (`FOLIO_DISTRIBUTE=1`: the inspector flags off) on macOS and on Windows, and opens each on an
