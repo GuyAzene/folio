@@ -1,0 +1,21 @@
+name: Electron
+description: >-
+  Puts Electron's binary in node_modules from downloads kept between runs. GitHub's release
+  downloads time out now and then, so Electron's and electron-builder's are fetched once for each
+  lockfile and runner, then kept: a job runs without them, whatever GitHub's downloads are doing.
+runs:
+  using: composite
+  steps:
+    # The default folders of @electron/get and electron-builder on macOS and Windows. The cache is
+    # saved when the job ends, after any packaging has fetched electron-builder's tools too.
+    - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          ~/Library/Caches/electron
+          ~/Library/Caches/electron-builder
+          ~/AppData/Local/electron/Cache
+          ~/AppData/Local/electron-builder/Cache
+        key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
+    - name: Electron's binary
+      shell: bash
+      run: vp node node_modules/electron/install.js

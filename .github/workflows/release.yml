@@ -58,7 +58,7 @@ jobs:
           fi
           echo "VERSION=$version" >> "$GITHUB_ENV"
       - name: Electron
-        run: vp node node_modules/electron/install.js
+        uses: ./.github/actions/electron
       - name: Package Folio for others
         run: vp run desktop:package
         env:

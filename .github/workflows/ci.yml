@@ -122,7 +122,7 @@ jobs:
           cache-toolchain: true
           cache-save: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
       - name: Electron
-        run: vp node node_modules/electron/install.js
+        uses: ./.github/actions/electron
       # `vp run test:electron`, with the flags above.
       - name: Folio in a real window
         run: vp node --test $TEST_FLAGS tests/electron/*.e2e.ts
@@ -144,7 +144,7 @@ jobs:
           # The window job saves the same caches.
           cache-save: false
       - name: Electron
-        run: vp node node_modules/electron/install.js
+        uses: ./.github/actions/electron
       - name: Package Folio.app
         run: vp run desktop:package
         env:
@@ -183,7 +183,7 @@ jobs:
           # setup-vp's cache restores slower on Windows than installing afresh.
           cache: false
       - name: Electron
-        run: vp node node_modules/electron/install.js
+        uses: ./.github/actions/electron
       - name: Tests
         run: vp test
       # `vp run test:electron`, with the flags above; after failed unit tests too, so one run
@@ -210,7 +210,7 @@ jobs:
           sfw: true
           cache: false
       - name: Electron
-        run: vp node node_modules/electron/install.js
+        uses: ./.github/actions/electron
       - name: Package Folio for Windows
         run: vp run desktop:package
       - name: The packaged app in a real window
@@ -260,7 +260,7 @@ jobs:
           cache-toolchain: true
           cache-save: false
       - name: Electron
-        run: vp node node_modules/electron/install.js
+        uses: ./.github/actions/electron
       - name: img2webp, which joins the clip's frames
         run: command -v img2webp >/dev/null || brew install webp
         env:
@@ -335,7 +335,7 @@ jobs:
           cache-toolchain: true
           cache-save: false
       - name: Electron
-        run: vp node node_modules/electron/install.js
+        uses: ./.github/actions/electron
       - name: Package Folio for others
         run: vp run desktop:package
         env:
@@ -399,7 +399,7 @@ jobs:
           sfw: true
           cache: false
       - name: Electron
-        run: vp node node_modules/electron/install.js
+        uses: ./.github/actions/electron
       - name: Package Folio for others
         run: vp run desktop:package
         env:

@@ -643,6 +643,10 @@ on a fresh build, and packages Folio to run the same packaging checks as on macO
 before Windows passes too. Tests that write many small files run several
 times slower there, so a test gets 20 seconds on Windows, and checks of a file's permissions
 look only at whether it may be written (`tests/fixtures/modes.ts`), which is all Windows keeps.
+A test's wait for background work gets three seconds, five on Windows (`tests/setup.ts`), since
+GitHub's runners are busy machines. Electron's binary and electron-builder's tools come from
+downloads kept between runs for each lockfile (`.github/actions/electron`), because GitHub's
+release downloads time out now and then.
 
 After a push to `main` whose checks, tests and builds pass, CI builds the app for others
 (`FOLIO_DISTRIBUTE=1`: the inspector flags off) on macOS and on Windows, and opens each on an
