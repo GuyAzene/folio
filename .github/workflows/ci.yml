@@ -231,7 +231,8 @@ jobs:
   # branch, so they are reviewed with the change. A push with the workflow's token starts no
   # workflow, so this job starts CI on that commit itself: without it, the commit would never
   # get the CI check main requires. That run checks the branch as it is, not merged with main as
-  # a pull request's run does; the commit only adds pictures to what was just checked merged.
+  # a pull request's run does; the commit only adds pictures to what was just checked merged. It
+  # starts the review gate too, which carries the last review over a commit of only pictures.
   # Only this repository's own branches: Dependabot's and a fork's tokens can't push.
   pictures:
     name: "macOS: README pictures"
@@ -243,7 +244,8 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 15
     permissions:
-      # Pushes the pictures to the pull request's branch, then starts CI on that commit.
+      # Pushes the pictures to the pull request's branch, then starts CI and the review gate on
+      # that commit.
       contents: write
       actions: write
     steps:
@@ -271,6 +273,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           BRANCH: ${{ github.event.pull_request.head.ref }}
+          PR: ${{ github.event.pull_request.number }}
         run: |
           changed=$(git status --porcelain -- docs/images | cut -c4-)
           if [ -z "$changed" ]; then
@@ -287,8 +290,9 @@ jobs:
             "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
             "HEAD:refs/heads/$BRANCH"
           gh workflow run ci.yml --ref "$BRANCH"
+          gh workflow run review-gate.yml -f pr="$PR"
           {
-            echo "**README pictures:** committed $(wc -l <<< "$changed" | tr -d ' ') to \`$BRANCH\`, and started CI on that commit:"
+            echo "**README pictures:** committed $(wc -l <<< "$changed" | tr -d ' ') to \`$BRANCH\`, and started CI and the review gate on that commit:"
             echo
             sed 's/^/- /' <<< "$changed"
           } >> "$GITHUB_STEP_SUMMARY"

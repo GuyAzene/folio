@@ -675,6 +675,22 @@ elsewhere, `vp run screenshots` puts the pictures that changed in a temporary fo
 not on its result, so a picture that doesn't come out holds no change back; if its commit went
 through but starting CI on it failed, the pull request waits for a CI check, which shows.
 
+Claude reviews every push to a pull request from this repository (`claude-review.yml`): the
+whole pull request the first time, then only the changes since its last review, rechecking the
+serious findings it left open. A finding is serious only when it is a real bug, a broken promise
+or a security hole in lines the pull request changed; everything else is a note. Claude answers in
+JSON (`--json-schema`), and `scripts/review-gate.ts` posts that as a comment and as a "Review
+verdict" check holding the open findings. The Review gate workflow then sets the "Review gate"
+check on the pull request's latest commit: it passes once the newest review left nothing serious
+open, waits while a review is due or under way, and fails, saying why, while a serious finding is
+open or when the owner merges this one: the pull request touches an area in
+`.github/owner-areas.txt` or carries the "needs owner" label, comes from Dependabot, still has
+serious findings after three rounds, or couldn't be reviewed after a second try. A commit of only
+the README's pictures carries the last review over, and the pictures job starts the gate on it.
+The gate runs from `main` (`pull_request_target`, `workflow_run`) and reads the pull request only
+through the API, so a pull request can't change the gate that judges it; the verdict and the
+gate are check runs, which only a GitHub App can create. Merging doesn't wait for the gate yet.
+
 A quit signal (SIGTERM, as the installer sends) quits Folio as ⌘Q does: chats settle first.
 
 Without a Developer ID Folio cannot update itself, so it says when a newer release is out
