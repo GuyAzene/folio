@@ -1,0 +1,45 @@
+name: Electron
+description: >-
+  Puts Electron's binary in node_modules from a copy kept between runs for each lockfile, and
+  keeps electron-builder's tools the same way in a job that packages Folio. Both come from GitHub's
+  release downloads, which fail now and then: a failed download of Electron is tried again for a
+  few minutes before the job gives up. Only GitHub's own files are used.
+inputs:
+  packaging:
+    description: Whether the job packages Folio, so that electron-builder's tools are kept too.
+    default: "false"
+runs:
+  using: composite
+  steps:
+    # The default folders of @electron/get on macOS and Windows.
+    - name: Electron's download, kept from an earlier run
+      id: kept
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          ~/Library/Caches/electron
+          ~/AppData/Local/electron/Cache
+        key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
+    # electron-builder's folders; saved when the job ends, after packaging has fetched its tools.
+    - name: electron-builder's tools, kept from an earlier run
+      if: inputs.packaging == 'true'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          ~/Library/Caches/electron-builder
+          ~/AppData/Local/electron-builder/Cache
+        key: electron-builder-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
+    # install.js checks the download against the checksums.json Electron's package ships, pinned by
+    # the lockfile. Only a download GitHub answered with a server error is tried again.
+    - name: Electron's binary
+      shell: bash
+      run: bash .github/scripts/retry-downloads.sh vp node node_modules/electron/install.js
+    # Kept at once, so a job that fails later still keeps it.
+    - name: Keep Electron's download
+      if: steps.kept.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          ~/Library/Caches/electron
+          ~/AppData/Local/electron/Cache
+        key: ${{ steps.kept.outputs.cache-primary-key }}
