@@ -708,7 +708,8 @@ This runs two ways side by side until the older one is removed. The signed way r
 that a pull request changed, and its end starts the Review workflow from `main` (`workflow_run`).
 A first job marks the commit's "Review verdict" as under way, so a second signal doesn't start a
 second review of it; a mark older than an hour counts as a review that stopped. Claude reviews in
-a job of its own, on the pull request's files checked out to read: it gets the changes as a diff
+a job of its own, which only ever takes this repository's own branches (never a fork's), on the
+pull request's files checked out to read: it gets the changes as a diff
 and may only read and search them, with no git and no shell, and it loads none of the settings,
 hooks or MCP servers a pull request brings (`--setting-sources user`, and `.claude`, `.mcp.json`,
 `CLAUDE.md` and the other files the Claude action restores from the base branch on a pull request

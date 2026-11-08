@@ -808,6 +808,7 @@ describe("the Review workflow", () => {
     run?: string;
   };
   type Job = {
+    if?: string;
     environment?: { name: string; deployment: boolean };
     permissions?: Record<string, string>;
     steps: Step[];
@@ -851,6 +852,10 @@ describe("the Review workflow", () => {
     const [, job] = readsThePullRequest[0]!;
     expect(job.environment).toBeUndefined();
     expect(job.permissions).toEqual({ contents: "read" });
+    // Never a fork's branch from a workflow_run, whatever start decided.
+    expect(job.if).toContain(
+      "github.event.workflow_run.head_repository.full_name == github.repository",
+    );
     expect([...text(job).matchAll(/secrets\.(\w+)/g)].map((found) => found[1])).toEqual([
       "CLAUDE_CODE_OAUTH_TOKEN",
       "CLAUDE_CODE_OAUTH_TOKEN",

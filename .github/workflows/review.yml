@@ -91,7 +91,12 @@ jobs:
   review:
     name: Claude reviews
     needs: start
-    if: needs.start.outputs.review == 'true'
+    # Never a fork's code, whatever start decided: only this repository's own branches, which a
+    # workflow_run names, or a pull request someone with write access asked for by hand.
+    if: >-
+      needs.start.outputs.review == 'true' &&
+      (github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     # A newer commit makes the review of an older one moot.
