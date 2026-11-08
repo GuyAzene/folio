@@ -183,6 +183,30 @@ export const progress = (before: Map<string, string>, checks: Check[]) => {
   return lines;
 };
 
+export type Job = {
+  name: string;
+  status: string;
+  steps?: { name: string; conclusion: string | null }[];
+};
+
+/**
+ * One line for each step that failed inside a job that hasn't finished. A job can go on to its
+ * later steps after one fails, so its check still says it's running while the commit is already
+ * as good as failed.
+ */
+export const failedSteps = (before: Set<string>, jobs: Job[]) =>
+  jobs.flatMap((job) =>
+    job.status === "completed"
+      ? []
+      : (job.steps ?? [])
+          .filter((step) => BAD.has(step.conclusion ?? ""))
+          .filter((step) => !before.has(`${job.name}\n${step.name}`))
+          .map((step) => {
+            before.add(`${job.name}\n${step.name}`);
+            return `✗ ${job.name}: its "${step.name}" step failed, though the job is still running`;
+          }),
+  );
+
 // GitHub, through the gh CLI.
 
 const exec = promisify(execFile);
@@ -270,6 +294,25 @@ const failedJobs = async (run: Run) => {
     .map((job) => `${job.name}: ${job.conclusion}`);
 };
 
+/** The jobs of CI's newest run on a commit, with their steps. */
+const jobsOn = async (sha: string) => {
+  const { workflow_runs: runs } = await api<{ workflow_runs: WorkflowRun[] }>(
+    `actions/workflows/ci.yml/runs?head_sha=${sha}&per_page=1`,
+  );
+  if (!runs[0]) return [];
+  const { jobs } = await api<{ jobs: Job[] }>(`actions/runs/${runs[0].id}/jobs?per_page=100`);
+  return jobs;
+};
+
+/** The commit checked out here, if any, so the wait doesn't ask you to pull your own push. */
+const localHead = async () => {
+  try {
+    return (await exec("git", ["rev-parse", "HEAD"])).stdout.trim();
+  } catch {
+    return "";
+  }
+};
+
 const commitLine = async (sha: string) => {
   const commit = await api<{ commit: { message: string }; author: { login: string } | null }>(
     `commits/${sha}`,
@@ -330,19 +373,27 @@ const wait = async (minutes: number, look: () => Promise<Step>): Promise<Outcome
 const ship = async (number: string | undefined, minutes: number) => {
   let head = "";
   let seen = new Map<string, string>();
+  let failed = new Set<string>();
   return wait(minutes, async () => {
     const pr = await pull(number);
     number ??= String(pr.number);
     if (pr.head !== head) {
       if (head) {
         say(`A new commit is on the branch: ${short(pr.head)} ${await commitLine(pr.head)}.`);
-        say("Pull it before pushing again. Waiting on it now.");
+        say(
+          pr.head === (await localHead())
+            ? "Waiting on it now."
+            : "Pull it before pushing again. Waiting on it now.",
+        );
       } else say(`Shipping #${pr.number} at ${short(pr.head)}.`);
       head = pr.head;
       seen = new Map();
+      failed = new Set();
     }
     const checks = pr.state === "OPEN" ? await checksOn(pr.head) : [];
     for (const line of progress(seen, checks)) say(line);
+    if (pr.state === "OPEN")
+      for (const line of failedSteps(failed, await jobsOn(pr.head))) say(line);
     const note = parseGateNote(ours(checks, GATE_CHECK)?.text);
     const verdict = note?.lane === "fix" ? await verdictOn(note.reviewed) : null;
     const step = readShip(pr, checks, verdict, note);

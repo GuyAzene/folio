@@ -3,6 +3,7 @@ import {
   EXIT,
   arm,
   failedChecks,
+  failedSteps,
   progress,
   readLand,
   readShip,
@@ -164,6 +165,25 @@ describe("what the waits print", () => {
       "✗ CI: failure",
     ]);
     expect(progress(seen, [check("CI", "failure")])).toEqual([]);
+  });
+
+  it("prints a step that failed while its job is still running, once", () => {
+    const seen = new Set<string>();
+    const windows = {
+      name: "Windows: tests and Folio in a real window",
+      status: "in_progress",
+      steps: [
+        { name: "Electron", conclusion: "success" },
+        { name: "Tests", conclusion: "failure" },
+        { name: "Folio in a real window", conclusion: null },
+      ],
+    };
+    expect(failedSteps(seen, [windows])).toEqual([
+      '✗ Windows: tests and Folio in a real window: its "Tests" step failed, though the job is still running',
+    ]);
+    expect(failedSteps(seen, [windows])).toEqual([]);
+    // Once the job ends, its own check says it failed.
+    expect(failedSteps(new Set(), [{ ...windows, status: "completed" }])).toEqual([]);
   });
 
   it("prints what the review gate says", () => {
