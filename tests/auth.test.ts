@@ -9,6 +9,22 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { createFolioModels, readConnections, readConnectionStatus } from "../src/auth.ts";
 import { expectMode } from "./fixtures/modes.ts";
 
+/** Each file and folder flushed to disk, in order: what a crash right after a save keeps. */
+const flushed = vi.hoisted(() => [] as string[]);
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const fs = await importOriginal<typeof import("node:fs/promises")>();
+  const open = async (...args: Parameters<typeof fs.open>) => {
+    const handle = await fs.open(...args);
+    const sync = handle.sync.bind(handle);
+    handle.sync = async () => {
+      await sync();
+      flushed.push(String(args[0]));
+    };
+    return handle;
+  };
+  return { ...fs, open };
+});
+
 const run = promisify(execFile);
 const homes: string[] = [];
 const fixture = (expires = Date.now() + 3_600_000): OAuthCredential => ({
@@ -286,6 +302,22 @@ describe("Folio's API keys", () => {
     expect(JSON.parse(await readFile(file, "utf8")).keys.anthropic.key).toBe(
       "sk-ant-synthetic-4567",
     );
+  });
+
+  it("survive a crash right after a save, because their folder is flushed too", async () => {
+    const home = await makeHome();
+    flushed.length = 0;
+    // Creating the store saves the installation record in connection.json first.
+    const { store } = await createFolioModels({ home });
+    await store.modify("anthropic", async () => key("sk-ant-synthetic-0123"));
+    // Windows can't flush a folder, and journals the rename itself.
+    const folder = process.platform === "win32" ? [] : [home];
+    expect(flushed).toEqual([
+      expect.stringMatching(/connection\.json\.[\w-]+\.tmp$/),
+      ...folder,
+      expect.stringMatching(/keys\.json\.[\w-]+\.tmp$/),
+      ...folder,
+    ]);
   });
 
   it("never read a key from the shell or a provider's own sign-in", async () => {

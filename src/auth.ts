@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { chmod, lstat, mkdir, open, readFile, realpath, rm } from "node:fs/promises";
+import { chmod, lstat, mkdir, readFile, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { setTimeout } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
@@ -22,7 +22,7 @@ import {
   type ChatGPTRegistration,
 } from "./chatgpt-sign-in.ts";
 import { keyProviders } from "./connections.ts";
-import { replaceFile } from "./files.ts";
+import { writeAtomic } from "./files.ts";
 import { folioHome } from "./home.ts";
 import { CONNECTIONS, connectionOf, type ConnectionId } from "./model-refs.ts";
 
@@ -226,19 +226,7 @@ export class FolioCredentialStore implements CredentialStore {
   }
 
   async #save(saved: SavedConnection | SavedKeys, file = this.#file): Promise<void> {
-    const temporary = `${file}.${randomUUID()}.tmp`;
-    try {
-      const handle = await open(temporary, "wx", 0o600);
-      try {
-        await handle.writeFile(`${JSON.stringify(saved, null, 2)}\n`, "utf8");
-        await handle.sync();
-      } finally {
-        await handle.close();
-      }
-      await replaceFile(temporary, file);
-    } finally {
-      await rm(temporary, { force: true });
-    }
+    await writeAtomic(file, `${JSON.stringify(saved, null, 2)}\n`, { mode: 0o600 });
   }
 
   async #locked<T>(operation: () => Promise<T>, options?: AuthOperationOptions): Promise<T> {
