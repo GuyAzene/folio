@@ -148,7 +148,7 @@ jobs:
         with:
           packaging: "true"
       - name: Package Folio.app
-        run: vp run desktop:package
+        run: bash .github/scripts/retry-downloads.sh vp run desktop:package
         env:
           # electron-builder skips signing on pull requests, ad-hoc signing included, and the
           # install check verifies the signature. Ad-hoc signing uses no secret.
@@ -185,13 +185,14 @@ jobs:
           # setup-vp's cache restores slower on Windows than installing afresh.
           cache: false
       - name: Electron
+        id: electron
         uses: ./.github/actions/electron
       - name: Tests
         run: vp test
       # `vp run test:electron`, with the flags above; after failed unit tests too, so one run
-      # shows everything that fails on Windows.
+      # shows everything that fails on Windows, but not without Electron.
       - name: Folio in a real window
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.electron.outcome == 'success' }}
         run: vp node --test $TEST_FLAGS tests/electron/*.e2e.ts
 
   # Folio packaged for Windows, with the checks of what packaging can break, as on macOS.
@@ -216,7 +217,7 @@ jobs:
         with:
           packaging: "true"
       - name: Package Folio for Windows
-        run: vp run desktop:package
+        run: bash .github/scripts/retry-downloads.sh vp run desktop:package
       - name: The packaged app in a real window
         run: >-
           vp node --test $TEST_FLAGS
@@ -343,7 +344,7 @@ jobs:
         with:
           packaging: "true"
       - name: Package Folio for others
-        run: vp run desktop:package
+        run: bash .github/scripts/retry-downloads.sh vp run desktop:package
         env:
           FOLIO_DISTRIBUTE: "1"
       - name: Open and quit the packaged app
@@ -409,7 +410,7 @@ jobs:
         with:
           packaging: "true"
       - name: Package Folio for others
-        run: vp run desktop:package
+        run: bash .github/scripts/retry-downloads.sh vp run desktop:package
         env:
           FOLIO_DISTRIBUTE: "1"
       - name: Open and quit the packaged app

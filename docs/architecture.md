@@ -647,10 +647,12 @@ A test's wait for background work gets three seconds, five on Windows (`tests/se
 GitHub's runners are busy machines. Electron's binary, and electron-builder's tools where a job
 packages Folio, come from downloads kept between runs for each lockfile
 (`.github/actions/electron`), because GitHub's release downloads time out now and then. Electron's
-is kept as soon as it is fetched, so a job that fails later still keeps it, and a failed download
-is tried again for four minutes before the job says GitHub's downloads are down. Only the download
-is tried again, never a check, and only GitHub's own files are used: `install.js` checks Electron
-against the checksums its package ships.
+is kept as soon as it is fetched, so a job that fails later still keeps it. Installing Electron and
+packaging run through `.github/scripts/retry-downloads.sh`, which runs them again for four minutes
+when GitHub answered a download with a server error, then says GitHub's downloads are down; any
+other failure fails at once, so a check is never tried again. Only GitHub's own files are used:
+`install.js` checks Electron against the checksums its package ships, and electron-builder checks
+its tools against its own.
 
 After a push to `main` whose checks, tests and builds pass, CI builds the app for others
 (`FOLIO_DISTRIBUTE=1`: the inspector flags off) on macOS and on Windows, and opens each on an

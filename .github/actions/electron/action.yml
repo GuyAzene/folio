@@ -30,18 +30,10 @@ runs:
           ~/AppData/Local/electron-builder/Cache
         key: electron-builder-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
     # install.js checks the download against the checksums.json Electron's package ships, pinned by
-    # the lockfile. Only the download is tried again, never a check.
+    # the lockfile. Only a download GitHub answered with a server error is tried again.
     - name: Electron's binary
       shell: bash
-      run: |
-        for wait in 15 30 60 120 0; do
-          vp node node_modules/electron/install.js && exit 0
-          if [ "$wait" = 0 ]; then break; fi
-          echo "::warning::GitHub's download of Electron failed; trying again in $wait seconds."
-          sleep "$wait"
-        done
-        echo "::error::GitHub's download of Electron failed five times over four minutes, so its release downloads are down. Re-run this job once they're back."
-        exit 1
+      run: bash .github/scripts/retry-downloads.sh vp node node_modules/electron/install.js
     # Kept at once, so a job that fails later still keeps it.
     - name: Keep Electron's download
       if: steps.kept.outputs.cache-hit != 'true'
