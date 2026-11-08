@@ -58,9 +58,11 @@ jobs:
           fi
           echo "VERSION=$version" >> "$GITHUB_ENV"
       - name: Electron
-        run: vp node node_modules/electron/install.js
+        uses: ./.github/actions/electron
+        with:
+          packaging: "true"
       - name: Package Folio for others
-        run: vp run desktop:package
+        run: bash .github/scripts/retry-downloads.sh vp run desktop:package
         env:
           FOLIO_DISTRIBUTE: "1"
       - name: Open and quit the packaged app

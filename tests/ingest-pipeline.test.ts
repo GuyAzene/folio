@@ -28,6 +28,7 @@ import type { PageInventory, Region, SourceInventory } from "../src/ingest/types
 import { JobStore } from "../src/jobs/store.ts";
 import { LibraryStore } from "../src/library/store.ts";
 import { SYNTHETIC_LECTURE, syntheticPdf } from "./fixtures/synthetic-pdf.ts";
+import { forWork } from "./windows.ts";
 
 const homes: string[] = [];
 const stores: JobStore[] = [];
@@ -436,7 +437,7 @@ async function setup(
         const status = store.job(id).status;
         expect(["done", "waiting", "failed", "stopped"]).toContain(status);
       },
-      { timeout: 5000 },
+      { timeout: forWork(5_000) },
     );
   return {
     home,
@@ -1057,7 +1058,7 @@ describe("ingestion pipeline", () => {
     });
     const job = await runner.start(course.id, [lecture.id, broken.id]);
     await vi.waitFor(() => expect(["failed", "done"]).toContain(store.job(job.id).status), {
-      timeout: 5000,
+      timeout: forWork(5_000),
     });
     expect(store.job(job.id).status).toBe("failed");
     expect(published.map((bundle) => bundle.documents.map((d) => d.documentId))).toEqual([

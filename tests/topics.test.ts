@@ -23,6 +23,7 @@ import {
 } from "../src/kb/topics.ts";
 import { LibraryStore } from "../src/library/store.ts";
 import { bundle } from "./fixtures/draft-bundle.ts";
+import { forWork } from "./windows.ts";
 
 // Synthetic sessions only: a lecture and a recitation that both teach breadth-first search.
 
@@ -274,7 +275,9 @@ describe("regrouping existing notes", () => {
       regroup: (courseId) => store.regroup(courseId),
     });
     const job = await runner.regroup(course.id);
-    await vi.waitFor(() => expect(jobs.job(job.id).status).toBe("done"), { timeout: 5000 });
+    await vi.waitFor(() => expect(jobs.job(job.id).status).toBe("done"), {
+      timeout: forWork(5_000),
+    });
     const knowledge = (await store.knowledge(course.id))!;
     expect(knowledge.grouped).toBeTruthy();
     expect(knowledge.pages.map((page) => page.slug).sort()).toEqual(["alg-bfs", "alg-graphs"]);
