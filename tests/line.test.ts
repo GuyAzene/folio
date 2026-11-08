@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   EXIT,
+  arm,
   failedChecks,
   progress,
   readLand,
@@ -179,6 +180,30 @@ describe("what the waits print", () => {
         gate("fix"),
       ]),
     ).toEqual(["Windows: packaged app: timed_out"]);
+  });
+
+  it("has GitHub merge through auto-merge, or at once only when its rules already allow it", async () => {
+    const calls: string[][] = [];
+    const queues = async (args: string[]) => void calls.push(args);
+    expect(await arm(7, queues)).toBe("queued");
+    expect(calls).toEqual([["pr", "merge", "7", "--auto", "--squash"]]);
+
+    calls.length = 0;
+    const clean = async (args: string[]) => {
+      calls.push(args);
+      if (args.includes("--auto")) throw new Error("Pull request is in clean status");
+    };
+    expect(await arm(7, clean)).toBe("merged");
+    expect(calls.at(-1)).toEqual(["pr", "merge", "7", "--squash"]);
+    expect(calls.flat()).not.toContain("--admin");
+
+    calls.length = 0;
+    const refuses = async (args: string[]) => {
+      calls.push(args);
+      throw new Error("Auto merge is not allowed for this repository");
+    };
+    await expect(arm(7, refuses)).rejects.toThrow("not allowed");
+    expect(calls).toHaveLength(1);
   });
 
   it("gives each outcome its own exit code", () => {

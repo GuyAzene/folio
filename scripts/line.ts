@@ -2,8 +2,8 @@
 // .agents/skills say when to run them:
 //
 //   vp node scripts/line.ts ship [pr]   until CI and the review gate have both spoken on the pull
-//                                       request's newest commit; turns on auto-merge when
-//                                       nothing holds the pull request back
+//                                       request's newest commit; when nothing holds it back,
+//                                       has GitHub merge it
 //   vp node scripts/line.ts land [pr]   until the pull request has merged and main's CI on the
 //                                       merge has finished, every job of it
 //
@@ -347,17 +347,21 @@ const ship = async (number: string | undefined, minutes: number) => {
     const verdict = note?.lane === "fix" ? await verdictOn(note.reviewed) : null;
     const step = readShip(pr, checks, verdict, note);
     if (!step.done || step.outcome !== "done" || pr.state !== "OPEN" || pr.autoMerge) return step;
-    // The one moment auto-merge is turned on: CI and the gate passed on this very commit.
-    // GitHub still merges only once its own rules allow it, and nothing here turns it off.
-    say("Nothing holds it back: turning on auto-merge (squash).");
+    // The one place anything merges: CI and the gate passed on this very commit. GitHub still
+    // merges only once its own rules allow it, and nothing here turns auto-merge off.
+    say("Nothing holds it back: having GitHub merge it (squash).");
     try {
-      await arm(pr.number);
+      say(
+        (await arm(pr.number)) === "merged"
+          ? "GitHub's rules already allowed it, so it merged at once."
+          : "Auto-merge is on.",
+      );
     } catch (error) {
       return {
         done: true,
         outcome: "owner",
         lines: [
-          `GitHub refused auto-merge on #${pr.number}: ${(error as Error).message.split("\n")[0]}`,
+          `GitHub refused to merge #${pr.number}: ${(error as Error).message.split("\n")[0]}`,
           "Tell the owner in one line, then stop.",
         ],
       };
@@ -367,16 +371,18 @@ const ship = async (number: string | undefined, minutes: number) => {
 };
 
 /**
- * Auto-merge, squashing. GitHub won't queue a pull request its rules already let merge (it
- * answers that it's in "clean status"); that one is merged now, as auto-merge would have, and
- * still never past a rule.
+ * Has GitHub merge a pull request, squashed: auto-merge, which waits for GitHub's rules. GitHub
+ * won't queue one its rules already let merge (it answers that it's in "clean status"); that one
+ * is merged at once, as auto-merge would have. Never `--admin`, so never past a rule.
  */
-const arm = async (number: number) => {
+export const arm = async (number: number, run: (args: string[]) => Promise<unknown> = gh) => {
   try {
-    await gh(["pr", "merge", String(number), "--auto", "--squash"]);
+    await run(["pr", "merge", String(number), "--auto", "--squash"]);
+    return "queued" as const;
   } catch (error) {
     if (!/clean status/i.test((error as Error).message)) throw error;
-    await gh(["pr", "merge", String(number), "--squash"]);
+    await run(["pr", "merge", String(number), "--squash"]);
+    return "merged" as const;
   }
 };
 

@@ -709,7 +709,9 @@ The agent shipping a change reads the same checks (`scripts/line.ts`, run by the
 `.agents/skills/`). `ship` waits until CI and the gate have both spoken on the newest commit,
 counting only GitHub Actions' checks, which the gate's check marks with its lane (wait, fix,
 owner or merge). It lists the serious findings or failed jobs to fix, or says the owner merges
-this one; on a pass it turns auto-merge on, the one place anything does. `land` waits for the
+this one. On a pass it turns auto-merge on, or merges at once when GitHub answers that its rules
+already allow the merge ("clean status"); it is the one place anything merges, never past a rule
+and never with auto-merge turned off. `land` waits for the
 merge and then for every job of `main`'s CI on it, following a newer run when another push
 cancelled that one. Both ask GitHub through the gh CLI, print a line whenever something changes,
 and end with an exit code for what's next.

@@ -17,7 +17,8 @@ description: Open the pull request for a proven Folio change and see it through 
    line it prints: a wait is never silent. It waits for CI and for Claude's review of the newest
    commit, then ends with what to do next.
 4. Act on how it ended:
-   - **0, done**: CI and the review gate passed, and it turned on auto-merge. Go to
+   - **0, done**: CI and the review gate passed, and it had GitHub merge it, through auto-merge
+     or at once when GitHub's rules already allowed it. Go to
      [folio-land](../folio-land/SKILL.md).
    - **1, something to fix**: fix it in this branch, prove it again, push, and go back to 3.
      - A serious finding you think is wrong: reply on the pull request with why, add the
@@ -32,8 +33,9 @@ description: Open the pull request for a proven Folio change and see it through 
 
 When CI commits new README pictures to the branch, pull before pushing again; the wait says so.
 
-Never merge a pull request yourself, never merge past a rule (`--admin`), never turn auto-merge
-off, and never push to `main`, unless the owner explicitly asks for that one thing. Then say once
+Never merge a pull request any other way than through the wait, never merge past a rule
+(`--admin`), never turn auto-merge off, and never push to `main`, unless the owner explicitly asks
+for that one thing. Then say once
 which rule it skips, and do it.
 
 End with a short report: the pull request, how many review rounds, what was fixed, what was
