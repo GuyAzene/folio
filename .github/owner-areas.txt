@@ -9,6 +9,7 @@ scripts/review-gate.ts
 # The rules agents work by, so an agent can't loosen its own and merge that.
 [how agents work and ship]
 AGENTS.md
+CLAUDE.md
 .agents/**
 .claude/skills/**
 scripts/line.ts

@@ -758,6 +758,13 @@ merge and then for every job of `main`'s CI on it, following a newer run when an
 cancelled that one. Both ask GitHub through the gh CLI, print a line whenever something changes,
 and end with an exit code for what's next.
 
+Every agent reads one guide. Codex and Cursor read `AGENTS.md` from the root, and Claude Code reads
+`CLAUDE.md`, which only imports it, so a Claude session in a worktree outside the owner's
+checkout gets the same rules. `AGENTS.md` itself says how to isolate a task before its first
+edit, because a skill's description doesn't always reach the agent: with many skills installed,
+Claude Code lists some by name only. `tests/agent-guide.test.ts` holds the guide to that, and
+checks that every skill has its link in `.claude/skills/` and that the guide's links resolve.
+
 A quit signal (SIGTERM, as the installer sends) quits Folio as ⌘Q does: chats settle first.
 
 Without a Developer ID Folio cannot update itself, so it says when a newer release is out

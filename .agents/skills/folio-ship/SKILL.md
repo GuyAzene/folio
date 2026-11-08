@@ -7,8 +7,9 @@ description: Open the pull request for a proven Folio change and see it through 
 
 1. Bring the branch up to date: `git fetch origin`, then rebase on `origin/main`. If `main`
    moved, run the checks again.
-2. Push the branch by name (`git push -u origin <branch>`, never `--all` or `--mirror`) and open
-   the pull request with `gh pr create`:
+2. Push the branch by name (`git push -u origin <branch>`, never `--all` or `--mirror`; after
+   rebasing a branch you already pushed, `--force-with-lease`, never `--force`) and open the pull
+   request with `gh pr create`:
    - The title becomes the commit on `main`: say what changes, plainly.
    - The description: what and why, **Done when**, and **How it was proven**. It's public.
    - Add the `needs owner` label if the owner asked to look before it merges.
