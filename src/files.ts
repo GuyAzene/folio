@@ -46,11 +46,47 @@ export async function writeAtomic(
     } finally {
       await handle.close();
     }
-    await options.check?.();
-    await rename(temporary, target);
+    await replaceFile(temporary, target, { check: options.check });
     await syncDirectory(dirname(target));
   } finally {
     await rm(temporary, { force: true });
+  }
+}
+
+/** What Windows answers a rename while something has either file open. */
+const BUSY = new Set(["EPERM", "EACCES", "EBUSY"]);
+/** The waits between tries on Windows: about three seconds in all. */
+const PAUSES = [10, 20, 40, 80, 160, 320, 640, 1000, 1000];
+
+/**
+ * Runs `check`, then renames `from` over `to`. Windows refuses while anything has either file
+ * open, such as an antivirus scan of the new file or another program reading the old one, so
+ * there a refusal waits and tries again, running `check` again each time.
+ */
+export async function replaceFile(
+  from: string,
+  to: string,
+  options: {
+    check?: () => Promise<void>;
+    platform?: NodeJS.Platform;
+    move?: (from: string, to: string) => Promise<void>;
+    pause?: (ms: number) => Promise<void>;
+  } = {},
+): Promise<void> {
+  const move = options.move ?? rename;
+  const pause = options.pause ?? ((ms) => new Promise<void>((ready) => setTimeout(ready, ms)));
+  for (let tried = 0; ; tried++) {
+    await options.check?.();
+    try {
+      await move(from, to);
+      return;
+    } catch (error) {
+      const code = (error as { code?: unknown }).code;
+      const busy = typeof code === "string" && BUSY.has(code);
+      if ((options.platform ?? process.platform) !== "win32" || !busy || tried === PAUSES.length)
+        throw error;
+    }
+    await pause(PAUSES[tried]!);
   }
 }
 
