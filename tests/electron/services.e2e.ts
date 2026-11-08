@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { after, describe, it } from "node:test";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { Page } from "playwright-core";
 import type { FolioApi, McpView } from "../../src/desktop/api.ts";
 import { startHttpServer } from "../fixtures/mcp-http.ts";
 import { launch, type Running } from "./app.ts";
@@ -42,14 +43,30 @@ const alive = (pid: number) => {
   }
 };
 
-async function eventually<T>(read: () => Promise<T>, done: (value: T) => boolean, what: string) {
+/** Waits for `done`; on a timeout, `why` adds what Folio says went wrong. */
+async function eventually<T>(
+  read: () => Promise<T>,
+  done: (value: T) => boolean,
+  what: string,
+  why?: () => Promise<string>,
+) {
   for (let waited = 0; waited < 15_000; waited += 100) {
     const value = await read();
     if (done(value)) return value;
     await new Promise((ready) => setTimeout(ready, 100));
   }
-  assert.fail(`Timed out waiting for ${what}`);
+  const said = await why?.().catch(() => "");
+  assert.fail(`Timed out waiting for ${what}${said ? `. Folio said: ${said}` : ""}`);
 }
+
+/** The errors Folio shows, such as a save it couldn't make. */
+const alerts = (page: Page) => () =>
+  page.evaluate(() =>
+    [...document.querySelectorAll("[role=alert]")]
+      .map((alert) => alert.textContent?.trim())
+      .filter(Boolean)
+      .join(" / "),
+  );
 
 /** A reply that used the synthetic server three ways: allowed, declined, and cut off. */
 const USED: AgentMessage[] = [
@@ -151,6 +168,7 @@ void describe("MCP servers", () => {
       async () => JSON.parse(await readFile(mcpJson, "utf8")),
       (saved) => saved.mcpServers.synthetic.folio?.tools?.lookup === "allow",
       "the rule in mcp.json",
+      alerts(page),
     );
 
     // Off stops it; on starts another.

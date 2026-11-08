@@ -602,7 +602,9 @@ Everything lives in `~/.folio/` (or `FOLIO_HOME`), with directories `0700` and f
 
 Writes are atomic: a complete file is written and flushed beside the old one, renamed over it,
 and the folder flushed too, so the rename survives a crash. Windows can't flush a folder, and
-journals the rename itself, so there the folder is left alone. Revision and hash checks refuse
+journals the rename itself, so there the folder is left alone. Windows also refuses the rename
+while anything has either file open, such as an antivirus scan or another reader, so there Folio
+tries again for about three seconds, checking the file again before each try. Revision and hash checks refuse
 edits made elsewhere instead of overwriting them, and a chat open in one process refuses writes from another. Session files are versioned and
 pin the Pi runtime and transcript format they were written with.
 
