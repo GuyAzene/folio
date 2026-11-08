@@ -120,20 +120,41 @@ function audit(): string[] {
  * Waits for the page to take its new width and finish moving: narrowing the window collapses the
  * sidebar with a transition, and measured halfway the page is narrower than it will be. A fixed
  * pause after resizing was not always enough on GitHub's virtual Macs.
+ *
+ * A new width also reaches the page a moment before its resize event, which fires with the next
+ * frame. Looked at in between, the page has the window's width but still lays itself out for the
+ * old one, and nothing is moving yet; on a Mac that draws slowly the audit once measured there.
+ * So the page is looked at only in animation frames, after that frame's resize event, and counts
+ * as settled on the second still frame in a row, once what the resize started is moving too.
  */
 async function settled(app: Running, width: number): Promise<void> {
-  await app.page.waitForFunction(
+  await app.page.evaluate(
     (width) =>
-      innerWidth === width &&
-      !document
-        .getAnimations()
-        .some(
-          (animation) =>
-            animation.playState === "running" &&
-            animation.effect?.getTiming().iterations !== Infinity,
-        ),
+      new Promise<void>((done, fail) => {
+        const stuck = setTimeout(
+          () => fail(new Error(`The page did not settle at ${width} px within 10 s.`)),
+          10_000,
+        );
+        let still = 0;
+        const look = () => {
+          const moving = document
+            .getAnimations()
+            .some(
+              (animation) =>
+                animation.playState === "running" &&
+                animation.effect?.getTiming().iterations !== Infinity,
+            );
+          still = innerWidth === width && !moving ? still + 1 : 0;
+          if (still < 2) {
+            requestAnimationFrame(look);
+            return;
+          }
+          clearTimeout(stuck);
+          done();
+        };
+        requestAnimationFrame(look);
+      }),
     width,
-    { timeout: 10_000 },
   );
 }
 
