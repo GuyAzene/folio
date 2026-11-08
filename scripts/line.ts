@@ -133,9 +133,13 @@ export const readShip = (
     return { done: true, outcome: "fix", lines };
   }
   // Notes don't fail the gate, but the line fixes or answers them before anything merges, so a
-  // review stops only when nothing worth doing is left. After the last round, they stay open.
-  const notes = verdict && verdict.sha === note.reviewed ? verdict.notes : [];
+  // review stops only when nothing worth doing is left. After the last round, they stay open. A
+  // pass merges only once its verdict is read, so no note goes by unseen; the owner's lane may
+  // have no verdict at all, since Claude doesn't review some pull requests.
   const reviewed = short(note.reviewed);
+  if (note.lane === "merge" && verdict?.sha !== note.reviewed)
+    return { done: false, waitingFor: `the review's verdict on ${reviewed}` };
+  const notes = verdict?.sha === note.reviewed ? verdict.notes : [];
   const lastRound = (verdict?.round ?? 0) >= ROUNDS;
   if (notes.length && !lastRound && !(answered.length >= 7 && note.reviewed.startsWith(answered)))
     return {
@@ -412,6 +416,8 @@ const ship = async (number: string | undefined, minutes: number, answered = "") 
   let head = "";
   let seen = new Map<string, string>();
   let failed = new Set<string>();
+  // A commit's verdict is written once, so it's read once.
+  let verdict: Verdict | null = null;
   return wait(minutes, async () => {
     const pr = await pull(number);
     number ??= String(pr.number);
@@ -433,7 +439,8 @@ const ship = async (number: string | undefined, minutes: number, answered = "") 
     if (pr.state === "OPEN")
       for (const line of failedSteps(failed, await jobsOn(pr.head))) say(line);
     const note = parseGateNote(ours(checks, GATE_CHECK)?.text);
-    const verdict = note && note.lane !== "wait" ? await verdictOn(note.reviewed) : null;
+    if (note && note.lane !== "wait" && verdict?.sha !== note.reviewed)
+      verdict = await verdictOn(note.reviewed);
     const step = readShip(pr, checks, verdict, note, answered);
     if (!step.done || step.outcome !== "done" || pr.state !== "OPEN" || pr.autoMerge) return step;
     // The one place anything merges: CI and the gate passed on this very commit. GitHub still
@@ -504,23 +511,27 @@ const land = async (number: string | undefined, minutes: number) => {
   });
 };
 
-const commands: Record<string, typeof ship> = { ship, land };
+export type Args = { name: "ship" | "land"; pr?: string; minutes: number; answered?: string };
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const [name, ...rest] = process.argv.slice(2);
+/** What the command line asks for, or null when it asks for something the waits can't do. */
+export const parseArgs = ([name, ...rest]: string[]): Args | null => {
   const option = (flag: string) => {
     const at = rest.indexOf(flag);
     return at >= 0 ? (rest.splice(at, 2)[1] ?? "") : undefined;
   };
   const minutes = Number(option("--minutes") ?? 60);
   const answered = option("--notes-answered");
-  const command = commands[name ?? ""];
-  if (
-    !command ||
-    !(minutes > 0) ||
-    rest.length > 1 ||
-    (answered !== undefined && (name !== "ship" || answered.length < 7))
-  ) {
+  if ((name !== "ship" && name !== "land") || !(minutes > 0) || rest.length > 1) return null;
+  // A commit named in at least seven characters, and only for ship, which reads the notes.
+  if (answered !== undefined && (name !== "ship" || answered.length < 7)) return null;
+  return { name, ...(rest[0] ? { pr: rest[0] } : {}), minutes, ...(answered ? { answered } : {}) };
+};
+
+const commands = { ship, land };
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const args = parseArgs(process.argv.slice(2));
+  if (!args) {
     console.error(
       "Usage: vp node scripts/line.ts ship|land [pull request] [--minutes 60] [--notes-answered <commit>]",
     );
@@ -530,10 +541,10 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   // instead of being asked about again and again.
   let number: string;
   try {
-    number = String((await pull(rest[0])).number);
+    number = String((await pull(args.pr)).number);
   } catch (error) {
     say(`No such pull request: ${(error as Error).message.split("\n")[0]}`);
     process.exit(EXIT.fix);
   }
-  process.exit(EXIT[await command(number, minutes, answered)]);
+  process.exit(EXIT[await commands[args.name](number, args.minutes, args.answered)]);
 }
