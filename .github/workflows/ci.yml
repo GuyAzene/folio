@@ -145,6 +145,8 @@ jobs:
           cache-save: false
       - name: Electron
         uses: ./.github/actions/electron
+        with:
+          packaging: "true"
       - name: Package Folio.app
         run: vp run desktop:package
         env:
@@ -211,6 +213,8 @@ jobs:
           cache: false
       - name: Electron
         uses: ./.github/actions/electron
+        with:
+          packaging: "true"
       - name: Package Folio for Windows
         run: vp run desktop:package
       - name: The packaged app in a real window
@@ -336,6 +340,8 @@ jobs:
           cache-save: false
       - name: Electron
         uses: ./.github/actions/electron
+        with:
+          packaging: "true"
       - name: Package Folio for others
         run: vp run desktop:package
         env:
@@ -400,6 +406,8 @@ jobs:
           cache: false
       - name: Electron
         uses: ./.github/actions/electron
+        with:
+          packaging: "true"
       - name: Package Folio for others
         run: vp run desktop:package
         env:
