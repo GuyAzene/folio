@@ -710,14 +710,20 @@ It all runs from `main` (`review.yml`). The "Pull request" workflow, which holds
 or secrets, only signals that a pull request changed, and its end starts the Review workflow from
 `main` (`workflow_run`). A first job marks the commit's "Review verdict" as under way, so a second
 signal doesn't start a second review of it; a mark older than an hour counts as a review that
-stopped. Claude reviews in a job of its own, which only ever takes this repository's own branches
-(never a fork's), on the pull request's files checked out to read: it gets the changes as a diff
-and may only read and search them, with no git and no shell, and it loads none of the settings,
-hooks or MCP servers a pull request brings (`--setting-sources user`, and `.claude`, `.mcp.json`,
-`CLAUDE.md` and the other files the Claude action restores from the base branch on a pull request
-event, but not on this one, are removed). Only Claude's answer leaves that job. Two more jobs post
-the verdict, then the comment, and the gate. A review that ended without a verdict is tried again
-at the next signal.
+stopped. Claude reviews in a job of its own, which only takes this repository's branches. It
+can read and search the checkout and the diff and commit log in `/tmp/review`. It loads none of
+the settings, hooks or MCP servers a pull request brings (`--setting-sources user`, and
+`.claude`, `.mcp.json`, `CLAUDE.md` and the other files the Claude action restores from the base
+branch on a pull request event are removed here). Only Claude's answer leaves that job. Two more
+jobs post the verdict, then the comment, and the gate. A review that ended without a verdict is
+tried again at the next signal.
+
+The `@claude` workflow uses the thread context and images the action collects. It can read and
+search the checkout and `/tmp/github-images`, and uses the action's comment tool to reply. Both
+workflows limit file tools to their working directories and explicitly exclude `.git`, where
+the pinned action puts its GitHub token. Both deny shell access, including the Git commands the
+action adds for `@claude`. Claude Code enforces these rules at the tool level and still uses the
+OAuth token in its process environment to authenticate.
 
 Who can write the gate. Only a GitHub App can make a check run, so no person's login can make a
 verdict or a gate. The verdict and the gate that count are made by Folio's own GitHub App,

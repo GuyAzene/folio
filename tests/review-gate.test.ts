@@ -171,12 +171,24 @@ describe("the review's instructions", () => {
 
   it("let Claude only read: no git, whose --output writes files, no shell, and none of the pull request's settings", () => {
     const args = reviewArgs();
-    expect(args).toContain('--allowedTools "Read,Grep,Glob"\n');
+    expect(args).toContain('--tools "Read,Grep,Glob"\n');
     expect(args).toMatch(/--disallowedTools "Bash,Edit,Write,/);
     expect(args).toContain("--setting-sources user");
     const prompt = reviewPrompt(scope);
     expect(prompt).toContain("you can't run anything");
     expect(prompt).not.toContain("git diff");
+  });
+
+  it("confines review reads to the checkout and the prepared diff and log, excluding .git", () => {
+    const args = reviewArgs();
+    expect(args.match(/^--add-dir .+$/gm)).toEqual(["--add-dir /tmp/review"]);
+    expect(args.match(/^--allowedTools .+$/gm)).toEqual([
+      '--allowedTools "Read(/**),Read(//tmp/review/**)"',
+    ]);
+    expect(args).toContain(
+      '--settings \'{"permissions":{"blockReadsOutsideWorkingDirectories":true}}\'',
+    );
+    expect(args).toMatch(/--disallowedTools "[^"]*Read\(\/\.git\),Read\(\/\.git\/\*\*\)/);
   });
 
   it("start over from the whole pull request when the last reviewed commit is gone", () => {
@@ -822,7 +834,11 @@ describe("the Review workflow", () => {
     ]);
     const leaveOut = job.steps.find((step) => step.run?.startsWith("rm -rf .claude"));
     for (const path of [".claude", ".mcp.json", "CLAUDE.md"]) expect(leaveOut?.run).toContain(path);
-    for (const step of job.steps.filter((item) => item.uses?.startsWith("anthropics/")))
+    const claude = job.steps.filter((item) =>
+      item.uses?.startsWith("anthropics/claude-code-action@"),
+    );
+    expect(claude).toHaveLength(2);
+    for (const step of claude)
       expect(step.with?.claude_args).toBe("${{ needs.start.outputs.args }}");
   });
 
@@ -846,5 +862,40 @@ describe("the Review workflow", () => {
     expect(signal.permissions).toEqual({});
     expect(raw).not.toContain("${{ secrets");
     expect(raw).not.toMatch(/uses:/);
+  });
+});
+
+describe("the @claude workflow", () => {
+  it("confines file tools to the checkout and downloaded images and denies shell access", () => {
+    const workflow = parse(readFileSync(".github/workflows/claude.yml", "utf8")) as {
+      jobs: { answer: { steps: { uses?: string; with?: { claude_args?: string } }[] } };
+    };
+    const claude = workflow.jobs.answer.steps.filter((step) =>
+      step.uses?.startsWith("anthropics/claude-code-action@"),
+    );
+    expect(claude).toHaveLength(1);
+    const args = claude[0]?.with?.claude_args ?? "";
+    expect(args).toContain('--tools "Read,Grep,Glob"');
+    expect(args).toContain("--setting-sources user");
+    expect(args).toContain("--strict-mcp-config");
+    expect(args).toContain(
+      '--settings \'{"permissions":{"blockReadsOutsideWorkingDirectories":true}}\'',
+    );
+    expect(args.match(/^--add-dir .+$/gm)).toEqual(["--add-dir /tmp/github-images"]);
+    expect(args).not.toContain("--allowedTools");
+    const deny = [...args.matchAll(/^--disallowedTools "([^"]+)"$/gm)].flatMap((match) =>
+      match[1]!.split(","),
+    );
+    expect(deny).toEqual(
+      expect.arrayContaining([
+        "Bash",
+        "Read(/.git)",
+        "Read(/.git/**)",
+        "Read(//proc/**)",
+        "Read(/${{ runner.temp }}/**)",
+        "Read(~/.claude/**)",
+        "Read(~/.config/gh/**)",
+      ]),
+    );
   });
 });

@@ -38,7 +38,13 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          # Reading the code and the thread, and its own reply; nothing that edits or runs code.
+          # Tag mode adds blanket read and git permissions. Keep its reply tool and downloaded
+          # thread images, but exclude shell commands, project settings and runner credentials.
           claude_args: |
-            --allowedTools "Read,Grep,Glob,Bash(gh issue view:*),Bash(gh pr view:*),Bash(gh pr diff:*)"
-            --disallowedTools "Edit,Write,MultiEdit,NotebookEdit"
+            --tools "Read,Grep,Glob"
+            --disallowedTools "Bash,Edit,Write,MultiEdit,NotebookEdit,Read(/.git),Read(/.git/**)"
+            --disallowedTools "Read(//proc/**),Read(/${{ runner.temp }}/**),Read(~/.claude/**),Read(~/.config/gh/**)"
+            --add-dir /tmp/github-images
+            --settings '{"permissions":{"blockReadsOutsideWorkingDirectories":true}}'
+            --setting-sources user
+            --strict-mcp-config

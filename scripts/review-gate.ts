@@ -230,14 +230,17 @@ export const reviewPrompt = (scope: {
 };
 
 /**
- * Claude's arguments. It can only read and search: no shell, and no git, whose `--output` writes
- * files. And never the settings, hooks or MCP servers a pull request brings in its own .claude
- * folder or .mcp.json: only the runner's user settings, of which it has none.
+ * Claude can read and search the checkout and the prepared diff and log. The action puts its
+ * GitHub token in the checkout's Git config, so .git is excluded even with credentials disabled
+ * at checkout. Project settings, hooks and MCP servers from the pull request stay unloaded.
  */
 export const reviewArgs = () =>
   [
-    `--allowedTools "Read,Grep,Glob"`,
-    `--disallowedTools "Bash,Edit,Write,NotebookEdit,WebFetch,WebSearch"`,
+    `--tools "Read,Grep,Glob"`,
+    `--allowedTools "Read(/**),Read(//tmp/review/**)"`,
+    `--disallowedTools "Bash,Edit,Write,NotebookEdit,WebFetch,WebSearch,mcp__*,Read(/.git),Read(/.git/**)"`,
+    "--add-dir /tmp/review",
+    `--settings '{"permissions":{"blockReadsOutsideWorkingDirectories":true}}'`,
     "--setting-sources user",
     `--json-schema '${JSON.stringify(REVIEW_SCHEMA)}'`,
   ].join("\n");
