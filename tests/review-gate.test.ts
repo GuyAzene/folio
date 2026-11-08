@@ -631,6 +631,8 @@ describe("the signed commands", () => {
     vi.stubEnv("GITHUB_TOKEN", WORKFLOW_TOKEN);
     vi.stubEnv("APP_TOKEN", APP_TOKEN);
     vi.stubEnv("PR", "7");
+    // As on a runner, so the tests don't depend on where they run.
+    vi.stubEnv("RUNNER_TEMP", "/runner/temp");
     vi.spyOn(console, "log").mockImplementation(() => {});
   });
   afterEach(() => {
@@ -649,7 +651,8 @@ describe("the signed commands", () => {
     ]);
     expect(values.check).toBe(String(verdictRuns()[0]!.id));
     expect(values.prompt).toContain(CHANGES.diff);
-    expect(values.args).toBe(reviewArgs());
+    expect(values.args).toBe(reviewArgs("/runner/temp"));
+    expect(denied(values.args!)).toContain("Read(//runner/temp/**)");
   });
 
   it("start one review of a commit however many times the signal comes", async () => {
