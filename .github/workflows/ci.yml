@@ -296,7 +296,6 @@ jobs:
             "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
             "HEAD:refs/heads/$BRANCH"
           gh workflow run ci.yml --ref "$BRANCH"
-          gh workflow run review-gate.yml -f pr="$PR"
           gh workflow run review.yml -f pr="$PR"
           {
             echo "**README pictures:** committed $(wc -l <<< "$changed" | tr -d ' ') to \`$BRANCH\`, and started CI and the review gate on that commit:"

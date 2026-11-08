@@ -10,9 +10,8 @@ name: Review
 # request's code holds no key but Claude's, runs nothing from it, and hands back only Claude's
 # answer. scripts/review-gate.ts does the work; tests/review-gate.test.ts holds this file to it.
 #
-# It runs beside the older Claude review and Review gate workflows until those are removed, and
-# only once the app is set up: the REVIEW_APP_ID and REVIEW_APP_CLIENT_ID variables, and the
-# REVIEW_APP_KEY secret.
+# The app is folio-review-gate (its id is REVIEW_APP in the script). Its jobs need the
+# REVIEW_APP_CLIENT_ID variable and the review-gate environment's REVIEW_APP_KEY secret.
 on:
   workflow_run:
     workflows: [Pull request]
@@ -35,7 +34,7 @@ jobs:
   start:
     name: Decide what to review
     if: >-
-      vars.REVIEW_APP_ID != '' &&
+      vars.REVIEW_APP_CLIENT_ID != '' &&
       (github.event_name != 'workflow_run' || github.event.workflow_run.event == 'pull_request')
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -85,7 +84,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           APP_TOKEN: ${{ steps.app.outputs.token }}
-          REVIEW_APP_ID: ${{ vars.REVIEW_APP_ID }}
         run: node scripts/review-gate.ts start
 
   review:
@@ -237,6 +235,5 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           APP_TOKEN: ${{ steps.app.outputs.token }}
-          REVIEW_APP_ID: ${{ vars.REVIEW_APP_ID }}
           PR: ${{ needs.start.outputs.pr }}
         run: node scripts/review-gate.ts judge

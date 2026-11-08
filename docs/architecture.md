@@ -706,44 +706,40 @@ pictures carries the last review over, and the pictures job starts the gate on i
 the pull request only through the API, so a pull request can't change the gate that judges it.
 Merging doesn't wait for the gate yet.
 
-This runs two ways side by side until the older one is removed. The signed way runs from `main`
-(`review.yml`). The "Pull request" workflow, which holds no permissions or secrets, only signals
-that a pull request changed, and its end starts the Review workflow from `main` (`workflow_run`).
-A first job marks the commit's "Review verdict" as under way, so a second signal doesn't start a
-second review of it; a mark older than an hour counts as a review that stopped. Claude reviews in
-a job of its own, which only ever takes this repository's own branches (never a fork's), on the
-pull request's files checked out to read: it gets the changes as a diff
+It all runs from `main` (`review.yml`). The "Pull request" workflow, which holds no permissions
+or secrets, only signals that a pull request changed, and its end starts the Review workflow from
+`main` (`workflow_run`). A first job marks the commit's "Review verdict" as under way, so a second
+signal doesn't start a second review of it; a mark older than an hour counts as a review that
+stopped. Claude reviews in a job of its own, which only ever takes this repository's own branches
+(never a fork's), on the pull request's files checked out to read: it gets the changes as a diff
 and may only read and search them, with no git and no shell, and it loads none of the settings,
 hooks or MCP servers a pull request brings (`--setting-sources user`, and `.claude`, `.mcp.json`,
 `CLAUDE.md` and the other files the Claude action restores from the base branch on a pull request
 event, but not on this one, are removed). Only Claude's answer leaves that job. Two more jobs post
 the verdict, then the comment, and the gate. A review that ended without a verdict is tried again
-at the next signal. The older way reviews in the pull request's own workflow
-(`claude-review.yml`) and gates from `main` (`review-gate.yml`, on `pull_request_target`, which
-GitHub stops starting in public repositories from 2 December 2026).
+at the next signal.
 
 Who can write the gate. Only a GitHub App can make a check run, so no person's login can make a
-verdict or a gate. But every workflow token belongs to one app, GitHub Actions (id 15368), a
-pull request's own workflows' included. So any pull request from this repository that adds or
-changes a workflow can write the older "Review verdict" and "Review gate" checks; and in the older
-review job, Claude's git commands can write files (`git log --output`) that the job then runs to
-post the verdict. The signed checks are made by Folio's own GitHub App, which has only the Checks
-permission and is installed on this repository alone. Its private key is a secret of the
-`review-gate` environment, which only `main` may use: GitHub checks a `pull_request` job against
-`refs/pull/<n>/merge`, and a push or a manual run against its own branch, so no workflow a pull
-request adds or changes, and no other branch, gets the key. The jobs that hold it run `main`'s
-script from a sparse checkout of `main` and never check out the pull request, which
-`tests/review-gate.test.ts` holds the workflow to. The gate counts only verdicts the app made.
-A pull request can't write either signed check, whatever it changes, and one that stops the
-signal gets no gate at all. What can still pass a pull request: Claude, when text in the pull
-request talks it into a clean review, which the owner areas limit; and the owner's login, which
-agents work through, since an admin can change the environment or the ruleset, or bypass the
-ruleset. Once the older way is gone, the ruleset requires "Review gate" from the app's id.
+verdict or a gate. The verdict and the gate that count are made by Folio's own GitHub App,
+`folio-review-gate`, which has only the Checks permission and is installed on this repository
+alone. Its private key is a secret of the `review-gate` environment, which only `main` may use:
+GitHub checks a `pull_request` job against `refs/pull/<n>/merge`, and a push or a manual run
+against its own branch, so no workflow a pull request adds or changes, and no other branch, gets
+the key. The jobs that hold it run `main`'s script from a sparse checkout of `main` and never
+check out the pull request, which `tests/review-gate.test.ts` holds the workflow to. A check of the
+same name from any other app doesn't count, in the gate or in `scripts/line.ts`. That matters for
+GitHub Actions above all (id 15368): every workflow token belongs to it, a pull request's own
+workflows' included, so any pull request that adds a workflow can post a "Review gate" or a
+"Review verdict" as GitHub Actions. A pull request can't write either of the app's checks, whatever
+it changes, and one that stops the signal gets no gate at all. What can still pass a pull
+request: Claude, when text in the pull request talks it into a clean review, which the owner areas
+limit; and the owner's login, which agents work through, since an admin can change the
+environment or the ruleset, or bypass the ruleset.
 
 The agent shipping a change reads the same checks (`scripts/line.ts`, run by the skills in
 `.agents/skills/`). `ship` waits until CI and the gate have both spoken on the newest commit,
-counting only GitHub Actions' checks for now, the older gate's, which marks its lane (wait, fix,
-owner or merge). It lists the serious findings or failed jobs to fix, or says the owner merges
+counting CI only from GitHub Actions and the verdict and the gate only from the review app, whose
+gate marks its lane (wait, fix, owner or merge). It lists the serious findings or failed jobs to fix, or says the owner merges
 this one. On a pass it turns auto-merge on, or merges at once when GitHub answers that its rules
 already allow the merge ("clean status"); it is the one place anything merges, never past a rule
 and never with auto-merge turned off. `land` waits for the

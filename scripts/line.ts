@@ -19,6 +19,7 @@ import { promisify } from "node:util";
 import {
   ACTIONS_APP,
   GATE_CHECK,
+  REVIEW_APP,
   VERDICT_CHECK,
   parseGateNote,
   parseVerdict,
@@ -54,8 +55,15 @@ export type Step =
   | { done: true; outcome: Outcome; lines: string[] };
 
 const BAD = new Set(["failure", "timed_out", "cancelled", "action_required", "startup_failure"]);
+/**
+ * A check counts only from the app that makes it: CI from GitHub Actions, the review's verdict
+ * and gate from Folio's review app. Any other check of the same name, such as one a pull
+ * request's own workflow posts, is ignored.
+ */
 const ours = (checks: Check[], name: string) =>
-  checks.find((check) => check.name === name && check.app === ACTIONS_APP);
+  checks.find(
+    (check) => check.name === name && check.app === (name === CI_CHECK ? ACTIONS_APP : REVIEW_APP),
+  );
 const place = (item: { file?: string; line?: number }) =>
   item.file ? ` (${item.file}${typeof item.line === "number" ? `:${item.line}` : ""})` : "";
 

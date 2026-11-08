@@ -14,6 +14,7 @@ import {
 import {
   ACTIONS_APP,
   GATE_CHECK,
+  REVIEW_APP,
   buildVerdict,
   type GateNote,
   type Lane,
@@ -39,8 +40,12 @@ const check = (name: string, conclusion: string | null, overrides: Partial<Check
   ...overrides,
 });
 const note = (lane: Lane, reviewed = HEAD): GateNote => ({ version: 1, lane, reviewed });
+// Only something to fix fails; waiting for the review or for the owner stays pending.
 const gate = (lane: Lane, title = "the gate's title") =>
-  check(GATE_CHECK, lane === "wait" ? null : lane === "merge" ? "success" : "failure", { title });
+  check(GATE_CHECK, lane === "fix" ? "failure" : lane === "merge" ? "success" : null, {
+    title,
+    app: REVIEW_APP,
+  });
 const bug = {
   title: "Cancel leaves the job running",
   file: "src/jobs/run.ts",
@@ -70,6 +75,14 @@ describe("ship", () => {
     expect(readShip(pull(), [forged, gate("merge")], null, note("merge"))).toMatchObject({
       done: false,
       waitingFor: "CI",
+    });
+  });
+
+  it("doesn't count a gate GitHub Actions' token wrote, as a pull request's own workflow could", () => {
+    const forged = check(GATE_CHECK, "success", { title: "Reviewed, nothing serious open" });
+    expect(readShip(pull(), [check("CI", "success"), forged], null, note("merge"))).toEqual({
+      done: false,
+      waitingFor: "the review gate on aaaaaaa",
     });
   });
 
