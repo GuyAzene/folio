@@ -1,24 +1,17 @@
 // The review gate. Claude reviews every push to a pull request, and this script turns those
-// reviews into one check, "Review gate", that GitHub's auto-merge can wait for. It runs two ways
-// for now, side by side, until the older one is removed.
-//
-// Signed by Folio's own GitHub App, from main (review.yml, started by pull-request.yml):
+// reviews into one check, "Review gate", that GitHub's auto-merge can wait for. It runs from main,
+// in review.yml, which pull-request.yml starts whenever a pull request changes:
 //
 //   node scripts/review-gate.ts start     before Claude: whether to review, marked on the commit
 //   node scripts/review-gate.ts verdict   after Claude: the verdict, then the comment
 //   node scripts/review-gate.ts judge     the "Review gate" check
 //
-// The older way, with the workflow token (claude-review.yml, review-gate.yml):
-//
-//   node scripts/review-gate.ts prepare   review job, before Claude: what this review covers
-//   node scripts/review-gate.ts publish   review job, after Claude: the comment and the verdict
-//   node scripts/review-gate.ts gate      gate workflow, run from main: the "Review gate" check
-//
-// A verdict and the gate are check runs, which only a GitHub App can create, so no person's login
-// can write either. But every workflow token belongs to one app, GitHub Actions, a pull request's
-// own workflows' included: the older checks can be written by any pull request that adds a
-// workflow. The app's checks can't: its key is kept for jobs that run main's code and never the
-// pull request's (docs/architecture.md says exactly who can write the gate).
+// A verdict and the gate are check runs made by Folio's own GitHub App, and only that app's count.
+// No person's login can make a check run, and a pull request's own workflows can't make one as the
+// app: its key is kept for jobs that run main's code and never the pull request's. Every workflow
+// token belongs to GitHub Actions instead, which any pull request that adds a workflow holds, so
+// GitHub Actions' check runs never count here (docs/architecture.md says exactly who can write
+// the gate).
 //
 // A verdict lists the serious findings still open; the next review checks whether the new changes
 // fix them. The gate passes once the newest reviewed commit has none open. A pull request waits
@@ -26,17 +19,22 @@
 // the "needs owner" label, comes from Dependabot, still has serious findings after three rounds,
 // or couldn't be reviewed.
 import { randomUUID } from "node:crypto";
-import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
-import { join, matchesGlob } from "node:path";
+import { appendFileSync, readFileSync } from "node:fs";
+import { matchesGlob } from "node:path";
 import { pathToFileURL } from "node:url";
 
 /** GitHub Actions: the app behind every workflow token, a pull request's own workflows' too. */
 export const ACTIONS_APP = 15368;
-/** Where the signed review job leaves the changes for Claude, outside the pull request's files. */
+/**
+ * Folio's own GitHub App, "folio-review-gate", whose verdicts and gate are the only ones that
+ * count. It has only the Checks permission, and its key is a secret of the review-gate
+ * environment, which only main may use.
+ */
+export const REVIEW_APP = 5668478;
+/** Where the review job leaves the changes for Claude, outside the pull request's files. */
 export const CHANGES = { diff: "/tmp/review/changes.diff", commits: "/tmp/review/commits.txt" };
 /** A review the app marked as running that hasn't finished in this long has stopped. */
 export const STALE_MINUTES = 60;
-const REVIEW_CHECK = "Review";
 export const VERDICT_CHECK = "Review verdict";
 export const GATE_CHECK = "Review gate";
 export const OWNER_LABEL = "needs owner";
@@ -191,19 +189,11 @@ export const reviewPrompt = (scope: {
   base: string;
   previous: Verdict | null;
   since: string | null;
-  /** Files holding the changes, for a review that can only read; otherwise it runs git itself. */
-  changes?: typeof CHANGES;
 }) => {
   const round = `This is review round ${(scope.previous?.round ?? 0) + 1}. `;
-  const changes = scope.changes;
-  const range = changes
-    ? `${scope.since ? `${round}Review only the changes since the last review` : "Review the whole pull request"}: the diff is in \`${changes.diff}\`, and the commits it covers, with their messages, are in \`${changes.commits}\`. Read any other file you need for context.`
-    : scope.since
-      ? `${round}Review only the changes since the last review, \`git diff ${scope.since} ${scope.head}\`, reading any other file you need for context.`
-      : `Review the whole pull request, \`git diff ${scope.base}...${scope.head}\`, reading any other file you need for context.`;
-  const tools = changes
-    ? "You can read and search files, but you can't run anything: no git, no shell, and not the app or its checks, so don't guess what they would say."
-    : "You can read files and run git diff, git log and git show, but you can't run the app or its checks, so don't guess what they would say.";
+  const range = `${scope.since ? `${round}Review only the changes since the last review` : "Review the whole pull request"}: the diff is in \`${CHANGES.diff}\`, and the commits it covers, with their messages, are in \`${CHANGES.commits}\`. Read any other file you need for context.`;
+  const tools =
+    "You can read and search files, but you can't run anything: no git, no shell, and not the app or its checks, so don't guess what they would say.";
   const earlier = scope.previous?.open.length
     ? [
         "",
@@ -240,18 +230,14 @@ export const reviewPrompt = (scope: {
 };
 
 /**
- * Claude's arguments. Never the settings, hooks or MCP servers a pull request brings in its own
- * .claude folder or .mcp.json: only the runner's user settings, of which it has none. The signed
- * review can only read; the older one may also run git, whose `--output` writes files.
+ * Claude's arguments. It can only read and search: no shell, and no git, whose `--output` writes
+ * files. And never the settings, hooks or MCP servers a pull request brings in its own .claude
+ * folder or .mcp.json: only the runner's user settings, of which it has none.
  */
-export const reviewArgs = (tools: "git" | "read" = "git") =>
+export const reviewArgs = () =>
   [
-    tools === "git"
-      ? `--allowedTools "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*)"`
-      : `--allowedTools "Read,Grep,Glob"`,
-    ...(tools === "read"
-      ? [`--disallowedTools "Bash,Edit,Write,NotebookEdit,WebFetch,WebSearch"`]
-      : []),
+    `--allowedTools "Read,Grep,Glob"`,
+    `--disallowedTools "Bash,Edit,Write,NotebookEdit,WebFetch,WebSearch"`,
     "--setting-sources user",
     `--json-schema '${JSON.stringify(REVIEW_SCHEMA)}'`,
   ].join("\n");
@@ -304,19 +290,6 @@ export type ReviewState =
   | { state: "none" }
   | { state: "reviewing" }
   | { state: "failed"; why: string };
-
-/** The older way's review job, from its own check run. */
-export const reviewJobState = (
-  run: { status: string; conclusion: string | null } | null,
-): ReviewState =>
-  !run || run.conclusion === "skipped"
-    ? { state: "none" }
-    : run.status !== "completed"
-      ? { state: "reviewing" }
-      : {
-          state: "failed",
-          why: `ended without a verdict (${run.conclusion ?? "unknown"}), after a second try`,
-        };
 
 export type VerdictRun = {
   id: number;
@@ -563,14 +536,6 @@ const request = async <T>(
 type Write = <T>(path: string, method: string, body: unknown) => Promise<T>;
 /** A write as Folio's review app, with the token its job minted: never the workflow's own. */
 const asApp: Write = (path, method, body) => request(path, method, body, env("APP_TOKEN"));
-const asWorkflow: Write = (path, method, body) => request(path, method, body);
-
-/** The app whose verdicts and gate count, from the REVIEW_APP_ID variable. */
-const reviewApp = () => {
-  const id = Number(env("REVIEW_APP_ID"));
-  if (!Number.isInteger(id) || id <= 0) throw new Error("REVIEW_APP_ID isn't an app's id.");
-  return id;
-};
 
 const everyPage = async <T>(path: string) => {
   const items: T[] = [];
@@ -592,33 +557,18 @@ const checkRuns = async (sha: string, name: string, app: number) => {
   );
   return runs;
 };
-const newestCheck = async (sha: string, name: string) =>
-  (await checkRuns(sha, name, ACTIONS_APP)).sort((a, b) => b.id - a.id)[0] ?? null;
-
-/** What a commit's review says: its verdict, or where the review stands. */
-type Reader = (sha: string) => Promise<{ verdict: Verdict | null; review: ReviewState }>;
-/** The older way: the verdict and the review job, both GitHub Actions' check runs. */
-const olderReader: Reader = async (sha) => {
-  const [review, verdictRun] = await Promise.all([
-    newestCheck(sha, REVIEW_CHECK),
-    newestCheck(sha, VERDICT_CHECK),
-  ]);
-  return { verdict: parseVerdict(verdictRun?.output.text), review: reviewJobState(review) };
-};
-/** The signed way: only the app's "Review verdict" check runs. */
-const signedReader =
-  (app: number): Reader =>
-  async (sha) =>
-    readVerdictRuns(await checkRuns(sha, VERDICT_CHECK, app), app, Date.now());
+/** What a commit's review says, from the app's "Review verdict" check runs only. */
+const readReview = async (sha: string) =>
+  readVerdictRuns(await checkRuns(sha, VERDICT_CHECK, REVIEW_APP), REVIEW_APP, Date.now());
 
 const prCommits = (pr: number) => everyPage<{ sha: string }>(`${repo()}/pulls/${pr}/commits`);
 
-/** The newest verdict on a commit before `before` (the head by default), which the next review continues from. */
-const previousVerdict = async (pr: number, read: Reader, before?: string) => {
+/** The newest verdict on a commit before this one, which the next review continues from. */
+const previousVerdict = async (pr: number, before: string) => {
   const shas = (await prCommits(pr)).map((commit) => commit.sha);
-  const end = before ? shas.indexOf(before) : -1;
+  const end = shas.indexOf(before);
   for (const sha of shas.slice(0, end === -1 ? -1 : end).reverse()) {
-    const { verdict } = await read(sha);
+    const { verdict } = await readReview(sha);
     if (verdict) return { verdict, shas };
   }
   return { verdict: null, shas };
@@ -635,7 +585,6 @@ const output = (name: string, value: string) => {
   const end = `END_${randomUUID()}`;
   appendFileSync(env("GITHUB_OUTPUT"), `${name}<<${end}\n${value}\n${end}\n`);
 };
-const previousFile = () => join(env("RUNNER_TEMP"), "previous-verdict.json");
 
 /** A verdict as a check run's output, the verdict itself in its text for the next review. */
 const verdictOutput = (verdict: Verdict) => ({
@@ -645,49 +594,6 @@ const verdictOutput = (verdict: Verdict) => ({
   summary: `Round ${verdict.round}. The "Review gate" check is what merging waits for.`,
   text: JSON.stringify(verdict),
 });
-
-const prepare = async () => {
-  const pr = Number(env("PR"));
-  const head = env("HEAD_SHA");
-  const { verdict: previous, shas } = await previousVerdict(pr, olderReader);
-  const since = sinceOf(previous, shas, head);
-  writeFileSync(previousFile(), JSON.stringify({ previous, since }));
-  output(
-    "prompt",
-    reviewPrompt({
-      repository: env("GITHUB_REPOSITORY"),
-      pr,
-      title: process.env.PR_TITLE ?? "",
-      body: process.env.PR_BODY ?? "",
-      head,
-      base: env("BASE_SHA"),
-      previous,
-      since,
-    }),
-  );
-  output("args", reviewArgs());
-};
-
-const publish = async () => {
-  const pr = Number(env("PR"));
-  const head = env("HEAD_SHA");
-  const { previous, since } = JSON.parse(readFileSync(previousFile(), "utf8")) as {
-    previous: Verdict | null;
-    since: string | null;
-  };
-  const review = parseReview(env("REVIEW"));
-  const verdict = buildVerdict(previous, review, head, since);
-  await request(`${repo()}/issues/${pr}/comments`, "POST", {
-    body: renderComment(verdict, review),
-  });
-  await request(`${repo()}/check-runs`, "POST", {
-    name: VERDICT_CHECK,
-    head_sha: head,
-    status: "completed",
-    conclusion: "neutral",
-    output: verdictOutput(verdict),
-  });
-};
 
 export type PullRequest = {
   number: number;
@@ -743,7 +649,7 @@ const reviewable = (pr: PullRequest) => ({
 });
 
 /** What the gate says about a pull request, read from GitHub without changing anything. */
-export const judge = async (pr: PullRequest, read: Reader = olderReader) => {
+export const judge = async (pr: PullRequest) => {
   const files = paths(await everyPage<ChangedFile>(`${repo()}/pulls/${pr.number}/files`));
   const reviewed = await reviewedCommit(pr);
   const gate = decideGate({
@@ -751,20 +657,21 @@ export const judge = async (pr: PullRequest, read: Reader = olderReader) => {
     labels: pr.labels.map((label) => label.name),
     areas: touchedAreas(files, parseAreas(readFileSync(".github/owner-areas.txt", "utf8"))),
     reviewed,
-    ...(await read(reviewed)),
+    ...(await readReview(reviewed)),
   });
   return { gate, reviewed };
 };
 
-const postGate = async (read: Reader, write: Write) => {
+/** The "Review gate" check, from the app's verdicts only, written as the app. */
+const gate = async () => {
   const pr = await findPullRequest();
   if (!pr || pr.state !== "open") {
     console.log("No open pull request to judge.");
     return;
   }
-  const { gate: result, reviewed } = await judge(pr, read);
+  const { gate: result, reviewed } = await judge(pr);
   const note: GateNote = { version: 1, lane: result.lane, reviewed };
-  await write(`${repo()}/check-runs`, "POST", {
+  await asApp(`${repo()}/check-runs`, "POST", {
     name: GATE_CHECK,
     head_sha: pr.head.sha,
     status: result.status,
@@ -774,15 +681,12 @@ const postGate = async (read: Reader, write: Write) => {
   console.log(`#${pr.number} ${short(pr.head.sha)}: ${result.title}`);
 };
 
-const gate = () => postGate(olderReader, asWorkflow);
-
 /**
- * Signed, before Claude: whether the pull request's newest commit needs a review. If it does, the
+ * Before Claude: whether the pull request's newest commit needs a review. If it does, the
  * app marks the commit as being reviewed, which keeps a second signal from starting another
  * review of it, and this hands the review job what it covers.
  */
 const start = async () => {
-  const read = signedReader(reviewApp());
   const pr = await findPullRequest();
   if (!pr || pr.state !== "open") {
     output("pr", "");
@@ -792,12 +696,12 @@ const start = async () => {
   }
   output("pr", String(pr.number));
   const reviewed = await reviewedCommit(pr);
-  if (!needsReview(reviewable(pr), await read(reviewed))) {
+  if (!needsReview(reviewable(pr), await readReview(reviewed))) {
     output("review", "false");
     console.log(`#${pr.number} ${short(reviewed)}: nothing to review.`);
     return;
   }
-  const { verdict: previous, shas } = await previousVerdict(pr.number, read, reviewed);
+  const { verdict: previous, shas } = await previousVerdict(pr.number, reviewed);
   const since = sinceOf(previous, shas, reviewed);
   const check = await asApp<{ id: number }>(`${repo()}/check-runs`, "POST", {
     name: VERDICT_CHECK,
@@ -828,15 +732,14 @@ const start = async () => {
       base: pr.base.sha,
       previous,
       since,
-      changes: CHANGES,
     }),
   );
-  output("args", reviewArgs("read"));
+  output("args", reviewArgs());
   console.log(`#${pr.number} ${short(reviewed)}: review started.`);
 };
 
 /**
- * Signed, after Claude: completes the check start made, with the verdict or with why there is
+ * After Claude: completes the check start made, with the verdict or with why there is
  * none, then leaves the comment. The verdict goes first, since merging depends on it.
  */
 const verdict = async () => {
@@ -881,17 +784,7 @@ const verdict = async () => {
   });
 };
 
-/** Signed: the "Review gate" check, from the app's verdicts only, written as the app. */
-const judgeSigned = async () => postGate(signedReader(reviewApp()), asApp);
-
-export const commands: Record<string, () => Promise<void>> = {
-  start,
-  verdict,
-  judge: judgeSigned,
-  prepare,
-  publish,
-  gate,
-};
+export const commands: Record<string, () => Promise<void>> = { start, verdict, judge: gate };
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const command = commands[process.argv[2] ?? ""];
