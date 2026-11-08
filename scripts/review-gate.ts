@@ -17,10 +17,10 @@ import { join, matchesGlob } from "node:path";
 import { pathToFileURL } from "node:url";
 
 /** GitHub Actions, the only app whose check runs count. */
-const ACTIONS_APP = 15368;
+export const ACTIONS_APP = 15368;
 const REVIEW_CHECK = "Review";
-const VERDICT_CHECK = "Review verdict";
-const GATE_CHECK = "Review gate";
+export const VERDICT_CHECK = "Review verdict";
+export const GATE_CHECK = "Review gate";
 export const OWNER_LABEL = "needs owner";
 export const ROUNDS = 3;
 /** Commits that change only these pictures (the README's, retaken by CI) need no review. */
@@ -80,7 +80,7 @@ export const REVIEW_SCHEMA = {
   required: ["summary", "earlier", "findings"],
 };
 
-const short = (sha: string) => sha.slice(0, 7);
+export const short = (sha: string) => sha.slice(0, 7);
 // A verdict travels in a check run's text, which GitHub caps at 65,535 characters.
 const NOTES = 10;
 const clip = (text: string, length: number) =>
@@ -273,18 +273,47 @@ export type GateInput = {
   review: ReviewRun;
   verdict: Verdict | null;
 };
+/**
+ * Where the gate leaves a pull request: waiting for its review, back with its author to fix,
+ * with the owner to merge, or free to merge.
+ */
+export type Lane = "wait" | "fix" | "owner" | "merge";
 export type Gate =
-  | { status: "in_progress"; title: string; summary: string }
-  | { status: "completed"; conclusion: "success" | "failure"; title: string; summary: string };
+  | { status: "in_progress"; lane: "wait"; title: string; summary: string }
+  | {
+      status: "completed";
+      conclusion: "success" | "failure";
+      lane: Exclude<Lane, "wait">;
+      title: string;
+      summary: string;
+    };
+/** What the gate's check run carries in its text, for the line's waiter to read. */
+export type GateNote = { version: 1; lane: Lane; reviewed: string };
+
+export const parseGateNote = (text: string | null | undefined): GateNote | null => {
+  if (!text) return null;
+  try {
+    const value = JSON.parse(text) as GateNote;
+    return value.version === 1 &&
+      ["wait", "fix", "owner", "merge"].includes(value.lane) &&
+      isText(value.reviewed)
+      ? value
+      : null;
+  } catch {
+    return null;
+  }
+};
 
 const waiting = (title: string, summary: string): Gate => ({
   status: "in_progress",
+  lane: "wait",
   title,
   summary,
 });
-const fails = (title: string, summary: string): Gate => ({
+const fails = (lane: "fix" | "owner", title: string, summary: string): Gate => ({
   status: "completed",
   conclusion: "failure",
+  lane,
   title,
   summary,
 });
@@ -295,12 +324,14 @@ export const decideGate = (input: GateInput): Gate => {
   const commit = `\`${short(input.reviewed)}\``;
   if (input.author === "dependabot[bot]") {
     return fails(
+      "owner",
       "A dependency update: waits for the owner",
       "Claude doesn't review Dependabot's pull requests, and every dependency update is the owner's to merge.",
     );
   }
   if (input.fork) {
     return fails(
+      "owner",
       "From another repository: waits for the owner",
       "Claude reviews only this repository's own branches, so the owner looks at this one.",
     );
@@ -321,6 +352,7 @@ export const decideGate = (input: GateInput): Gate => {
       return waiting(`Reviewing ${short(input.reviewed)}`, `Claude is reviewing ${commit}.`);
     }
     return fails(
+      "owner",
       "The review couldn't run: waits for the owner",
       `Claude's review of ${commit} ended without a verdict (${input.review.conclusion ?? "unknown"}), after a second try. Re-running the review job may work once the plan allows it; otherwise the owner merges this one.`,
     );
@@ -330,11 +362,13 @@ export const decideGate = (input: GateInput): Gate => {
     const list = open.map((item) => `- **${item.id}** ${place(item)}${item.title}`).join("\n");
     if (round >= ROUNDS) {
       return fails(
+        "owner",
         `${plural(open.length, "serious finding")} after ${round} rounds: waits for the owner`,
         `Still open in ${commit}:\n\n${list}\n\nThe owner decides from here.`,
       );
     }
     return fails(
+      "fix",
       `${plural(open.length, "serious finding")} open`,
       `Open in ${commit}:\n\n${list}\n\nPush a fix and the next review checks it. If a finding is wrong, say why in a reply on the pull request; it then waits for the owner.`,
     );
@@ -345,6 +379,7 @@ export const decideGate = (input: GateInput): Gate => {
   ];
   if (reasons.length) {
     return fails(
+      "owner",
       "Reviewed, nothing serious: waits for the owner",
       `Nothing serious is open in ${commit}, but the owner merges this pull request because ${reasons.join(", and ")}.`,
     );
@@ -352,6 +387,7 @@ export const decideGate = (input: GateInput): Gate => {
   return {
     status: "completed",
     conclusion: "success",
+    lane: "merge",
     title: "Reviewed, nothing serious open",
     summary: `Claude's review of ${commit} left no serious finding open.`,
   };
@@ -546,7 +582,7 @@ export const judge = async (pr: PullRequest) => {
     newestCheck(reviewed, REVIEW_CHECK),
     newestCheck(reviewed, VERDICT_CHECK),
   ]);
-  return decideGate({
+  const gate = decideGate({
     draft: pr.draft,
     fork: pr.head.repo?.full_name !== env("GITHUB_REPOSITORY"),
     author: pr.user.login,
@@ -556,6 +592,7 @@ export const judge = async (pr: PullRequest) => {
     review,
     verdict: parseVerdict(verdictRun?.output.text),
   });
+  return { gate, reviewed };
 };
 
 const gate = async () => {
@@ -564,13 +601,14 @@ const gate = async () => {
     console.log("No open pull request to judge.");
     return;
   }
-  const result = await judge(pr);
+  const { gate: result, reviewed } = await judge(pr);
+  const note: GateNote = { version: 1, lane: result.lane, reviewed };
   await request(`${repo()}/check-runs`, "POST", {
     name: GATE_CHECK,
     head_sha: pr.head.sha,
     status: result.status,
     ...(result.status === "completed" ? { conclusion: result.conclusion } : {}),
-    output: { title: result.title, summary: result.summary },
+    output: { title: result.title, summary: result.summary, text: JSON.stringify(note) },
   });
   console.log(`#${pr.number} ${short(pr.head.sha)}: ${result.title}`);
 };

@@ -705,6 +705,15 @@ The gate runs from `main` (`pull_request_target`, `workflow_run`) and reads the 
 through the API, so a pull request can't change the gate that judges it; the verdict and the
 gate are check runs, which only a GitHub App can create. Merging doesn't wait for the gate yet.
 
+The agent shipping a change reads the same checks (`scripts/line.ts`, run by the skills in
+`.agents/skills/`). `ship` waits until CI and the gate have both spoken on the newest commit,
+counting only GitHub Actions' checks, which the gate's check marks with its lane (wait, fix,
+owner or merge). It lists the serious findings or failed jobs to fix, or says the owner merges
+this one; on a pass it turns auto-merge on, the one place anything does. `land` waits for the
+merge and then for every job of `main`'s CI on it, following a newer run when another push
+cancelled that one. Both ask GitHub through the gh CLI, print a line whenever something changes,
+and end with an exit code for what's next.
+
 A quit signal (SIGTERM, as the installer sends) quits Folio as ⌘Q does: chats settle first.
 
 Without a Developer ID Folio cannot update itself, so it says when a newer release is out
