@@ -511,6 +511,10 @@ const fakeGitHub = () => {
     const page = (items: unknown[]) => json(searchParams.get("page") === "1" ? items : []);
     let match: RegExpExecArray | null;
     if (method === "GET" && path === "/pulls/7") return json(state.pr);
+    if (method === "GET" && path === "/pulls") {
+      const owner = state.pr.head.repo.full_name.split("/")[0];
+      return json(searchParams.get("head") === `${owner}:${state.pr.head.ref}` ? [state.pr] : []);
+    }
     if (method === "GET" && path === "/pulls/7/commits")
       return page(state.commits.map((sha) => ({ sha })));
     if (method === "GET" && path === "/pulls/7/files") return page(state.files);
@@ -737,6 +741,21 @@ describe("the signed commands", () => {
     expect(read().review).toBe("false");
     await commands.judge!();
     expect(gateRuns()[0]!.output.title).toBe("From another repository: waits for the owner");
+  });
+
+  it("find a fork's pull request, which comes without its number, by its branch under its owner", async () => {
+    github.state.pr.head.repo = { full_name: "someone/folio" };
+    vi.stubEnv("PR", "");
+    vi.stubEnv("BRANCH", "fix");
+    vi.stubEnv("GITHUB_REPOSITORY_OWNER", "owner");
+    vi.stubEnv("HEAD_OWNER", "someone");
+    await commands.start!();
+    expect(read()).toMatchObject({ pr: "7", review: "false" });
+    // A branch of that name here isn't the fork's.
+    vi.stubEnv("HEAD_OWNER", "");
+    writeFileSync(outputs, "");
+    await commands.start!();
+    expect(read()).toMatchObject({ pr: "", review: "false" });
   });
 
   it("refuse to run without the app's id", async () => {

@@ -707,7 +707,9 @@ export const findPullRequest = async () => {
   const number = process.env.PR;
   if (number) return request<PullRequest>(`${repo()}/pulls/${number}`);
   const branch = env("BRANCH");
-  const owner = env("GITHUB_REPOSITORY_OWNER");
+  // A fork's branch is looked up under the fork's owner (HEAD_OWNER), so a branch of the same
+  // name here can't stand in for it.
+  const owner = process.env.HEAD_OWNER || env("GITHUB_REPOSITORY_OWNER");
   const open = await request<PullRequest[]>(
     `${repo()}/pulls?state=open&head=${encodeURIComponent(`${owner}:${branch}`)}`,
   );
