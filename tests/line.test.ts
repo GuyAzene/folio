@@ -42,12 +42,10 @@ const check = (name: string, conclusion: string | null, overrides: Partial<Check
   ...overrides,
 });
 const note = (lane: Lane, reviewed = HEAD): GateNote => ({ version: 1, lane, reviewed });
-// Only something to fix fails; waiting for the review or for the owner stays pending.
+// Only something to fix fails; the owner's lane is neutral; only waiting for the review is pending.
+const CONCLUSION = { fix: "failure", merge: "success", owner: "neutral", wait: null } as const;
 const gate = (lane: Lane, title = "the gate's title") =>
-  check(GATE_CHECK, lane === "fix" ? "failure" : lane === "merge" ? "success" : null, {
-    title,
-    app: REVIEW_APP,
-  });
+  check(GATE_CHECK, CONCLUSION[lane], { title, app: REVIEW_APP });
 const bug = {
   title: "Cancel leaves the job running",
   file: "src/jobs/run.ts",
@@ -139,12 +137,17 @@ describe("ship", () => {
   it("leaves to the owner what the gate leaves to the owner", () => {
     const step = readShip(
       pull(),
-      [check("CI", "success"), gate("owner", "Reviewed, nothing serious: waits for the owner")],
+      [
+        check("CI", "success"),
+        gate("owner", "Reviewed, nothing serious: the owner merges this one"),
+      ],
       null,
       note("owner"),
     );
     expect(step).toMatchObject({ done: true, outcome: "owner" });
-    expect(step.done && step.lines.join("\n")).toContain("don't turn auto-merge on");
+    const said = step.done ? step.lines.join("\n") : "";
+    expect(said).toContain("the owner merges it with GitHub's merge button");
+    expect(said).toContain("don't turn auto-merge on");
   });
 
   describe("the review's notes", () => {
