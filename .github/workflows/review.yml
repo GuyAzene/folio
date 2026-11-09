@@ -2,8 +2,8 @@ name: Review
 
 # Claude's review and the review gate, written by Folio's own GitHub App so that nothing a pull
 # request changes can write either one (docs/architecture.md says exactly who can). It runs from
-# main, never from a pull request's branch: when the "Pull request" workflow signals a change, and
-# when the README pictures job pushes a commit, which gets no other event.
+# main, never from a pull request's branch: when the "Pull request" workflow signals a change or a
+# close, and when the README pictures job pushes a commit, which gets no other event.
 #
 # The app's key is a secret of the review-gate environment, which only main may use. The jobs that
 # hold it run main's script and never check out the pull request. The one job that reads the pull
@@ -27,8 +27,10 @@ permissions: {}
 env:
   PR: ${{ github.event.workflow_run.pull_requests[0].number || inputs.pr }}
   # A fork's pull request comes without its number: it is found by its branch, under its owner.
+  # One that has just closed may too: it is found by its branch and its head commit.
   BRANCH: ${{ github.event.workflow_run.head_branch }}
   HEAD_OWNER: ${{ github.event.workflow_run.head_repository.owner.login }}
+  HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
 
 jobs:
   start:
