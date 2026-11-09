@@ -33,9 +33,9 @@ top of the checks and never replaces them.
    Never present something you didn't run as evidence, or a capture from another commit as this
    one's.
 
-Evidence is sized to the change. A change only to docs, the guide or the skills needs `vp check`,
-the guide's tests, and a read of what changed, with its commands and links tried. It needs no
-captures.
+Evidence is sized to the change. A change only to docs, the guide or the skills needs no
+captures. It needs the checks in step 1, whose `vp test` runs the guide's tests
+(`tests/agent-guide.test.ts`), and a read of what changed, with its commands and links tried.
 
 ## Capture hygiene
 
