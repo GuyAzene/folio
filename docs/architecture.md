@@ -659,14 +659,15 @@ other failure fails at once, so a check is never tried again. Only GitHub's own 
 `install.js` checks Electron against the checksums its package ships, and electron-builder checks
 its tools against its own.
 
-After a push to `main` whose checks, tests and builds pass, CI builds the app for others
-(`FOLIO_DISTRIBUTE=1`: the inspector flags off) on macOS and on Windows, and opens each on an
-empty home and quits it. The macOS job then replaces the disk image on the rolling `nightly`
-pre-release, moves its tag to that commit and writes its notes. The Windows job waits for it and
-then replaces the installer beside it, unless a newer push has moved the tag on meanwhile, so the
-two downloads are always from one commit. The download link never changes, and there are no versioned releases to cut. The
-real-window job reports on its own and does not hold the nightly back: those checks were written
-on a Mac much faster than GitHub's virtual ones.
+After a push to `main` that changes the app, once its checks, tests and builds pass, CI builds
+the app for others (`FOLIO_DISTRIBUTE=1`: the inspector flags off) on macOS and on Windows, and
+opens each on an empty home and quits it. The macOS job then replaces the disk image on the
+rolling `nightly` pre-release, moves its tag to that commit and writes its notes. The Windows job
+waits for it and then replaces the installer beside it, unless a newer push has moved the tag on
+meanwhile, so the two downloads are always from one commit. The download link never changes, and
+there are no versioned releases to cut. A push that changes only docs, templates or unit tests
+rebuilds neither. The real-window job reports on its own and does not hold the nightly back: those
+checks were written on a Mac much faster than GitHub's virtual ones.
 
 On a pull request from this repository that changes the app, CI also retakes the README's
 pictures on macOS (`vp run screenshots`). A still picture is replaced only when it looks
@@ -694,39 +695,27 @@ Claude reviews every push to a pull request from this repository: the whole pull
 first time, then only the changes since its last review, rechecking the serious findings it left
 open. A finding is serious only when it is a real bug, a broken promise or a security hole in
 lines the pull request changed; everything else is a note. Claude answers in JSON
-(`--json-schema`), and `scripts/review-gate.ts` posts that as a comment and as a "Review verdict"
-check holding the open findings. The "Review gate" check on the pull request's latest commit then
-passes once the newest review left nothing serious open, fails while a serious finding is open,
-and stays pending while a review is due or under way. It finishes as neutral, the owner's lane,
-when the owner merges this one: the pull request touches an area in `.github/owner-areas.txt` (a
-rename counts at both ends) or carries the "needs owner" label, comes from Dependabot or another
-repository, still has serious findings after three rounds, or couldn't be reviewed after a second
-try. Only something to fix is a failure, with its red cross. A commit of only the README's
-pictures carries the last review over, and the pictures job starts the gate on it. The gate reads
-the pull request only through the API, so a pull request can't change the gate that judges it.
-`main`'s ruleset requires the gate, from the review app only, as well as CI from GitHub Actions,
-so a pull request merges only once both pass. GitHub counts a neutral check as passed, so a pull
-request in the owner's lane shows every check done, and the owner merges it with GitHub's normal
-merge button. A rule keeps it for the owner: the line never merges it, and never uses auto-merge.
-That includes one still holding serious findings after three rounds, which GitHub's rules would
-let anyone with merge rights merge. Nothing stops an auto-merge someone turns on by hand: a pull
-request that then moves to the owner's lane would merge without the owner, so nobody turns it on. A pull request merged past
-a gate still pending or failing, which only an admin can do, gets its gate finished as neutral,
-saying what it said before, so nothing spins on a merged pull request's page. One closed without
-merging keeps its gate, since a reopened pull request could otherwise merge before the gate judged
-it again.
+(`--json-schema`), and `scripts/review.ts` posts that as one comment on the pull request. The
+comment carries the review itself, as JSON in an HTML comment that GitHub doesn't show, and the
+next review continues from the newest one the Review workflow's own token wrote. A branch that
+merged `main` since the last review, or lost that review's commit to a force push, is reviewed
+whole again against `main`, so `main`'s own changes never come into the diff, and its open
+findings are still checked. A commit of only the README's pictures needs no review: the review of
+the commit before it covers it. Claude doesn't review drafts, Dependabot's pull requests or other
+repositories' branches. The review is advice for the agent and the owner, as Greptile's is in
+rstack: nothing waits on it to merge. `main`'s ruleset requires only CI, and the owner merges.
 
 It all runs from `main` (`review.yml`). The "Pull request" workflow, which holds no permissions
-or secrets, only signals that a pull request changed or closed, and its end starts the Review
-workflow from `main` (`workflow_run`). A first job marks the commit's "Review verdict" as under
-way, so a second signal doesn't start a second review of it; a mark older than an hour counts as a
-review that stopped. Claude reviews in a job of its own, which only takes this repository's
-branches. It can read and search the checkout and the diff and commit log in `/tmp/review`. It
-loads none of the settings, hooks or MCP servers a pull request brings (`--setting-sources user`,
-and `.claude`, `.mcp.json`, `CLAUDE.md` and the other files the Claude action restores from the
-base branch on a pull request event are removed here). Only Claude's answer leaves that job. Two
-more jobs post the verdict, then the comment, and the gate. A review that ended without a verdict
-is tried again at the next signal.
+or secrets, only signals that a pull request has something new to review (it was opened, pushed
+to, reopened or marked ready), and its end starts the Review workflow from `main`
+(`workflow_run`). That workflow reviews one commit of a pull request at a time: a signal that
+comes while a review runs waits for it, then finds that commit reviewed. Claude reviews in a job
+of its own, which only takes this repository's branches. It can read and search the checkout and
+the diff and commit log in `/tmp/review`. It loads none of the settings, hooks or MCP servers a
+pull request brings (`--setting-sources user`, and `.claude`, `.mcp.json`, `CLAUDE.md` and the
+other files the Claude action restores from the base branch on a pull request event are removed
+here). Only Claude's answer leaves that job. The last job posts the comment, or, when the review
+couldn't run after a second try, a comment that says why; the next signal tries again.
 
 The `@claude` workflow uses the thread context and images the action collects. It can read and
 search the checkout and `/tmp/github-images`, and uses the action's comment tool to reply. Both
@@ -740,38 +729,21 @@ access, including the Git commands the action adds for `@claude`. Claude Code en
 rules at the tool level and still uses the OAuth token in its process environment to
 authenticate.
 
-Who can write the gate. Only a GitHub App can make a check run, so no person's login can make a
-verdict or a gate. The verdict and the gate that count are made by Folio's own GitHub App,
-`folio-review-gate`, which has only the Checks permission and is installed on this repository
-alone. Its private key is a secret of the `review-gate` environment, which only `main` may use:
-GitHub checks a `pull_request` job against `refs/pull/<n>/merge`, and a push or a manual run
-against its own branch, so no workflow a pull request adds or changes, and no other branch, gets
-the key. The jobs that hold it run `main`'s script from a sparse checkout of `main` and never
-check out the pull request, which `tests/review-gate.test.ts` holds the workflow to. A check of the
-same name from any other app doesn't count, in the gate or in `scripts/line.ts`. That matters for
-GitHub Actions above all (id 15368): every workflow token belongs to it, a pull request's own
-workflows' included, so any pull request that adds a workflow can post a "Review gate" or a
-"Review verdict" as GitHub Actions. A pull request can't write either of the app's checks, whatever
-it changes, and one that stops the signal gets no gate at all. What can still pass a pull
-request: Claude, when text in the pull request talks it into a clean review, which the owner areas
-limit; the owner's lane, which the gate passes as neutral and only the rule keeps for the owner;
-and the owner's login, which agents work through, since an admin can change the environment or
-the ruleset, or bypass the ruleset.
+What the review can't stop. A pull request's own workflows hold the same kind of token as the
+Review workflow, so one that adds a workflow could post a comment that looks like a review, and
+text in a pull request can talk Claude into a clean review. Either would only mislead the agent's
+loop and the next review: nothing merges on a review, and the owner reads the pull request before
+merging it.
 
-The agent shipping a change reads the same checks (`scripts/line.ts`, run by the skills in
-`.agents/skills/`). `ship` waits until CI and the gate have both spoken on the newest commit,
-counting CI only from GitHub Actions and the verdict and the gate only from the review app, whose
-gate marks its lane (wait, fix, owner or merge). It lists the serious findings or failed jobs to
-fix, or says the owner merges this one. On a pass it merges at once, pinned to the commit that
-passed, so a push in between makes GitHub refuse; it is the one place anything merges, never past
-a rule. It never uses auto-merge: that would merge later on whatever the gate says by then, and a
-pull request that moved to the owner's lane, which passes as neutral, would merge without the
-owner. The review's notes hold a pass too: `ship` ends with
-something to fix until they're fixed or, with `--notes-answered <commit>`, answered on the pull
-request, and they stop holding it after the third round. `land` waits for the
-merge and then for every job of `main`'s CI on it, following a newer run when another push
-cancelled that one. Both ask GitHub through the gh CLI, print a line whenever something changes,
-and end with an exit code for what's next.
+The agent shipping a change waits for each round with `scripts/wait-for-review.ts`, which the
+`ship` skill in `.agents/skills/` runs: until every check on the pull request's newest commit has
+finished, and the review of that commit, or of the one before CI's pictures, is in. It lists the
+failed checks, the serious findings still open and the notes, and ends with an exit code for
+what's next: nothing to fix, something to fix, or stuck. It asks GitHub through the gh CLI, prints
+a line whenever something changes, and never merges. The agent fixes what's right and pushes
+again, for three rounds at most, then gives the owner the pull request's link. Agents merge only
+when the owner tells them to, and then normally, pinned to the commit that passed
+(`gh pr merge --squash --match-head-commit`).
 
 Every agent reads one guide. Codex and Cursor read `AGENTS.md` from the root, and Claude Code reads
 `CLAUDE.md`, which only imports it, so a Claude session in a worktree outside the owner's

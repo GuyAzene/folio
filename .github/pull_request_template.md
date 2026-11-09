@@ -1,10 +1,10 @@
-## What changed
-
-## Why
+## What and why
 
 <!-- "Fixes #12" closes the issue when this merges. -->
 
-## How it was checked
+## Done when
+
+## How it was proven
 
 - [ ] `vp check`, `vp run check:ui` and `vp test`
 - [ ] In the browser preview (`vp dev`) or a real Folio window, for interface changes

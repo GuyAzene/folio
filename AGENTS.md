@@ -71,28 +71,30 @@ development Folio is open.
 - Version storage formats and dependencies deliberately; treat provider-native message blocks
   with care, since a transcript migration is never free.
 
-## How a change ships
+## Workflow
 
-Every change takes the same path from the request to `main`, sized to the change. Each step is a
-skill in [`.agents/skills/`](.agents/skills), which Codex and Cursor read and Claude Code reads
-through `.claude/skills/`. Read-only work, such as a question, an explanation, a review or an
-investigation, needs none of it: no worktree, branch or pull request. Once it leads to an edit,
-that edit is isolated first.
+Each step is a skill in [`.agents/skills/`](.agents/skills), which Codex and Cursor read and
+Claude Code reads through `.claude/skills/`. Each task takes the steps that fit it:
 
-1. **Scope** (`scope`): every question asked up front, then what "done" looks like.
-2. **Isolate** (`isolate`): its own worktree and branch from the newest `main`, before the
-   first edit, every time, even for one line of README.
-3. **Build** (`build`), by the rules above and the boundaries in
+- Read-only work, such as a question, an explanation, a review or an investigation, needs no
+  worktree, branch or pull request. Once it leads to an edit, isolate that edit first.
+- Before a change, ask the owner everything it needs in one message, each question with your
+  recommendation, then write down what "done" looks like. Once the owner says go, work without
+  asking. A small change, such as README text, needs no questions.
+- A change only to docs or text still gets its own worktree, branch and pull request, and its
+  content and links checked, but no runtime evidence. CI sizes its checks by the files that
+  changed.
+
+1. **Isolate** (`isolate`): its own worktree and branch from the newest `main`, before the first
+   edit, every time, even for one line of README.
+2. **Build** (`build`), by the rules above and the boundaries in
    [docs/architecture.md](docs/architecture.md).
-4. **Prove** (`prove`): the checks, and evidence that it does what "done" says: the failure
+3. **Prove** (`prove`): the checks, and evidence that it does what "done" says: the failure
    before a fix, and a before and an after for what the student sees.
-5. **Ship** (`ship`): the pull request. `vp node scripts/line.ts ship` waits for CI and
-   Claude's review of the newest commit, and says what's next.
-6. **Land** (`land`): `vp node scripts/line.ts land` waits for the merge and for `main` to
-   stay green.
-
-A small change, such as README text, skips the questions and the evidence, but still gets its own
-worktree and branch and goes through a pull request; CI sizes its checks by the files that changed.
+4. **Ship** (`ship`): the pull request and Claude's review loop. Claude reviews every push, and
+   `vp node scripts/wait-for-review.ts` waits for the checks and that review. The agent fixes
+   what's right and pushes again, for three rounds at most, then gives the owner the pull
+   request's link.
 
 ### Isolate before the first edit
 
@@ -101,7 +103,7 @@ task:
 
 1. If your environment already made a worktree for this task, as Claude Code's desktop app does
    under `.claude/worktrees/`, keep working in it. In your session's own worktree, once its
-   earlier task has landed and `git status` is clean, a new branch from `origin/main` is enough:
+   earlier task has merged and `git status` is clean, a new branch from `origin/main` is enough:
    `git switch -c <agent>/<task> origin/main`. A folder or branch name alone doesn't show that a
    worktree is this task's.
 2. Otherwise make one from the newest `main`, outside the checkout:
@@ -118,7 +120,7 @@ task:
    pick another: never force or reuse one.
 
 `isolate` adds the overlap check and the install. The worktree stays until its pull request
-merges or closes, and `land` removes it.
+merges or closes, and `isolate` says how to remove it then.
 
 ### Working alongside other agents
 
@@ -140,23 +142,18 @@ merges or closes, and `land` removes it.
 
 ### Merging
 
-Agents don't decide to merge. Once CI and the review gate pass on the newest commit, the ship wait
-merges it at once, pinned to that commit. It never uses auto-merge, which would merge later on
-whatever the gate says by then. That is the only place anything merges. The review's notes hold it too, until the agent has
-fixed the ones that are right and in scope and answered the rest on the pull request; after three
-rounds they no longer hold it. The owner merges instead when the pull request
-touches an area in [`.github/owner-areas.txt`](.github/owner-areas.txt), carries the
-`needs owner` label, has a serious finding its author disputes, or still has serious findings
-after three reviews. The review gate finishes those as neutral, so every check shows done and the
-owner merges with GitHub's normal merge button. When the owner tells an agent to merge one, it
-merges normally (`gh pr merge <n> --squash --match-head-commit <sha>`) and lands it. Never use
-auto-merge, merge past a rule (`--admin`) or push to `main`, unless the owner explicitly asks for
-that one thing; then say once which rule it skips, and do it.
+Agents don't merge a pull request unless the owner says so. They end by giving the owner its
+link, and the owner merges it with GitHub's merge button. When the owner tells an agent to merge
+one, the agent first checks that every check on the newest commit finished and passed, then merges
+it normally: `gh pr merge <n> --squash --match-head-commit <sha>`. Never use auto-merge, merge past
+a rule (`--admin`) or push to `main`, unless the owner explicitly asks for that one thing; then
+say once which rule it skips, and do it.
 
-Once the owner says go, the work goes on until it ends in one of these, said in one line:
+Once the owner says go, the work goes on until it ends in one of these, said in one line with the
+pull request's link:
 
-- **Landed**: merged, and `main` green.
-- **The owner's**: it waits for the owner to merge it, or for their call on a disputed finding.
+- **Ready**: every check passed, and the review left nothing serious open.
+- **Out of rounds**: three reviews in, with what's still open.
 - **Stuck**: it needs something only the owner can give (a decision the plan didn't settle, a
   sign-in, an install, a permission), or GitHub isn't answering. Say exactly what.
 
@@ -169,12 +166,11 @@ messages, the pull request's title and description, docs, code comments and repl
 text you wrote or changed, not to prose you didn't touch. Issues, pull requests and commits are
 public.
 
-## Where the line comes from
+## Where the workflow comes from
 
-The line follows [rstack](https://github.com/michaelshimeles/rstack)'s workflow: isolate first,
-build within the project's own structure, prove with evidence, and loop on review until nothing
-worth fixing is left. `isolate`, `build` and `prove` are Folio's own versions
-of its `new-feature`, `code-structure` and `evidence-driven-testing`. `ship` takes the
-review loop's rules from `greploop`, with Claude's review in place of Greptile. `unslop` is
-rstack's `unslop`, from Cursor's pstack, unchanged; its MIT license is in its
-folder.
+The workflow is [rstack](https://github.com/michaelshimeles/rstack)'s: isolate first, build
+within the project's own structure, prove with evidence, and loop on review until nothing worth
+fixing is left. `isolate`, `build` and `prove` are Folio's versions of its `new-feature`,
+`code-structure` and `evidence-driven-testing`. `ship` is its way of completing a task that ships,
+with `greploop`'s review loop and Claude's review in place of Greptile's. `unslop` is rstack's
+`unslop`, from Cursor's pstack, unchanged; its MIT license is in its folder.

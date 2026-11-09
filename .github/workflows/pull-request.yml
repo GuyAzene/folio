@@ -1,9 +1,8 @@
 name: Pull request
 
-# Tells the Review workflow, which runs from main, that a pull request changed or closed. It does
-# nothing else and holds no permissions or secrets. Whatever a pull request changes here, its review
-# and its gate are still decided by main's code; one that stops this signal gets no gate at all.
-# The close lets the gate of a pull request the owner merged finish, instead of waiting for good.
+# Tells the Review workflow, which runs from main, that a pull request has something new to review.
+# It does nothing else and holds no permissions or secrets: whatever a pull request changes here,
+# its review is still decided by main's code.
 on:
   pull_request:
     types:
@@ -11,10 +10,6 @@ on:
       - synchronize
       - reopened
       - ready_for_review
-      - converted_to_draft
-      - labeled
-      - unlabeled
-      - closed
 
 permissions: {}
 

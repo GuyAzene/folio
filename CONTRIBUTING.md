@@ -12,8 +12,8 @@ Report a security problem privately instead, as [SECURITY.md](SECURITY.md) descr
 
 ## How changes are made
 
-- A feature or a change in several steps is a pull request from its own branch. Small fixes may
-  go straight to `main`.
+- Every change is a pull request from its own branch, even a one-line fix. Claude reviews each
+  push to it, and the owner merges it.
 - Pull requests are squash-merged, so the title becomes the commit on `main`. Write it as a plain
   sentence about what changes for the student, like the existing history ("Keep study notes to
   what the slides teach, not how they look"). "Fixes #12" in the description closes the issue.
@@ -43,4 +43,4 @@ milestone is done.
    publish it.
 
 The [nightly build](https://github.com/GuyAzene/folio/releases/tag/nightly) is rebuilt from `main`
-after every change, for anyone who wants the newest Folio.
+after every change to the app, for anyone who wants the newest Folio.
