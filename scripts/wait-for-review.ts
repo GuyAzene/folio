@@ -128,7 +128,8 @@ export const readRound = (
     };
   }
 
-  const round = `round ${review.round} of ${ROUNDS}`;
+  // Past the last round, as after fixing its notes, it's just the round.
+  const round = `round ${review.round}${review.round <= ROUNDS ? ` of ${ROUNDS}` : ""}`;
   const notes = review.notes.map((item) => `- ${item.title}${place(item)}. ${item.why}`);
   const noteLines = notes.length
     ? [

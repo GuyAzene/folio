@@ -145,6 +145,14 @@ describe("a round", () => {
     );
   });
 
+  it("counts a round past the last one without saying it's of three", () => {
+    let past = verdict();
+    for (let round = 1; round <= ROUNDS; round++) past = buildVerdict(past, review(), HEAD, null);
+    expect(said(readRound(pull(), passed, HEAD, past))).toContain(
+      `the review (round ${ROUNDS + 1}) left nothing serious open`,
+    );
+  });
+
   it("is stuck when the review couldn't run, and says how to start it once more", () => {
     const step = readRound(pull(), passed, HEAD, failure);
     expect(step).toMatchObject({ done: true, outcome: "stuck" });
