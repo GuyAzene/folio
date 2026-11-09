@@ -1,9 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   EXIT,
   afterRefusal,
   merge,
   failedChecks,
+  findNumber,
+  noSuchPull,
   failedSteps,
   parseArgs,
   progress,
@@ -341,6 +343,34 @@ describe("what the waits print", () => {
         "Tell the owner in one line, then stop.",
       ],
     });
+  });
+
+  it("fails at once on a pull request that doesn't exist, and asks again while GitHub doesn't answer", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const pauses: number[] = [];
+    const pause = async (ms: number) => void pauses.push(ms);
+    let asked = 0;
+    const flaky = async () => {
+      if (++asked < 3) throw new Error("error connecting to api.github.com");
+      return { number: 45 };
+    };
+    expect(await findNumber(flaky, pause)).toEqual({ number: "45" });
+    expect(pauses).toHaveLength(2);
+
+    const missing = async () => {
+      throw new Error("GraphQL: Could not resolve to a PullRequest with the number of 999.");
+    };
+    expect(await findNumber(missing, pause)).toMatchObject({ outcome: "fix" });
+    expect(noSuchPull('no pull requests found for branch "fix"')).toBe(true);
+    expect(noSuchPull("HTTP 502: Bad Gateway")).toBe(false);
+
+    pauses.length = 0;
+    const down = async () => {
+      throw new Error("error connecting to api.github.com");
+    };
+    expect(await findNumber(down, pause)).toMatchObject({ outcome: "github" });
+    expect(pauses).toHaveLength(9);
+    log.mockRestore();
   });
 
   it("gives each outcome its own exit code", () => {
