@@ -32,6 +32,7 @@ export type Pull = {
   state: "OPEN" | "CLOSED" | "MERGED";
   draft: boolean;
   head: string;
+  branch: string;
   /** Whether Claude reviews it: this repository's own branch, and not Dependabot's. */
   reviewable: boolean;
 };
@@ -213,7 +214,7 @@ export type GitHub = {
   }>;
   comments: (number: number) => Promise<{ user: { login: string } | null; body: string | null }[]>;
   /** Whether a run of the Review workflow is queued or under way for this pull request. */
-  reviewing: (number: number) => Promise<boolean>;
+  reviewing: (pr: Pull) => Promise<boolean>;
   /** The commit checked out here, so the wait doesn't ask you to pull your own push. */
   localHead: () => Promise<string>;
 };
@@ -245,7 +246,7 @@ export const watcher = (github: GitHub, number: string, say: (line: string) => v
     for (const line of failedSteps(failed, await github.jobs(pr.head))) say(line);
     const review = reviewOf(readReviews(await github.comments(pr.number)), reviewed);
     const couldnt = !!review && !("open" in review);
-    const reviewing = couldnt && (await github.reviewing(pr.number));
+    const reviewing = couldnt && (await github.reviewing(pr));
     const step = readRound(pr, checks, reviewed, review, reviewing);
     // GitHub lists a run a few seconds after it's started, so a retry started just now may not
     // show yet: a review that couldn't run stops the wait only when a second look still finds it.
@@ -266,6 +267,7 @@ export const fromView = (view: {
   state: Pull["state"];
   isDraft: boolean;
   headRefOid: string;
+  headRefName: string;
   isCrossRepository: boolean;
   author: { login: string };
 }): Pull => ({
@@ -273,8 +275,12 @@ export const fromView = (view: {
   state: view.state,
   draft: view.isDraft,
   head: view.headRefOid,
+  branch: view.headRefName,
   reviewable: !view.isCrossRepository && !isDependabot(view.author.login),
 });
+
+/** The statuses a run has before it completes, which GitHub lists one at a time. */
+const UNDER_WAY = ["queued", "in_progress", "waiting", "pending", "requested"];
 
 // GitHub, through the gh CLI.
 
@@ -314,7 +320,7 @@ const throughGh: GitHub = {
           "view",
           ...(number ? [number] : []),
           "--json",
-          "number,state,isDraft,headRefOid,isCrossRepository,author",
+          "number,state,isDraft,headRefOid,headRefName,isCrossRepository,author",
         ]),
       ),
     ),
@@ -336,14 +342,18 @@ const throughGh: GitHub = {
   commit: (sha) => api(`commits/${sha}`),
   comments: (number) =>
     everyItem(`issues/${number}/comments`, ".[] | {user: {login: .user.login}, body}"),
-  reviewing: async (number) =>
-    (
-      await api<{ workflow_runs: { status: string; display_title: string }[] }>(
-        "actions/workflows/review.yml/runs?per_page=30",
-      )
-    ).workflow_runs.some(
-      (run) => run.status !== "completed" && run.display_title === runName(number),
-    ),
+  // A run is named after its pull request's number, or its branch when GitHub left the number
+  // out (review.yml's run-name).
+  reviewing: async (pr) => {
+    const names = [runName(pr.number), runName(pr.branch)];
+    for (const status of UNDER_WAY) {
+      const { workflow_runs: runs } = await api<{ workflow_runs: { display_title: string }[] }>(
+        `actions/workflows/review.yml/runs?status=${status}&per_page=100`,
+      );
+      if (runs.some((run) => names.includes(run.display_title))) return true;
+    }
+    return false;
+  },
   localHead: async () => {
     try {
       return (await exec("git", ["rev-parse", "HEAD"])).stdout.trim();

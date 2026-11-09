@@ -741,7 +741,8 @@ finished, and the review of that commit, or of the one before CI's pictures, is 
 failed checks, the serious findings still open and the notes, and ends with an exit code for
 what's next: nothing to fix, something to fix, or stuck. A review that couldn't run counts only
 once a second look still finds no Review run of that pull request under way (each run is named
-after its pull request), since that run may be its retry. A pull request Claude doesn't review
+after its pull request's number, or its branch when GitHub leaves the number out), since that run
+may be its retry. A pull request Claude doesn't review
 finishes on its checks alone. It asks GitHub through the gh CLI, prints a line
 whenever something changes, and never merges: its gh runs only `pr view` and reads through `api`,
 and refuses anything else. The agent fixes what's right and pushes

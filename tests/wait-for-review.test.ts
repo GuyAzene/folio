@@ -34,6 +34,7 @@ const pull = (overrides: Partial<Pull> = {}): Pull => ({
   state: "OPEN",
   draft: false,
   head: HEAD,
+  branch: "fix",
   reviewable: true,
   ...overrides,
 });
@@ -275,16 +276,58 @@ describe("the wait's looks", () => {
     expect(await look()).toMatchObject({ outcome: "stuck" });
   });
 
-  it("ask GitHub about this pull request's own Review runs", async () => {
+  it("ask GitHub about this pull request's own Review runs, by number and by branch", async () => {
     const { state, github } = fakeGitHub();
     state.comments.push({ user: { login: REVIEWER }, body: renderFailure(7, HEAD, "x") });
-    const asked: number[] = [];
-    github.reviewing = async (number) => {
-      asked.push(number);
+    const asked: Pull[] = [];
+    github.reviewing = async (pr) => {
+      asked.push(pr);
       return false;
     };
     await watcher(github, "7", () => {})();
-    expect(asked).toEqual([7]);
+    expect(asked).toEqual([expect.objectContaining({ number: 7, branch: "fix" })]);
+  });
+
+  it("take a retry that shows only on the second look, then its review", async () => {
+    const { state, github, reviewed } = fakeGitHub();
+    state.comments.push({ user: { login: REVIEWER }, body: renderFailure(7, HEAD, "x") });
+    const look = watcher(github, "7", () => {});
+    expect(await look()).toMatchObject({ done: false });
+    state.reviewing = true;
+    expect(await look()).toEqual({ done: false, waitingFor: "the Review run under way" });
+    state.reviewing = false;
+    reviewed([]);
+    expect(await look()).toMatchObject({ done: true, outcome: "done" });
+  });
+
+  // The agent starts the review again once; a second failure is the one ship says to stop on.
+  it("stop at once when the retry couldn't run either", async () => {
+    const { state, github } = fakeGitHub();
+    const fail = () =>
+      state.comments.push({ user: { login: REVIEWER }, body: renderFailure(7, HEAD, "x") });
+    fail();
+    const look = watcher(github, "7", () => {});
+    await look();
+    state.reviewing = true;
+    await look();
+    state.reviewing = false;
+    fail();
+    expect(await look()).toMatchObject({ done: true, outcome: "stuck" });
+  });
+
+  it("give a new commit whose review couldn't run its own second look", async () => {
+    const { state, github } = fakeGitHub();
+    const NEXT = "e".repeat(40);
+    state.files[NEXT] = { files: [{ filename: "src/z.ts" }], parents: [{ sha: HEAD }] };
+    state.comments.push({ user: { login: REVIEWER }, body: renderFailure(7, HEAD, "x") });
+    const look = watcher(github, "7", () => {});
+    await look();
+    expect(await look()).toMatchObject({ outcome: "stuck" });
+    state.pr = pull({ head: NEXT });
+    state.commits = [EARLIER, HEAD, NEXT];
+    state.comments.push({ user: { login: REVIEWER }, body: renderFailure(7, NEXT, "x") });
+    expect(await look()).toMatchObject({ done: false });
+    expect(await look()).toMatchObject({ outcome: "stuck" });
   });
 
   it("work out the commit to review again when a look failed half way", async () => {
@@ -403,6 +446,7 @@ describe("what gh says about a pull request", () => {
     state: "OPEN" as const,
     isDraft: false,
     headRefOid: HEAD,
+    headRefName: "fix",
     isCrossRepository: false,
     author: { login: "someone" },
   };
