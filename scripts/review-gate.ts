@@ -17,7 +17,7 @@
 // fix them. The gate passes once the newest reviewed commit has none open. A pull request waits
 // for the owner to merge it instead when it touches an area in .github/owner-areas.txt, carries
 // the "needs owner" label, comes from Dependabot, still has serious findings after three rounds,
-// or couldn't be reviewed.
+// or couldn't be reviewed. Once the owner merges one past its gate, judge finishes the gate.
 import { randomUUID } from "node:crypto";
 import { appendFileSync, readFileSync } from "node:fs";
 import { matchesGlob } from "node:path";
@@ -498,6 +498,50 @@ export const decideGate = (input: GateInput): Gate => {
   };
 };
 
+/** A "Review gate" check run, as GitHub lists it. */
+export type GateRun = {
+  id: number;
+  status: string;
+  conclusion: string | null;
+  app: { id: number } | null;
+  output: { title?: string | null; text: string | null };
+};
+
+/**
+ * What the gate ends with once its pull request has merged, or null when there is nothing to
+ * finish. Only the owner can merge past a gate that is pending or failing, and nothing would write
+ * that gate again: it would spin, or keep its red cross, on the pull request's page for good. It
+ * finishes as neutral and says what it said before. GitHub counts a neutral check as passed, which
+ * is harmless here: a merged pull request can't merge again, and its commit's changes are already
+ * on main. A pull request closed without merging keeps its gate, since it may be reopened, and a
+ * neutral gate would let it merge before the gate judged it again.
+ */
+export const mergedGate = (
+  pr: { number: number; merged_at: string | null },
+  runs: GateRun[],
+): { title: string; summary: string } | null => {
+  if (!pr.merged_at) return null;
+  const last = runs.filter((run) => run.app?.id === REVIEW_APP).sort((a, b) => b.id - a.id)[0];
+  if (!last)
+    return {
+      title: "Merged before the gate ran",
+      summary: `#${pr.number} merged before the review gate judged it.`,
+    };
+  // It passed, or it finished already, as when the signal comes twice.
+  if (last.status === "completed" && ["success", "neutral"].includes(last.conclusion ?? ""))
+    return null;
+  const lane = parseGateNote(last.output.text)?.lane;
+  return {
+    title:
+      lane === "owner"
+        ? "Merged by the owner"
+        : lane === "fix"
+          ? "Merged with a serious finding open"
+          : "Merged before its review finished",
+    summary: `#${pr.number} merged while this gate said "${last.output.title ?? "nothing yet"}". It no longer holds anything back.`,
+  };
+};
+
 /** `[area]` headings, each followed by the globs that belong to it; `#` starts a comment. */
 export const parseAreas = (text: string) => {
   const areas: { area: string; globs: string[] }[] = [];
@@ -614,6 +658,7 @@ const verdictOutput = (verdict: Verdict) => ({
 export type PullRequest = {
   number: number;
   state: string;
+  merged_at: string | null;
   draft: boolean;
   title: string;
   body: string | null;
@@ -637,10 +682,17 @@ export const findPullRequest = async () => {
   // A fork's branch is looked up under the fork's owner (HEAD_OWNER), so a branch of the same
   // name here can't stand in for it.
   const owner = process.env.HEAD_OWNER || env("GITHUB_REPOSITORY_OWNER");
-  const open = await request<PullRequest[]>(
-    `${repo()}/pulls?state=open&head=${encodeURIComponent(`${owner}:${branch}`)}`,
+  const head = encodeURIComponent(`${owner}:${branch}`);
+  const open = await request<PullRequest[]>(`${repo()}/pulls?state=open&head=${head}`);
+  if (open[0]) return open[0];
+  // A pull request that has just closed is the one whose head is the commit the signal ran on
+  // (HEAD_SHA), so an older one from a branch of the same name can't stand in for it.
+  const sha = process.env.HEAD_SHA;
+  if (!sha) return null;
+  const closed = await request<PullRequest[]>(
+    `${repo()}/pulls?state=closed&head=${head}&sort=updated&direction=desc`,
   );
-  return open[0] ?? null;
+  return closed.find((pr) => pr.head.sha === sha) ?? null;
 };
 
 /** The newest commit that needs a review: the head, past a few commits that only retake pictures. */
@@ -681,8 +733,24 @@ export const judge = async (pr: PullRequest) => {
 /** The "Review gate" check, from the app's verdicts only, written as the app. */
 const gate = async () => {
   const pr = await findPullRequest();
-  if (!pr || pr.state !== "open") {
-    console.log("No open pull request to judge.");
+  if (!pr) {
+    console.log("No pull request to judge.");
+    return;
+  }
+  if (pr.state !== "open") {
+    const done = mergedGate(pr, await checkRuns(pr.head.sha, GATE_CHECK, REVIEW_APP));
+    if (!done) {
+      console.log(`#${pr.number} is closed, and its gate has nothing to finish.`);
+      return;
+    }
+    await asApp(`${repo()}/check-runs`, "POST", {
+      name: GATE_CHECK,
+      head_sha: pr.head.sha,
+      status: "completed",
+      conclusion: "neutral",
+      output: done,
+    });
+    console.log(`#${pr.number} ${short(pr.head.sha)}: ${done.title}`);
     return;
   }
   const { gate: result, reviewed } = await judge(pr);
@@ -704,13 +772,13 @@ const gate = async () => {
  */
 const start = async () => {
   const pr = await findPullRequest();
+  // A closed pull request isn't reviewed, but its number goes on, so the gate can finish.
+  output("pr", pr ? String(pr.number) : "");
   if (!pr || pr.state !== "open") {
-    output("pr", "");
     output("review", "false");
-    console.log("No open pull request to review.");
+    console.log(pr ? `#${pr.number} is closed: nothing to review.` : "No pull request to review.");
     return;
   }
-  output("pr", String(pr.number));
   const reviewed = await reviewedCommit(pr);
   if (!needsReview(reviewable(pr), await readReview(reviewed))) {
     output("review", "false");

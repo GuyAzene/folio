@@ -707,19 +707,22 @@ pictures carries the last review over, and the pictures job starts the gate on i
 the pull request only through the API, so a pull request can't change the gate that judges it.
 `main`'s ruleset requires the gate, from the review app only, as well as CI from GitHub Actions,
 so a pull request merges only once both pass. The owner merges one that waits for them past the
-pending gate, which an admin may.
+pending gate, which an admin may. Once it has merged, the gate finishes as neutral and says what it
+said before, so it doesn't spin on the merged pull request's page for good. One closed without
+merging keeps its gate: GitHub counts a neutral check as passed, so a reopened pull request could
+merge before the gate judged it again.
 
 It all runs from `main` (`review.yml`). The "Pull request" workflow, which holds no permissions
-or secrets, only signals that a pull request changed, and its end starts the Review workflow from
-`main` (`workflow_run`). A first job marks the commit's "Review verdict" as under way, so a second
-signal doesn't start a second review of it; a mark older than an hour counts as a review that
-stopped. Claude reviews in a job of its own, which only takes this repository's branches. It
-can read and search the checkout and the diff and commit log in `/tmp/review`. It loads none of
-the settings, hooks or MCP servers a pull request brings (`--setting-sources user`, and
-`.claude`, `.mcp.json`, `CLAUDE.md` and the other files the Claude action restores from the base
-branch on a pull request event are removed here). Only Claude's answer leaves that job. Two more
-jobs post the verdict, then the comment, and the gate. A review that ended without a verdict is
-tried again at the next signal.
+or secrets, only signals that a pull request changed or closed, and its end starts the Review
+workflow from `main` (`workflow_run`). A first job marks the commit's "Review verdict" as under
+way, so a second signal doesn't start a second review of it; a mark older than an hour counts as a
+review that stopped. Claude reviews in a job of its own, which only takes this repository's
+branches. It can read and search the checkout and the diff and commit log in `/tmp/review`. It
+loads none of the settings, hooks or MCP servers a pull request brings (`--setting-sources user`,
+and `.claude`, `.mcp.json`, `CLAUDE.md` and the other files the Claude action restores from the
+base branch on a pull request event are removed here). Only Claude's answer leaves that job. Two
+more jobs post the verdict, then the comment, and the gate. A review that ended without a verdict
+is tried again at the next signal.
 
 The `@claude` workflow uses the thread context and images the action collects. It can read and
 search the checkout and `/tmp/github-images`, and uses the action's comment tool to reply. Both

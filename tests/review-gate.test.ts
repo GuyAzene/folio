@@ -15,6 +15,7 @@ import {
   buildVerdict,
   commands,
   decideGate,
+  mergedGate,
   needsReview,
   onlyPictures,
   parseAreas,
@@ -29,6 +30,8 @@ import {
   sinceOf,
   touchedAreas,
   type GateInput,
+  type GateNote,
+  type GateRun,
   type Review,
   type Verdict,
   type VerdictRun,
@@ -364,6 +367,56 @@ describe("the gate", () => {
       lane: "owner",
       title: "From another repository: waits for the owner",
     });
+  });
+});
+
+describe("a merged pull request's gate", () => {
+  const merged = { number: 7, merged_at: "2026-11-09T09:00:00Z" };
+  const run = (
+    id: number,
+    status: string,
+    conclusion: string | null,
+    lane: GateNote["lane"],
+    app = REVIEW_APP,
+  ): GateRun => ({
+    id,
+    status,
+    conclusion,
+    app: { id: app },
+    output: { title: `Lane ${lane}`, text: JSON.stringify({ version: 1, lane, reviewed: HEAD }) },
+  });
+
+  it("finishes the gate the owner merged past, saying what it said", () => {
+    expect(mergedGate(merged, [run(1, "in_progress", null, "owner")])).toEqual({
+      title: "Merged by the owner",
+      summary: '#7 merged while this gate said "Lane owner". It no longer holds anything back.',
+    });
+    expect(mergedGate(merged, [run(1, "completed", "failure", "fix")])?.title).toBe(
+      "Merged with a serious finding open",
+    );
+    expect(mergedGate(merged, [run(1, "in_progress", null, "wait")])?.title).toBe(
+      "Merged before its review finished",
+    );
+    expect(mergedGate(merged, [])?.title).toBe("Merged before the gate ran");
+  });
+
+  it("goes by the app's newest gate, never one another app wrote", () => {
+    const runs = [run(1, "in_progress", null, "owner"), run(2, "completed", "success", "merge")];
+    expect(mergedGate(merged, runs)).toBeNull();
+    expect(
+      mergedGate(merged, [...runs, run(3, "in_progress", null, "wait", ACTIONS_APP)]),
+    ).toBeNull();
+    expect(mergedGate(merged, [run(1, "completed", "success", "merge", ACTIONS_APP)])?.title).toBe(
+      "Merged before the gate ran",
+    );
+  });
+
+  it("leaves a gate that passed or already finished, and one closed without merging", () => {
+    expect(mergedGate(merged, [run(1, "completed", "success", "merge")])).toBeNull();
+    expect(mergedGate(merged, [run(1, "completed", "neutral", "owner")])).toBeNull();
+    expect(
+      mergedGate({ number: 7, merged_at: null }, [run(1, "in_progress", null, "owner")]),
+    ).toBeNull();
   });
 });
 
