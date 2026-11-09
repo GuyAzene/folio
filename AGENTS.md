@@ -147,8 +147,11 @@ fixed the ones that are right and in scope and answered the rest on the pull req
 rounds they no longer hold it. The owner merges instead when the pull request
 touches an area in [`.github/owner-areas.txt`](.github/owner-areas.txt), carries the
 `needs owner` label, has a serious finding its author disputes, or still has serious findings
-after three reviews. Never turn auto-merge off, merge past a rule (`--admin`) or push to `main`,
-unless the owner explicitly asks for that one thing; then say once which rule it skips, and do it.
+after three reviews. The review gate finishes those as neutral, so every check shows done and the
+owner merges with GitHub's normal merge button. When the owner tells an agent to merge one, it
+merges normally (`gh pr merge <n> --squash --match-head-commit <sha>`) and lands it. Never turn
+auto-merge off, merge past a rule (`--admin`) or push to `main`, unless the owner explicitly asks
+for that one thing; then say once which rule it skips, and do it.
 
 Once the owner says go, the work goes on until it ends in one of these, said in one line:
 

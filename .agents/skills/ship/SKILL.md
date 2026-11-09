@@ -35,16 +35,19 @@ description: Open the pull request for a proven Folio change and see it through 
      - CI failed: read the failed job's log and fix the cause. Never re-run a check to get past
        it. If the cause is outside Folio, such as GitHub's own servers failing, say so with the
        log line, and stop.
-   - **2, the owner's**: tell the owner in one line why it waits for them, and stop.
+   - **2, the owner's**: the owner merges it with GitHub's merge button. Tell them in one line
+     why it's theirs, and stop. If they tell you to merge it, merge it normally
+     (`gh pr merge <n> --squash --match-head-commit <sha>`) and go to [land](../land/SKILL.md).
    - **3, too long**, or **4, GitHub didn't answer**: say what it was waiting for, and stop.
 5. The review gate gives a pull request three rounds. After the third with serious findings
    open, it's the owner's.
 
 When CI commits new README pictures to the branch, pull before pushing again; the wait says so.
 
-Never merge a pull request any other way than through the wait, never merge past a rule
-(`--admin`), never turn auto-merge off, and never push to `main`, unless the owner explicitly asks
-for that one thing. Then say once which rule it skips, and do it.
+Never merge a pull request any other way than through the wait, or the normal merge the owner
+asks for, never merge past a rule (`--admin`), never turn auto-merge off, and never push to
+`main`, unless the owner explicitly asks for that one thing. Then say once which rule it skips,
+and do it.
 
 End with a short report: the pull request, the commit last reviewed, how many review rounds, the
 checks that ran, the findings and notes fixed, those answered or disputed, and what's left. Say

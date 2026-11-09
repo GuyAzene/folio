@@ -162,9 +162,9 @@ export const readShip = (
       done: true,
       outcome: "owner",
       lines: [
-        `#${pr.number} passed CI and waits for the owner to merge it: ${gate.title ?? "the review gate"}.`,
+        `#${pr.number} passed CI, and the owner merges it with GitHub's merge button: ${gate.title ?? "the review gate"}.`,
         ...leftOpen,
-        "Tell the owner in one line, then stop. Don't merge it, and don't turn auto-merge on.",
+        "Tell the owner in one line, then stop. Don't merge it, and don't turn auto-merge on. If the owner says to merge it, merge it normally, never with --admin.",
       ],
     };
   return {
