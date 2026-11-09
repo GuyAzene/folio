@@ -16,7 +16,7 @@ session was given.
 
 - If your environment already made a worktree for this task, as Claude Code's desktop app does
   under `.claude/worktrees/`, keep its path and branch, and skip steps 3 to 5.
-- In your session's own worktree, once its earlier task has landed and nothing is uncommitted,
+- In your session's own worktree, once its earlier task has merged and nothing is uncommitted,
   start this task's branch there instead of a new worktree:
   `git switch -c <agent>/<task> origin/main`, after steps 1 and 2, then install (step 6).
 - A folder or branch name alone doesn't show that a worktree is this task's. Anything else gets
@@ -24,7 +24,10 @@ session was given.
 
 ## Steps
 
-1. **Sync**: `git fetch origin`.
+1. **Sync**: `git fetch --prune origin`. Then bring the main checkout, the first path
+   `git worktree list` prints, up to date with `git -C <path> merge --ff-only origin/main`, if
+   it's on `main` with nothing uncommitted. Sessions started there read the guide and the skills
+   from it, and a checkout left behind hands them old rules.
 2. **Overlap**: `gh pr list --state open`, then `gh pr diff <number> --name-only` for any that
    sound close, and read the overlapping diffs of shared files. Independent edits go ahead in your
    own worktree. Ask the owner only when the changes conflict in behaviour, need another task's
@@ -60,8 +63,13 @@ session was given.
   development Folios at once, and check that a port answers your own process before trusting it.
 - Each worktree has its own `package-lock.json`. Resolve a conflict in it by regenerating it with
   `vp install`, never by hand.
-- The worktree stays until the pull request merges or closes; [land](../land/SKILL.md)
-  removes it with its branch.
+- Keep the worktree until the pull request merges or closes. Then remove it and its branch,
+  unless your environment made the worktree and removes it itself, and sync as in step 1:
+
+  ```sh
+  git worktree remove ../folio-<task>
+  git branch -D <agent>/<task>   # -D: after a squash merge, -d refuses
+  ```
 
 Next: build, by the rules in [AGENTS.md](../../../AGENTS.md), then
 [prove](../prove/SKILL.md).

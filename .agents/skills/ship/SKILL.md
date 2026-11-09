@@ -1,62 +1,49 @@
 ---
 name: ship
-description: Open the pull request for a proven Folio change and see it through CI and Claude's review, fixing serious findings and the notes worth fixing until it merges or waits for the owner. Use after prove; it runs the review loop with scripts/line.ts.
+description: Open the pull request for a proven Folio change, loop on Claude's review until nothing serious is left or three rounds have passed, then give the owner the link. Use after prove. Never merges unless the owner says so.
 ---
 
 # Ship
 
-1. Bring the branch up to date: `git fetch origin`, then rebase on `origin/main`. If `main`
-   moved, run the checks again. Stage only this task's files, by path (`git add <paths>`).
-2. Push the branch by name (`git push -u origin <branch>`, never `--all` or `--mirror`; after
-   rebasing a branch you already pushed, `--force-with-lease`, never `--force`) and open the pull
-   request with `gh pr create`:
+1. **Commit and rebase.** Stage only this task's files, by path (`git add <paths>`), and commit
+   with a clear message. Rebase onto the latest `origin/main`, and run the checks again if `main`
+   moved.
+2. **Push and open the pull request.** `git push -u origin <branch>`, never `--all` or
+   `--mirror`; after rebasing a branch you already pushed, `--force-with-lease`, never `--force`.
+   Open it with `gh pr create`:
    - The title becomes the commit on `main`: say what changes, plainly.
-   - The description: what and why, **Done when**, and **How it was proven**. It's public.
-   - Run [unslop](../unslop/SKILL.md) over the title, the description and the commit
-     messages first.
-   - Add the `needs owner` label if the owner asked to look before it merges.
-   - Leave auto-merge off; the wait merges it itself once everything passed.
-3. Wait: `vp node scripts/line.ts ship`. Run it in the background where you can, and pass on each
-   line it prints: a wait is never silent. It waits for CI and for a review of the newest commit,
-   never an older one, then ends with what to do next.
-4. Act on how it ended:
-   - **0, done**: CI and the review gate passed, and it merged it, pinned to the commit that
-     passed. Go to [land](../land/SKILL.md).
-   - **1, something to fix**: fix it in this branch, prove it again, push, and go back to 3.
-     - Read the whole review comment, not only what the wait prints. An earlier serious finding
-       stays open until a review finds it fixed.
-     - A serious finding you think is wrong: reply on the pull request with why, and the test or
-       line that shows it, add the `needs owner` label, and stop. The owner decides.
-     - Notes: fix the ones that are right and within this pull request's scope. Don't change
-       correct code just to satisfy the review. For each note you leave, reply on the pull request
-       with why, then wait again with `--notes-answered <commit>`, the commit the wait names.
-       After the third round, notes no longer hold it.
-     - CI failed: read the failed job's log and fix the cause. Never re-run a check to get past
-       it. If the cause is outside Folio, such as GitHub's own servers failing, say so with the
-       log line, and stop.
-   - **2, the owner's**: tell the owner in one line why, as the wait said, and stop.
-     - Usually it's in the owner's lane, and the owner merges it with GitHub's merge button. When
-       they say it merged, go to [land](../land/SKILL.md). When they tell you to merge it, merge
-       it normally (`gh pr merge <n> --squash --match-head-commit <sha>`), then land it.
-     - It also ends this way when the pull request was closed without merging, or when GitHub
-       refused the merge three times. Don't reopen or merge it then, unless the owner says so.
-   - **3, too long**: if it was still waiting for CI or the review gate, look at the newest
-     commit's checks (`gh pr checks <n>`). When none of CI's jobs is there, or no "Review gate",
-     GitHub dropped the event that starts that run. Start each missing run once by hand
-     (`gh workflow run ci.yml --ref <branch>`, or `gh workflow run review.yml -f pr=<n>`), and go
-     back to 3. That doesn't re-run a check, since the run never began. If it still doesn't come,
-     or the wait was for something else, say what it was waiting for, and stop.
-   - **4, GitHub didn't answer**: say what it was waiting for, and stop.
-5. The review gate gives a pull request three rounds. After the third with serious findings
-   open, it's the owner's.
+   - The description has **What and why**, **Done when** and **How it was proven**, with every
+     claim backed by evidence, and any risk or follow-up. It's public.
+   - Run [unslop](../unslop/SKILL.md) over the title, the description and the commit messages
+     first.
+3. **Wait for the round.** `vp node scripts/wait-for-review.ts`, in the background where you can,
+   passing on each line it prints. It waits until every check on the newest commit has finished
+   and Claude has reviewed that commit, then lists what failed, the serious findings still open
+   and the notes.
+4. **Fix and push again.** Read the whole review comment, not only what the wait prints.
+   - Fix the serious findings, the failed checks, and the notes that are right and within this
+     task. Don't change correct code just to satisfy the review.
+   - For a finding you think is wrong, reply on the pull request with why, and the test or line
+     that shows it.
+   - A failed check: read its log and fix the cause. Never re-run a check to get past it.
+   - Run the checks, push, and wait again. The next review covers only what changed since the
+     last one, and rechecks the serious findings it left open. Bringing `main` in, by a merge or a
+     rebase, gets the whole pull request reviewed again, which counts as a round, so do it only
+     when you need to.
+5. **Stop** when the newest commit passed every check and the review left nothing serious open,
+   with each note fixed or answered; after three rounds; or when you're stuck, as when GitHub
+   isn't answering or the review couldn't run twice. A run GitHub never started, with none of
+   CI's jobs on the commit (`gh pr checks <n>`) or no review comment for it, gets started once
+   by hand: `gh workflow run ci.yml --ref <branch>`, or `gh workflow run review.yml -f pr=<n>`.
+   That doesn't re-run a check, since the run never began.
+6. **Report.** The pull request's link, the commit last reviewed, how many rounds, the checks
+   that ran, what was fixed, what was answered, and what's left. Say plainly whether it came out
+   clean, ran out of rounds, or got stuck.
 
 When CI commits new README pictures to the branch, pull before pushing again; the wait says so.
 
-Never merge a pull request any other way than through the wait, or the normal merge the owner
-asks for, never merge past a rule (`--admin`), never use auto-merge, and never push to `main`,
-unless the owner explicitly asks for that one thing. Then say once which rule it skips, and do
-it.
-
-End with a short report: the pull request, the commit last reviewed, how many review rounds, the
-checks that ran, the findings and notes fixed, those answered or disputed, and what's left. Say
-plainly whether it passed, ran out of rounds, or ran out of time.
+Don't merge the pull request unless the owner says so. When they do, check that every check on
+the newest commit finished and passed, then `gh pr merge <n> --squash --match-head-commit <sha>`.
+Never `--admin`, auto-merge or a push to `main`, unless the owner asks for that one thing; then
+say once which rule it skips, and do it. Once it has merged, clean up as
+[isolate](../isolate/SKILL.md) says.

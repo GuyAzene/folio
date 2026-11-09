@@ -1,17 +1,12 @@
 name: Review
+# The wait (scripts/wait-for-review.ts) finds a pull request's own runs by this name.
+run-name: "Review of #${{ github.event.workflow_run.pull_requests[0].number || inputs.pr || github.event.workflow_run.head_branch }}"
 
-# Claude's review and the review gate, written by Folio's own GitHub App so that nothing a pull
-# request changes can write either one (docs/architecture.md says exactly who can). It runs from
-# main, never from a pull request's branch: when the "Pull request" workflow signals a change or a
-# close, and when the README pictures job pushes a commit, which gets no other event.
-#
-# The app's key is a secret of the review-gate environment, which only main may use. The jobs that
-# hold it run main's script and never check out the pull request. The one job that reads the pull
-# request's code holds no key but Claude's, runs nothing from it, and hands back only Claude's
-# answer. scripts/review-gate.ts does the work; tests/review-gate.test.ts holds this file to it.
-#
-# The app is folio-review-gate (its id is REVIEW_APP in the script). Its jobs need the
-# REVIEW_APP_CLIENT_ID variable and the review-gate environment's REVIEW_APP_KEY secret.
+# Claude's review of every push to a pull request from this repository, posted as one comment.
+# scripts/review.ts does the work, and tests/review.test.ts holds this file to it. It runs from
+# main, never from a pull request's branch: when the "Pull request" workflow signals a change, or by
+# hand. The one job that reads the pull request's code holds no key but Claude's, runs nothing from
+# it, and hands back only Claude's answer. The review is advice: nothing waits on it to merge.
 on:
   workflow_run:
     workflows: [Pull request]
@@ -24,69 +19,53 @@ on:
 
 permissions: {}
 
+# One review of a pull request at a time. A signal that comes while one runs waits for it, then
+# finds that commit reviewed; GitHub keeps only the newest of the signals that wait.
+concurrency:
+  group: review-${{ github.event.workflow_run.pull_requests[0].number || inputs.pr || github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+
 env:
   PR: ${{ github.event.workflow_run.pull_requests[0].number || inputs.pr }}
   # A fork's pull request comes without its number: it is found by its branch, under its owner.
-  # One that has just closed may too: it is found by its branch and its head commit.
   BRANCH: ${{ github.event.workflow_run.head_branch }}
   HEAD_OWNER: ${{ github.event.workflow_run.head_repository.owner.login }}
-  HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
 
 jobs:
   start:
     name: Decide what to review
-    if: >-
-      vars.REVIEW_APP_CLIENT_ID != '' &&
-      (github.event_name != 'workflow_run' || github.event.workflow_run.event == 'pull_request')
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.event == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    # One at a time per pull request, so two signals can't both start a review of one commit.
-    concurrency:
-      group: gate-start-${{ github.event.workflow_run.pull_requests[0].number || inputs.pr || github.event.workflow_run.head_branch }}
-      cancel-in-progress: false
-    environment:
-      name: review-gate
-      deployment: false
     permissions:
       contents: read
       pull-requests: read
-      checks: read
     outputs:
       pr: ${{ steps.start.outputs.pr }}
       review: ${{ steps.start.outputs.review }}
       sha: ${{ steps.start.outputs.sha }}
       base: ${{ steps.start.outputs.base }}
       since: ${{ steps.start.outputs.since }}
-      check: ${{ steps.start.outputs.check }}
       previous: ${{ steps.start.outputs.previous }}
       prompt: ${{ steps.start.outputs.prompt }}
       args: ${{ steps.start.outputs.args }}
     steps:
-      # Main's own script and areas, never the pull request's.
+      # Main's own script, never the pull request's.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           sparse-checkout: |
-            scripts/review-gate.ts
-            .github/owner-areas.txt
+            scripts/review.ts
             .node-version
           sparse-checkout-cone-mode: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .node-version
-      - name: The app's token
-        id: app
-        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
-        with:
-          client-id: ${{ vars.REVIEW_APP_CLIENT_ID }}
-          private-key: ${{ secrets.REVIEW_APP_KEY }}
-          permission-checks: write
-      - name: Decide, and mark the commit as being reviewed
+      - name: Decide
         id: start
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          APP_TOKEN: ${{ steps.app.outputs.token }}
-        run: node scripts/review-gate.ts start
+        run: node scripts/review.ts start
 
   review:
     name: Claude reviews
@@ -99,10 +78,6 @@ jobs:
       github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # A newer commit makes the review of an older one moot.
-    concurrency:
-      group: gate-review-${{ needs.start.outputs.pr }}
-      cancel-in-progress: true
     permissions:
       contents: read
     outputs:
@@ -137,8 +112,8 @@ jobs:
           github_token: ${{ github.token }}
           prompt: ${{ needs.start.outputs.prompt }}
           claude_args: ${{ needs.start.outputs.args }}
-      # A plan limit or a passing outage: one more try, then the gate sends the pull request to
-      # the owner, and the next signal tries again.
+      # A plan limit or a passing outage: one more try, then the comment says the review couldn't
+      # run, and the next signal tries again.
       - name: Wait a minute before trying again
         if: steps.first.outcome == 'failure'
         run: sleep 60
@@ -152,16 +127,13 @@ jobs:
           prompt: ${{ needs.start.outputs.prompt }}
           claude_args: ${{ needs.start.outputs.args }}
 
-  verdict:
-    name: Post the verdict
+  post:
+    name: Post the review
     needs: [start, review]
-    # Also when the review failed or was cancelled, so the commit isn't left marked as reviewing.
+    # Also when the review failed or was stopped, so the pull request hears why.
     if: always() && needs.start.outputs.review == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    environment:
-      name: review-gate
-      deployment: false
     permissions:
       contents: read
       # The comment.
@@ -171,71 +143,19 @@ jobs:
         with:
           persist-credentials: false
           sparse-checkout: |
-            scripts/review-gate.ts
+            scripts/review.ts
             .node-version
           sparse-checkout-cone-mode: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .node-version
-      - name: The app's token
-        id: app
-        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
-        with:
-          client-id: ${{ vars.REVIEW_APP_CLIENT_ID }}
-          private-key: ${{ secrets.REVIEW_APP_KEY }}
-          permission-checks: write
-      - name: Post the verdict and the comment
+      - name: Post the comment
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          APP_TOKEN: ${{ steps.app.outputs.token }}
           PR: ${{ needs.start.outputs.pr }}
           SHA: ${{ needs.start.outputs.sha }}
           SINCE: ${{ needs.start.outputs.since }}
-          CHECK: ${{ needs.start.outputs.check }}
           PREVIOUS: ${{ needs.start.outputs.previous }}
           REVIEW: ${{ needs.review.outputs.review }}
           REVIEW_RESULT: ${{ needs.review.result }}
-        run: node scripts/review-gate.ts verdict
-
-  gate:
-    name: Update the review gate
-    needs: [start, review, verdict]
-    if: always() && needs.start.result == 'success' && needs.start.outputs.pr != ''
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    # The newest judgement wins: an older run can't post its gate after a newer one.
-    concurrency:
-      group: gate-judge-${{ needs.start.outputs.pr }}
-      cancel-in-progress: true
-    environment:
-      name: review-gate
-      deployment: false
-    permissions:
-      contents: read
-      pull-requests: read
-      checks: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          sparse-checkout: |
-            scripts/review-gate.ts
-            .github/owner-areas.txt
-            .node-version
-          sparse-checkout-cone-mode: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version-file: .node-version
-      - name: The app's token
-        id: app
-        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
-        with:
-          client-id: ${{ vars.REVIEW_APP_CLIENT_ID }}
-          private-key: ${{ secrets.REVIEW_APP_KEY }}
-          permission-checks: write
-      - name: Judge the pull request
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          APP_TOKEN: ${{ steps.app.outputs.token }}
-          PR: ${{ needs.start.outputs.pr }}
-        run: node scripts/review-gate.ts judge
+        run: node scripts/review.ts post
