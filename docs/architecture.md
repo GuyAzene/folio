@@ -702,11 +702,12 @@ merges this one because the pull request touches an area in `.github/owner-areas
 counts at both ends) or carries the "needs owner" label, comes from Dependabot or another
 repository, still has serious findings after three rounds, or couldn't be reviewed after a second
 try. Only something to fix is a failure, with its red cross and GitHub's failure email; a pull
-request waiting for the owner isn't, and once the gate is required the owner merges it past the
-pending check, which an admin may. A commit of only the README's
+request waiting for the owner isn't. A commit of only the README's
 pictures carries the last review over, and the pictures job starts the gate on it. The gate reads
 the pull request only through the API, so a pull request can't change the gate that judges it.
-Merging doesn't wait for the gate yet.
+`main`'s ruleset requires the gate, from the review app only, as well as CI from GitHub Actions,
+so a pull request merges only once both pass. The owner merges one that waits for them past the
+pending gate, which an admin may.
 
 It all runs from `main` (`review.yml`). The "Pull request" workflow, which holds no permissions
 or secrets, only signals that a pull request changed, and its end starts the Review workflow from
