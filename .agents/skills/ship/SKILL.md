@@ -15,14 +15,13 @@ description: Open the pull request for a proven Folio change and see it through 
    - Run [unslop](../unslop/SKILL.md) over the title, the description and the commit
      messages first.
    - Add the `needs owner` label if the owner asked to look before it merges.
-   - Leave auto-merge off; the wait turns it on at the right moment.
+   - Leave auto-merge off; the wait merges it itself once everything passed.
 3. Wait: `vp node scripts/line.ts ship`. Run it in the background where you can, and pass on each
    line it prints: a wait is never silent. It waits for CI and for a review of the newest commit,
    never an older one, then ends with what to do next.
 4. Act on how it ended:
-   - **0, done**: CI and the review gate passed, and it had GitHub merge it, through auto-merge
-     or at once when GitHub's rules already allowed it. Go to
-     [land](../land/SKILL.md).
+   - **0, done**: CI and the review gate passed, and it merged it, pinned to the commit that
+     passed. Go to [land](../land/SKILL.md).
    - **1, something to fix**: fix it in this branch, prove it again, push, and go back to 3.
      - Read the whole review comment, not only what the wait prints. An earlier serious finding
        stays open until a review finds it fixed.
@@ -45,9 +44,9 @@ description: Open the pull request for a proven Folio change and see it through 
 When CI commits new README pictures to the branch, pull before pushing again; the wait says so.
 
 Never merge a pull request any other way than through the wait, or the normal merge the owner
-asks for, never merge past a rule (`--admin`), never turn auto-merge off, and never push to
-`main`, unless the owner explicitly asks for that one thing. Then say once which rule it skips,
-and do it.
+asks for, never merge past a rule (`--admin`), never use auto-merge, and never push to `main`,
+unless the owner explicitly asks for that one thing. Then say once which rule it skips, and do
+it.
 
 End with a short report: the pull request, the commit last reviewed, how many review rounds, the
 checks that ran, the findings and notes fixed, those answered or disputed, and what's left. Say

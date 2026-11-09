@@ -707,7 +707,9 @@ the pull request only through the API, so a pull request can't change the gate t
 `main`'s ruleset requires the gate, from the review app only, as well as CI from GitHub Actions,
 so a pull request merges only once both pass. GitHub counts a neutral check as passed, so a pull
 request in the owner's lane shows every check done, and the owner merges it with GitHub's normal
-merge button. A rule keeps it for the owner: the line never merges it. A pull request merged past
+merge button. A rule keeps it for the owner: the line never merges it, and never uses auto-merge.
+That includes one still holding serious findings after three rounds, which GitHub's rules would
+let anyone with merge rights merge. A pull request merged past
 a gate still pending or failing, which only an admin can do, gets its gate finished as neutral,
 saying what it said before, so nothing spins on a merged pull request's page. One closed without
 merging keeps its gate, since a reopened pull request could otherwise merge before the gate judged
@@ -758,10 +760,12 @@ the ruleset, or bypass the ruleset.
 The agent shipping a change reads the same checks (`scripts/line.ts`, run by the skills in
 `.agents/skills/`). `ship` waits until CI and the gate have both spoken on the newest commit,
 counting CI only from GitHub Actions and the verdict and the gate only from the review app, whose
-gate marks its lane (wait, fix, owner or merge). It lists the serious findings or failed jobs to fix, or says the owner merges
-this one. On a pass it turns auto-merge on, or merges at once when GitHub answers that its rules
-already allow the merge ("clean status"); it is the one place anything merges, never past a rule
-and never with auto-merge turned off. The review's notes hold a pass too: `ship` ends with
+gate marks its lane (wait, fix, owner or merge). It lists the serious findings or failed jobs to
+fix, or says the owner merges this one. On a pass it merges at once, pinned to the commit that
+passed, so a push in between makes GitHub refuse; it is the one place anything merges, never past
+a rule. It never uses auto-merge: that would merge later on whatever the gate says by then, and a
+pull request that moved to the owner's lane, which passes as neutral, would merge without the
+owner. The review's notes hold a pass too: `ship` ends with
 something to fix until they're fixed or, with `--notes-answered <commit>`, answered on the pull
 request, and they stop holding it after the third round. `land` waits for the
 merge and then for every job of `main`'s CI on it, following a newer run when another push

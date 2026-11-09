@@ -3,7 +3,8 @@
 //
 //   vp node scripts/line.ts ship [pr]   until CI and the review gate have both spoken on the pull
 //                                       request's newest commit; when nothing holds it back,
-//                                       has GitHub merge it. The review's notes hold it back
+//                                       merges it at once, pinned to that commit. The review's
+//                                       notes hold it back
 //                                       too, until they're fixed or, with --notes-answered
 //                                       <commit>, answered on the pull request
 //   vp node scripts/line.ts land [pr]   until the pull request has merged and main's CI on the
@@ -13,8 +14,8 @@
 // saying what to do next. The exit code says the same: 0 done, 1 something to fix, 2 it's the
 // owner's now, 3 it took too long (--minutes, 60 by default), 4 GitHub didn't answer.
 // The pull request is the current branch's unless one is named. GitHub is asked through the gh
-// CLI, as whoever is signed in to it; nothing here merges past a rule, turns auto-merge off, or
-// skips a check.
+// CLI, as whoever is signed in to it; nothing here merges past a rule, uses auto-merge, or skips a
+// check.
 import { execFile } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
@@ -50,7 +51,6 @@ export type Pull = {
   state: "OPEN" | "CLOSED" | "MERGED";
   draft: boolean;
   head: string;
-  autoMerge: boolean;
   mergeCommit: string | null;
 };
 export type Step =
@@ -170,12 +170,7 @@ export const readShip = (
   return {
     done: true,
     outcome: "done",
-    lines: [
-      pr.autoMerge
-        ? `#${pr.number} passed CI and the review gate, and auto-merge is on: GitHub merges it. Next: land.`
-        : `#${pr.number} passed CI and the review gate. Next: land.`,
-      ...leftOpen,
-    ],
+    lines: [`#${pr.number} passed CI and the review gate.`, ...leftOpen],
   };
 };
 
@@ -269,7 +264,6 @@ type PullView = {
   state: Pull["state"];
   isDraft: boolean;
   headRefOid: string;
-  autoMergeRequest: unknown;
   mergeCommit: { oid: string } | null;
 };
 const pull = async (number?: string): Promise<Pull> => {
@@ -279,7 +273,7 @@ const pull = async (number?: string): Promise<Pull> => {
       "view",
       ...(number ? [number] : []),
       "--json",
-      "number,state,isDraft,headRefOid,autoMergeRequest,mergeCommit",
+      "number,state,isDraft,headRefOid,mergeCommit",
     ]),
   ) as PullView;
   return {
@@ -287,7 +281,6 @@ const pull = async (number?: string): Promise<Pull> => {
     state: view.state,
     draft: view.isDraft,
     head: view.headRefOid,
-    autoMerge: !!view.autoMergeRequest,
     mergeCommit: view.mergeCommit?.oid ?? null,
   };
 };
@@ -367,6 +360,7 @@ const commitLine = async (sha: string) => {
 const POLL = 30_000;
 const QUIET = 5 * 60_000;
 const ATTEMPTS = 10;
+const MERGE_TRIES = 3;
 const clock = () => new Date().toTimeString().slice(0, 5);
 const say = (line: string) => console.log(`${clock()} ${line}`);
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -418,6 +412,7 @@ const ship = async (number: string | undefined, minutes: number, answered = "") 
   let failed = new Set<string>();
   // A commit's verdict is written once, so it's read once.
   let verdict: Verdict | null = null;
+  let refusals = 0;
   return wait(minutes, async () => {
     const pr = await pull(number);
     number ??= String(pr.number);
@@ -433,6 +428,7 @@ const ship = async (number: string | undefined, minutes: number, answered = "") 
       head = pr.head;
       seen = new Map();
       failed = new Set();
+      refusals = 0;
     }
     const checks = pr.state === "OPEN" ? await checksOn(pr.head) : [];
     for (const line of progress(seen, checks)) say(line);
@@ -442,22 +438,23 @@ const ship = async (number: string | undefined, minutes: number, answered = "") 
     if (note && note.lane !== "wait" && verdict?.sha !== note.reviewed)
       verdict = await verdictOn(note.reviewed);
     const step = readShip(pr, checks, verdict, note, answered);
-    if (!step.done || step.outcome !== "done" || pr.state !== "OPEN" || pr.autoMerge) return step;
-    // The one place anything merges: CI and the gate passed on this very commit. GitHub still
-    // merges only once its own rules allow it, and nothing here turns auto-merge off.
-    say("Nothing holds it back: having GitHub merge it (squash).");
+    if (!step.done || step.outcome !== "done" || pr.state !== "OPEN") return step;
+    // The one place anything merges: CI and the gate passed on this very commit, so it merges now.
+    say(`Nothing holds it back: merging it (squash), pinned to ${short(pr.head)}.`);
     try {
-      say(
-        (await arm(pr.number, pr.head)) === "merged"
-          ? "GitHub's rules already allowed it, so it merged at once."
-          : "Auto-merge is on.",
-      );
+      await merge(pr.number, pr.head);
     } catch (error) {
+      const why = (error as Error).message.split("\n")[0];
+      // GitHub can take a moment to count a check that just finished.
+      if (++refusals < MERGE_TRIES) {
+        say(`GitHub didn't merge it yet (${why}); trying again in ${POLL / 1000} s.`);
+        return { done: false, waitingFor: "GitHub to let it merge" };
+      }
       return {
         done: true,
         outcome: "owner",
         lines: [
-          `GitHub refused to merge #${pr.number}: ${(error as Error).message.split("\n")[0]}`,
+          `GitHub refused to merge #${pr.number}: ${why}`,
           "Tell the owner in one line, then stop.",
         ],
       };
@@ -467,26 +464,17 @@ const ship = async (number: string | undefined, minutes: number, answered = "") 
 };
 
 /**
- * Has GitHub merge a pull request, squashed: auto-merge, which waits for GitHub's rules. GitHub
- * won't queue one its rules already let merge (it answers that it's in "clean status"); that one
- * is merged at once, as auto-merge would have. Never `--admin`, so never past a rule. Both are
- * pinned to the commit that passed, so a push in between makes GitHub refuse rather than merge a
- * commit nobody checked.
+ * Merges a pull request at once, squashed, pinned to the commit that passed, so a push in between
+ * makes GitHub refuse rather than merge a commit nobody checked. Never `--admin`, so never past a
+ * rule. Never auto-merge either: it would merge later, on whatever the gate says by then, and the
+ * owner's lane passes as neutral, so a pull request that moved to it would merge without them.
  */
-export const arm = async (
+export const merge = async (
   number: number,
   head: string,
   run: (args: string[]) => Promise<unknown> = gh,
 ) => {
-  const merge = ["pr", "merge", String(number), "--squash", "--match-head-commit", head];
-  try {
-    await run([...merge, "--auto"]);
-    return "queued" as const;
-  } catch (error) {
-    if (!/clean status/i.test((error as Error).message)) throw error;
-    await run(merge);
-    return "merged" as const;
-  }
+  await run(["pr", "merge", String(number), "--squash", "--match-head-commit", head]);
 };
 
 const land = async (number: string | undefined, minutes: number) => {

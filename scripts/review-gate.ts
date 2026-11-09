@@ -1,5 +1,5 @@
 // The review gate. Claude reviews every push to a pull request, and this script turns those
-// reviews into one check, "Review gate", that GitHub's auto-merge can wait for. It runs from main,
+// reviews into one check, "Review gate", that merging waits for. It runs from main,
 // in review.yml, which pull-request.yml starts whenever a pull request changes:
 //
 //   node scripts/review-gate.ts start     before Claude: whether to review, marked on the commit

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   EXIT,
-  arm,
+  merge,
   failedChecks,
   failedSteps,
   parseArgs,
@@ -30,7 +30,6 @@ const pull = (overrides: Partial<Pull> = {}): Pull => ({
   state: "OPEN",
   draft: false,
   head: HEAD,
-  autoMerge: false,
   mergeCommit: null,
   ...overrides,
 });
@@ -90,12 +89,7 @@ describe("ship", () => {
 
   it("passes once CI and the gate both passed", () => {
     expect(
-      readShip(
-        pull({ autoMerge: true }),
-        [check("CI", "success"), gate("merge")],
-        clean,
-        note("merge"),
-      ),
+      readShip(pull(), [check("CI", "success"), gate("merge")], clean, note("merge")),
     ).toMatchObject({ done: true, outcome: "done" });
   });
 
@@ -319,30 +313,19 @@ describe("what the waits print", () => {
     ).toEqual(["Windows: packaged app: timed_out"]);
   });
 
-  it("has GitHub merge through auto-merge, or at once only when its rules already allow it", async () => {
+  // Auto-merge would merge later, on whatever the gate says by then: a pull request that moves to
+  // the owner's lane afterwards passes as neutral, and nothing would hold it for the owner.
+  it("merges at once, pinned to the commit that passed, and never through auto-merge", async () => {
     const calls: string[][] = [];
-    const pinned = ["pr", "merge", "7", "--squash", "--match-head-commit", HEAD];
-    const queues = async (args: string[]) => void calls.push(args);
-    expect(await arm(7, HEAD, queues)).toBe("queued");
-    expect(calls).toEqual([[...pinned, "--auto"]]);
-
-    calls.length = 0;
-    const clean = async (args: string[]) => {
-      calls.push(args);
-      if (args.includes("--auto")) throw new Error("Pull request is in clean status");
-    };
-    expect(await arm(7, HEAD, clean)).toBe("merged");
-    // Pinned to the commit that passed, so a push in between is refused instead of merged.
-    expect(calls.at(-1)).toEqual(pinned);
+    await merge(7, HEAD, async (args) => void calls.push(args));
+    // Pinned, so a push in between is refused instead of merged.
+    expect(calls).toEqual([["pr", "merge", "7", "--squash", "--match-head-commit", HEAD]]);
+    expect(calls.flat()).not.toContain("--auto");
     expect(calls.flat()).not.toContain("--admin");
-
-    calls.length = 0;
-    const refuses = async (args: string[]) => {
-      calls.push(args);
-      throw new Error("Auto merge is not allowed for this repository");
+    const refuses = async () => {
+      throw new Error("Pull request is not mergeable");
     };
-    await expect(arm(7, HEAD, refuses)).rejects.toThrow("not allowed");
-    expect(calls).toHaveLength(1);
+    await expect(merge(7, HEAD, refuses)).rejects.toThrow("not mergeable");
   });
 
   it("gives each outcome its own exit code", () => {
