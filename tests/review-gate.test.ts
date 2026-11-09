@@ -524,6 +524,7 @@ const fakeGitHub = () => {
     pr: {
       number: 7,
       state: "open",
+      merged_at: null as string | null,
       draft: false,
       title: "Stop a cancelled job",
       body: "Cancelling now stops the job.",
@@ -555,7 +556,10 @@ const fakeGitHub = () => {
     if (method === "GET" && path === "/pulls/7") return json(state.pr);
     if (method === "GET" && path === "/pulls") {
       const owner = state.pr.head.repo.full_name.split("/")[0];
-      return json(searchParams.get("head") === `${owner}:${state.pr.head.ref}` ? [state.pr] : []);
+      const listed =
+        searchParams.get("head") === `${owner}:${state.pr.head.ref}` &&
+        [state.pr.state, "all"].includes(searchParams.get("state") ?? "open");
+      return json(listed ? [state.pr] : []);
     }
     if (method === "GET" && path === "/pulls/7/commits")
       return page(state.commits.map((sha) => ({ sha })));
@@ -801,6 +805,67 @@ describe("the signed commands", () => {
     await commands.start!();
     expect(read()).toMatchObject({ pr: "", review: "false" });
   });
+
+  // A gate the owner merged past would otherwise wait on the pull request's page for good.
+  const waitingForTheOwner = async () => {
+    github.state.files = [{ filename: "src/auth.ts" }];
+    github.state.runs.push({
+      id: 1,
+      name: VERDICT_CHECK,
+      head_sha: HEAD,
+      status: "completed",
+      conclusion: "neutral",
+      started_at: null,
+      app: { id: APP },
+      output: { text: JSON.stringify(buildVerdict(null, review(), HEAD, null)) },
+    });
+    await commands.judge!();
+    expect(gateRuns().at(-1)).toMatchObject({ status: "in_progress", app: { id: APP } });
+    writeFileSync(outputs, "");
+  };
+
+  it("finish the gate of a pull request the owner merged, as the app, once however often the signal comes", async () => {
+    await waitingForTheOwner();
+    github.state.pr.state = "closed";
+    github.state.pr.merged_at = "2026-11-09T09:00:00Z";
+    await commands.start!();
+    expect(read()).toMatchObject({ pr: "7", review: "false" });
+    await commands.judge!();
+    expect(gateRuns().at(-1)).toMatchObject({
+      head_sha: HEAD,
+      status: "completed",
+      conclusion: "neutral",
+      app: { id: APP },
+      output: expect.objectContaining({ title: "Merged by the owner" }),
+    });
+    await commands.judge!();
+    expect(gateRuns()).toHaveLength(2);
+  });
+
+  it("leave the gate of a pull request closed without merging, which may be reopened", async () => {
+    await waitingForTheOwner();
+    github.state.pr.state = "closed";
+    await commands.judge!();
+    expect(gateRuns()).toHaveLength(1);
+    expect(gateRuns()[0]).toMatchObject({ status: "in_progress" });
+  });
+
+  it("find a merged pull request, which may come without its number, by its branch and its head", async () => {
+    await waitingForTheOwner();
+    github.state.pr.state = "closed";
+    github.state.pr.merged_at = "2026-11-09T09:00:00Z";
+    vi.stubEnv("PR", "");
+    vi.stubEnv("BRANCH", "fix");
+    vi.stubEnv("GITHUB_REPOSITORY_OWNER", "owner");
+    vi.stubEnv("HEAD_SHA", HEAD);
+    await commands.start!();
+    expect(read()).toMatchObject({ pr: "7", review: "false" });
+    // An older pull request from a branch of the same name isn't the one that just closed.
+    vi.stubEnv("HEAD_SHA", EARLIER);
+    writeFileSync(outputs, "");
+    await commands.start!();
+    expect(read()).toMatchObject({ pr: "", review: "false" });
+  });
 });
 
 describe("the Review workflow", () => {
@@ -896,6 +961,8 @@ describe("the Review workflow", () => {
     const raw = readFileSync(".github/workflows/pull-request.yml", "utf8");
     expect(signal.name).toBe("Pull request");
     expect(Object.keys(signal.on)).toEqual(["pull_request"]);
+    // A merge is signalled too, so the gate can finish.
+    expect(signal.on.pull_request).toMatchObject({ types: expect.arrayContaining(["closed"]) });
     expect(signal.permissions).toEqual({});
     expect(raw).not.toContain("${{ secrets");
     expect(raw).not.toMatch(/uses:/);
