@@ -522,6 +522,35 @@ export const parseArgs = ([name, ...rest]: string[]): Args | null => {
   return { name, ...(rest[0] ? { pr: rest[0] } : {}), minutes, ...(answered ? { answered } : {}) };
 };
 
+/** Whether gh's answer means there is no such pull request, rather than GitHub not answering. */
+export const noSuchPull = (message: string) =>
+  /no pull requests? found|could not resolve to a pullrequest/i.test(message);
+
+/**
+ * The pull request's number, found once up front so a wrong number or a branch without a pull
+ * request fails at once. GitHub not answering is asked again, as the waits do.
+ */
+export const findNumber = async (
+  look: () => Promise<{ number: number }>,
+  pause: (ms: number) => Promise<unknown> = sleep,
+): Promise<{ number: string } | { outcome: Outcome; line: string }> => {
+  for (let tried = 1; ; tried++) {
+    try {
+      return { number: String((await look()).number) };
+    } catch (error) {
+      const why = (error as Error).message.split("\n")[0] ?? "";
+      if (noSuchPull(why)) return { outcome: "fix", line: `No such pull request: ${why}` };
+      if (tried >= ATTEMPTS)
+        return {
+          outcome: "github",
+          line: `GitHub didn't answer ${ATTEMPTS} times in a row (${why}). Try again later.`,
+        };
+      say(`GitHub didn't answer (${why}); asking again in ${POLL / 1000} s.`);
+      await pause(POLL);
+    }
+  }
+};
+
 const commands = { ship, land };
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
@@ -532,14 +561,10 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     );
     process.exit(EXIT.fix);
   }
-  // Found once up front, so a wrong number or a branch without a pull request fails at once
-  // instead of being asked about again and again.
-  let number: string;
-  try {
-    number = String((await pull(args.pr)).number);
-  } catch (error) {
-    say(`No such pull request: ${(error as Error).message.split("\n")[0]}`);
-    process.exit(EXIT.fix);
+  const found = await findNumber(() => pull(args.pr));
+  if (!("number" in found)) {
+    say(found.line);
+    process.exit(EXIT[found.outcome]);
   }
-  process.exit(EXIT[await commands[args.name](number, args.minutes, args.answered)]);
+  process.exit(EXIT[await commands[args.name](found.number, args.minutes, args.answered)]);
 }

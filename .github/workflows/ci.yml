@@ -325,11 +325,15 @@ jobs:
           fi
 
   # Waits for the Linux checks, tests and builds, not for the macOS jobs, which report on their
-  # own: GitHub's virtual Macs are slower than the Macs those checks were written on.
+  # own: GitHub's virtual Macs are slower than the Macs those checks were written on. Runs only
+  # when the push changed the app (What changed), so a docs-only merge doesn't rebuild and
+  # republish it; the Windows nightly, which needs this one, is skipped with it.
   nightly:
     name: Nightly build
-    needs: [check]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [changes, check]
+    if: >-
+      github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+      needs.changes.outputs.app == 'true'
     runs-on: macos-15
     timeout-minutes: 20
     permissions:
