@@ -18,7 +18,7 @@ session was given.
   under `.claude/worktrees/`, keep its path and branch, and skip steps 3 to 5.
 - In your session's own worktree, once its earlier task has landed and nothing is uncommitted,
   start this task's branch there instead of a new worktree:
-  `git switch -c <agent>/<task> origin/main`, after steps 1 and 2.
+  `git switch -c <agent>/<task> origin/main`, after steps 1 and 2, then install (step 6).
 - A folder or branch name alone doesn't show that a worktree is this task's. Anything else gets
   every step.
 
@@ -49,9 +49,10 @@ session was given.
    git branch --show-current   # must print <agent>/<task>, not main
    ```
 
-   For a change to the app, install: `vp install`, then
-   `vp node node_modules/electron/install.js`. A change only to docs, the guide or the skills
-   doesn't need it.
+6. **Install**: `vp install`, in a worktree your environment made too, since every change runs
+   `vp check` and the tests, which need the dependencies. A change to the app also needs
+   Electron's binary, which `vp install` leaves out: `vp node node_modules/electron/install.js`.
+   A change only to docs, the guide or the skills doesn't need the binary.
 
 ## Remember
 

@@ -34,10 +34,19 @@ description: Open the pull request for a proven Folio change and see it through 
      - CI failed: read the failed job's log and fix the cause. Never re-run a check to get past
        it. If the cause is outside Folio, such as GitHub's own servers failing, say so with the
        log line, and stop.
-   - **2, the owner's**: the owner merges it with GitHub's merge button. Tell them in one line
-     why it's theirs, and stop. If they tell you to merge it, merge it normally
-     (`gh pr merge <n> --squash --match-head-commit <sha>`) and go to [land](../land/SKILL.md).
-   - **3, too long**, or **4, GitHub didn't answer**: say what it was waiting for, and stop.
+   - **2, the owner's**: tell the owner in one line why, as the wait said, and stop.
+     - Usually it's in the owner's lane, and the owner merges it with GitHub's merge button. When
+       they say it merged, go to [land](../land/SKILL.md). When they tell you to merge it, merge
+       it normally (`gh pr merge <n> --squash --match-head-commit <sha>`), then land it.
+     - It also ends this way when the pull request was closed without merging, or when GitHub
+       refused the merge three times. Don't reopen or merge it then, unless the owner says so.
+   - **3, too long**: if it was still waiting for CI or the review gate, look at the newest
+     commit's checks (`gh pr checks <n>`). When none of CI's jobs is there, or no "Review gate",
+     GitHub dropped the event that starts that run. Start each missing run once by hand
+     (`gh workflow run ci.yml --ref <branch>`, or `gh workflow run review.yml -f pr=<n>`), and go
+     back to 3. That doesn't re-run a check, since the run never began. If it still doesn't come,
+     or the wait was for something else, say what it was waiting for, and stop.
+   - **4, GitHub didn't answer**: say what it was waiting for, and stop.
 5. The review gate gives a pull request three rounds. After the third with serious findings
    open, it's the owner's.
 
