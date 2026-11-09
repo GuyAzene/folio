@@ -266,9 +266,10 @@ describe("the gate", () => {
     for (let round = 0; round < ROUNDS; round++)
       verdict = buildVerdict(verdict, review([bug]), HEAD, null);
     expect(decideGate(gate({ verdict }))).toMatchObject({
-      status: "in_progress",
+      status: "completed",
+      conclusion: "neutral",
       lane: "owner",
-      title: `${ROUNDS} serious findings after ${ROUNDS} rounds: waits for the owner`,
+      title: `${ROUNDS} serious findings after ${ROUNDS} rounds: the owner decides`,
     });
   });
 
@@ -282,15 +283,16 @@ describe("the gate", () => {
     });
   });
 
-  it("never passes a commit whose review couldn't run", () => {
+  it("leaves a commit whose review couldn't run to the owner, never to the line", () => {
     expect(
       decideGate(
         gate({ verdict: null, review: { state: "failed", why: "ended without a verdict" } }),
       ),
     ).toMatchObject({
-      status: "in_progress",
+      status: "completed",
+      conclusion: "neutral",
       lane: "owner",
-      title: "The review couldn't run: waits for the owner",
+      title: "The review couldn't run: the owner decides",
     });
   });
 
@@ -303,26 +305,27 @@ describe("the gate", () => {
 
   it("leaves to the owner what touches an owner area or carries the label", () => {
     expect(decideGate(gate({ areas: ["the checks and the review gate"] }))).toMatchObject({
-      status: "in_progress",
       lane: "owner",
       summary: expect.stringContaining("it touches the checks and the review gate"),
     });
     expect(decideGate(gate({ labels: [OWNER_LABEL] }))).toMatchObject({
-      status: "in_progress",
       lane: "owner",
-      title: "Reviewed, nothing serious: waits for the owner",
+      title: "Reviewed, nothing serious: the owner merges this one",
     });
   });
 
   it("leaves dependency updates to the owner, and waits on drafts", () => {
     expect(decideGate(gate({ author: "dependabot[bot]" }))).toMatchObject({
-      status: "in_progress",
       lane: "owner",
+      title: "A dependency update: the owner merges it",
     });
     expect(decideGate(gate({ draft: true }))).toMatchObject({ status: "in_progress" });
   });
 
-  it("fails only when there is something to fix, never to say it waits for the owner", () => {
+  // A pending required check is what made the owner merge past the gate, behind GitHub's bypass
+  // checkbox. Finished as neutral, the owner's pull request shows every check done and the normal
+  // merge button; the line still never merges it.
+  it("finishes the owner's lane as neutral: never left in progress, and red only for something to fix", () => {
     const open = buildVerdict(null, review([bug]), HEAD, null);
     let stuck: Verdict | null = null;
     for (let round = 0; round < ROUNDS; round++)
@@ -336,9 +339,9 @@ describe("the gate", () => {
       gate({ areas: ["the checks and the review gate"] }),
     ].map(decideGate);
     for (const result of owners) {
-      expect(result).toMatchObject({ status: "in_progress", lane: "owner" });
-      expect(result).not.toHaveProperty("conclusion");
-      expect(result.summary).toContain("Nothing failed");
+      expect(result).toMatchObject({ status: "completed", conclusion: "neutral", lane: "owner" });
+      expect(result.title).not.toContain("waits");
+      expect(result.summary).toContain("Nothing failed. The owner merges it with the merge button");
     }
     expect(decideGate(gate({ verdict: open }))).toMatchObject({
       status: "completed",
@@ -363,9 +366,10 @@ describe("the gate", () => {
     expect(
       decideGate(gate({ fork: true, verdict: null, review: { state: "none" } })),
     ).toMatchObject({
-      status: "in_progress",
+      status: "completed",
+      conclusion: "neutral",
       lane: "owner",
-      title: "From another repository: waits for the owner",
+      title: "From another repository: the owner merges it",
     });
   });
 });
@@ -762,7 +766,7 @@ describe("the signed commands", () => {
     });
     expect(github.state.comments).toEqual([]);
     await commands.judge!();
-    expect(gateRuns()[0]!.output.title).toBe("The review couldn't run: waits for the owner");
+    expect(gateRuns()[0]!.output.title).toBe("The review couldn't run: the owner decides");
     writeFileSync(outputs, "");
     await commands.start!();
     expect(read().review).toBe("true");
@@ -841,7 +845,7 @@ describe("the signed commands", () => {
     await commands.start!();
     expect(read().review).toBe("false");
     await commands.judge!();
-    expect(gateRuns()[0]!.output.title).toBe("From another repository: waits for the owner");
+    expect(gateRuns()[0]!.output.title).toBe("From another repository: the owner merges it");
   });
 
   it("find a fork's pull request, which comes without its number, by its branch under its owner", async () => {
@@ -859,9 +863,8 @@ describe("the signed commands", () => {
     expect(read()).toMatchObject({ pr: "", review: "false" });
   });
 
-  // A gate the owner merged past would otherwise wait on the pull request's page for good.
-  const waitingForTheOwner = async () => {
-    github.state.files = [{ filename: "src/auth.ts" }];
+  // The app's gate on the head after a review, from the verdict it leaves.
+  const judgedWith = async (findings: Review["findings"]) => {
     github.state.runs.push({
       id: 1,
       name: VERDICT_CHECK,
@@ -870,17 +873,38 @@ describe("the signed commands", () => {
       conclusion: "neutral",
       started_at: null,
       app: { id: APP },
-      output: { text: JSON.stringify(buildVerdict(null, review(), HEAD, null)) },
+      output: { text: JSON.stringify(buildVerdict(null, review(findings), HEAD, null)) },
     });
     await commands.judge!();
-    expect(gateRuns().at(-1)).toMatchObject({ status: "in_progress", app: { id: APP } });
     writeFileSync(outputs, "");
+    return gateRuns().at(-1);
   };
-
-  it("finish the gate of a pull request the owner merged, as the app, once however often the signal comes", async () => {
-    await waitingForTheOwner();
+  const merge = () => {
     github.state.pr.state = "closed";
     github.state.pr.merged_at = "2026-11-09T09:00:00Z";
+  };
+
+  it("finish the owner's lane as neutral, so no check is left in progress and the merge button stays normal", async () => {
+    github.state.files = [{ filename: "src/auth.ts" }];
+    const done = await judgedWith([]);
+    expect(done).toMatchObject({
+      status: "completed",
+      conclusion: "neutral",
+      app: { id: APP },
+      output: expect.objectContaining({
+        title: "Reviewed, nothing serious: the owner merges this one",
+      }),
+    });
+    expect(parseGateNote(done!.output.text)?.lane).toBe("owner");
+    // Merged, it has nothing more to finish.
+    merge();
+    await commands.judge!();
+    expect(gateRuns()).toHaveLength(1);
+  });
+
+  it("finish a red gate the owner merged past, as the app, once however often the signal comes", async () => {
+    await judgedWith([bug]);
+    merge();
     await commands.start!();
     expect(read()).toMatchObject({ pr: "7", review: "false" });
     await commands.judge!();
@@ -889,24 +913,23 @@ describe("the signed commands", () => {
       status: "completed",
       conclusion: "neutral",
       app: { id: APP },
-      output: expect.objectContaining({ title: "Merged by the owner" }),
+      output: expect.objectContaining({ title: "Merged with a serious finding open" }),
     });
     await commands.judge!();
     expect(gateRuns()).toHaveLength(2);
   });
 
   it("leave the gate of a pull request closed without merging, which may be reopened", async () => {
-    await waitingForTheOwner();
+    await judgedWith([bug]);
     github.state.pr.state = "closed";
     await commands.judge!();
     expect(gateRuns()).toHaveLength(1);
-    expect(gateRuns()[0]).toMatchObject({ status: "in_progress" });
+    expect(gateRuns()[0]).toMatchObject({ status: "completed", conclusion: "failure" });
   });
 
   it("find a merged pull request, which may come without its number, by its branch and its head", async () => {
-    await waitingForTheOwner();
-    github.state.pr.state = "closed";
-    github.state.pr.merged_at = "2026-11-09T09:00:00Z";
+    await judgedWith([bug]);
+    merge();
     vi.stubEnv("PR", "");
     vi.stubEnv("BRANCH", "fix");
     vi.stubEnv("GITHUB_REPOSITORY_OWNER", "owner");

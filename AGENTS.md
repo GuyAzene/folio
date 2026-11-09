@@ -141,14 +141,17 @@ merges or closes, and `land` removes it.
 ### Merging
 
 Agents don't decide to merge. Once CI and the review gate pass on the newest commit, the ship wait
-has GitHub merge it: it turns auto-merge on, or merges at once when GitHub's rules already allow
-it. That is the only place anything merges. The review's notes hold it too, until the agent has
+merges it at once, pinned to that commit. It never uses auto-merge, which would merge later on
+whatever the gate says by then. That is the only place anything merges. The review's notes hold it too, until the agent has
 fixed the ones that are right and in scope and answered the rest on the pull request; after three
 rounds they no longer hold it. The owner merges instead when the pull request
 touches an area in [`.github/owner-areas.txt`](.github/owner-areas.txt), carries the
 `needs owner` label, has a serious finding its author disputes, or still has serious findings
-after three reviews. Never turn auto-merge off, merge past a rule (`--admin`) or push to `main`,
-unless the owner explicitly asks for that one thing; then say once which rule it skips, and do it.
+after three reviews. The review gate finishes those as neutral, so every check shows done and the
+owner merges with GitHub's normal merge button. When the owner tells an agent to merge one, it
+merges normally (`gh pr merge <n> --squash --match-head-commit <sha>`) and lands it. Never use
+auto-merge, merge past a rule (`--admin`) or push to `main`, unless the owner explicitly asks for
+that one thing; then say once which rule it skips, and do it.
 
 Once the owner says go, the work goes on until it ends in one of these, said in one line:
 

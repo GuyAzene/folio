@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   EXIT,
-  arm,
+  afterRefusal,
+  merge,
   failedChecks,
   failedSteps,
   parseArgs,
@@ -30,7 +31,6 @@ const pull = (overrides: Partial<Pull> = {}): Pull => ({
   state: "OPEN",
   draft: false,
   head: HEAD,
-  autoMerge: false,
   mergeCommit: null,
   ...overrides,
 });
@@ -42,12 +42,10 @@ const check = (name: string, conclusion: string | null, overrides: Partial<Check
   ...overrides,
 });
 const note = (lane: Lane, reviewed = HEAD): GateNote => ({ version: 1, lane, reviewed });
-// Only something to fix fails; waiting for the review or for the owner stays pending.
+// Only something to fix fails; the owner's lane is neutral; only waiting for the review is pending.
+const CONCLUSION = { fix: "failure", merge: "success", owner: "neutral", wait: null } as const;
 const gate = (lane: Lane, title = "the gate's title") =>
-  check(GATE_CHECK, lane === "fix" ? "failure" : lane === "merge" ? "success" : null, {
-    title,
-    app: REVIEW_APP,
-  });
+  check(GATE_CHECK, CONCLUSION[lane], { title, app: REVIEW_APP });
 const bug = {
   title: "Cancel leaves the job running",
   file: "src/jobs/run.ts",
@@ -92,12 +90,7 @@ describe("ship", () => {
 
   it("passes once CI and the gate both passed", () => {
     expect(
-      readShip(
-        pull({ autoMerge: true }),
-        [check("CI", "success"), gate("merge")],
-        clean,
-        note("merge"),
-      ),
+      readShip(pull(), [check("CI", "success"), gate("merge")], clean, note("merge")),
     ).toMatchObject({ done: true, outcome: "done" });
   });
 
@@ -139,12 +132,17 @@ describe("ship", () => {
   it("leaves to the owner what the gate leaves to the owner", () => {
     const step = readShip(
       pull(),
-      [check("CI", "success"), gate("owner", "Reviewed, nothing serious: waits for the owner")],
+      [
+        check("CI", "success"),
+        gate("owner", "Reviewed, nothing serious: the owner merges this one"),
+      ],
       null,
       note("owner"),
     );
     expect(step).toMatchObject({ done: true, outcome: "owner" });
-    expect(step.done && step.lines.join("\n")).toContain("don't turn auto-merge on");
+    const said = step.done ? step.lines.join("\n") : "";
+    expect(said).toContain("the owner merges it with GitHub's merge button");
+    expect(said).toContain("don't turn auto-merge on");
   });
 
   describe("the review's notes", () => {
@@ -316,30 +314,33 @@ describe("what the waits print", () => {
     ).toEqual(["Windows: packaged app: timed_out"]);
   });
 
-  it("has GitHub merge through auto-merge, or at once only when its rules already allow it", async () => {
+  // Auto-merge would merge later, on whatever the gate says by then: a pull request that moves to
+  // the owner's lane afterwards passes as neutral, and nothing would hold it for the owner.
+  it("merges at once, pinned to the commit that passed, and never through auto-merge", async () => {
     const calls: string[][] = [];
-    const pinned = ["pr", "merge", "7", "--squash", "--match-head-commit", HEAD];
-    const queues = async (args: string[]) => void calls.push(args);
-    expect(await arm(7, HEAD, queues)).toBe("queued");
-    expect(calls).toEqual([[...pinned, "--auto"]]);
-
-    calls.length = 0;
-    const clean = async (args: string[]) => {
-      calls.push(args);
-      if (args.includes("--auto")) throw new Error("Pull request is in clean status");
-    };
-    expect(await arm(7, HEAD, clean)).toBe("merged");
-    // Pinned to the commit that passed, so a push in between is refused instead of merged.
-    expect(calls.at(-1)).toEqual(pinned);
+    await merge(7, HEAD, async (args) => void calls.push(args));
+    // Pinned, so a push in between is refused instead of merged.
+    expect(calls).toEqual([["pr", "merge", "7", "--squash", "--match-head-commit", HEAD]]);
+    expect(calls.flat()).not.toContain("--auto");
     expect(calls.flat()).not.toContain("--admin");
-
-    calls.length = 0;
-    const refuses = async (args: string[]) => {
-      calls.push(args);
-      throw new Error("Auto merge is not allowed for this repository");
+    const refuses = async () => {
+      throw new Error("Pull request is not mergeable");
     };
-    await expect(arm(7, HEAD, refuses)).rejects.toThrow("not allowed");
-    expect(calls).toHaveLength(1);
+    await expect(merge(7, HEAD, refuses)).rejects.toThrow("not mergeable");
+  });
+
+  it("tries a refused merge again twice, then tells the owner why", () => {
+    const waiting = { done: false, waitingFor: "GitHub to let it merge" };
+    expect(afterRefusal(7, 1, "Required status check is expected")).toEqual(waiting);
+    expect(afterRefusal(7, 2, "Required status check is expected")).toEqual(waiting);
+    expect(afterRefusal(7, 3, "Pull request is not mergeable")).toEqual({
+      done: true,
+      outcome: "owner",
+      lines: [
+        "GitHub refused to merge #7: Pull request is not mergeable",
+        "Tell the owner in one line, then stop.",
+      ],
+    });
   });
 
   it("gives each outcome its own exit code", () => {

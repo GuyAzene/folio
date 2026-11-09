@@ -1,5 +1,5 @@
 // The review gate. Claude reviews every push to a pull request, and this script turns those
-// reviews into one check, "Review gate", that GitHub's auto-merge can wait for. It runs from main,
+// reviews into one check, "Review gate", that merging waits for. It runs from main,
 // in review.yml, which pull-request.yml starts whenever a pull request changes:
 //
 //   node scripts/review-gate.ts start     before Claude: whether to review, marked on the commit
@@ -14,10 +14,11 @@
 // the gate).
 //
 // A verdict lists the serious findings still open; the next review checks whether the new changes
-// fix them. The gate passes once the newest reviewed commit has none open. A pull request waits
-// for the owner to merge it instead when it touches an area in .github/owner-areas.txt, carries
-// the "needs owner" label, comes from Dependabot, still has serious findings after three rounds,
-// or couldn't be reviewed. Once the owner merges one past its gate, judge finishes the gate.
+// fix them. The gate passes once the newest reviewed commit has none open. The owner merges a pull
+// request instead when it touches an area in .github/owner-areas.txt, carries the "needs owner"
+// label, comes from Dependabot, still has serious findings after three rounds, or couldn't be
+// reviewed: the gate then finishes as neutral, the owner's lane, which the line never merges.
+// Once a pull request merges past a gate still pending or failing, judge finishes the gate.
 import { randomUUID } from "node:crypto";
 import { appendFileSync, readFileSync } from "node:fs";
 import { matchesGlob } from "node:path";
@@ -379,16 +380,17 @@ export type GateInput = {
  */
 export type Lane = "wait" | "fix" | "owner" | "merge";
 /**
- * The gate fails only when there is something to fix. Waiting for the review and waiting for the
- * owner both leave it pending: neither is a failure, so neither shows a red cross or sends
- * GitHub's failure email, and either still holds the merge once the check is required.
+ * The gate fails only when there is something to fix, and holds the merge while the review runs.
+ * The owner's lane finishes as neutral: done, never red, and passed as far as GitHub's rules go,
+ * so the owner sees the normal merge button. What keeps it for the owner is the rule that the
+ * line never merges it (scripts/line.ts), not a check left pending.
  */
 export type Gate =
-  | { status: "in_progress"; lane: "wait" | "owner"; title: string; summary: string }
+  | { status: "in_progress"; lane: "wait"; title: string; summary: string }
   | {
       status: "completed";
-      conclusion: "success" | "failure";
-      lane: "fix" | "merge";
+      conclusion: "success" | "failure" | "neutral";
+      lane: "fix" | "merge" | "owner";
       title: string;
       summary: string;
     };
@@ -416,10 +418,11 @@ const waiting = (title: string, summary: string): Gate => ({
   summary,
 });
 const owners = (title: string, summary: string): Gate => ({
-  status: "in_progress",
+  status: "completed",
+  conclusion: "neutral",
   lane: "owner",
   title,
-  summary: `${summary}\n\nNothing failed: this check stays pending until the owner merges.`,
+  summary: `${summary}\n\nNothing failed. The owner merges it with the merge button; the line never does.`,
 });
 const fails = (title: string, summary: string): Gate => ({
   status: "completed",
@@ -435,13 +438,13 @@ export const decideGate = (input: GateInput): Gate => {
   const commit = `\`${short(input.reviewed)}\``;
   if (input.author === DEPENDABOT) {
     return owners(
-      "A dependency update: waits for the owner",
+      "A dependency update: the owner merges it",
       "Claude doesn't review Dependabot's pull requests, and every dependency update is the owner's to merge.",
     );
   }
   if (input.fork) {
     return owners(
-      "From another repository: waits for the owner",
+      "From another repository: the owner merges it",
       "Claude reviews only this repository's own branches, so the owner looks at this one.",
     );
   }
@@ -461,8 +464,8 @@ export const decideGate = (input: GateInput): Gate => {
       return waiting(`Reviewing ${short(input.reviewed)}`, `Claude is reviewing ${commit}.`);
     }
     return owners(
-      "The review couldn't run: waits for the owner",
-      `Claude's review of ${commit} ${input.review.why}. Running the review again may work once the plan allows it; otherwise the owner merges this one.`,
+      "The review couldn't run: the owner decides",
+      `Claude's review of ${commit} ${input.review.why}. Running the review again may work once the plan allows it; otherwise the owner decides.`,
     );
   }
   const { open, round } = input.verdict;
@@ -470,13 +473,13 @@ export const decideGate = (input: GateInput): Gate => {
     const list = open.map((item) => `- **${item.id}** ${place(item)}${item.title}`).join("\n");
     if (round >= ROUNDS) {
       return owners(
-        `${plural(open.length, "serious finding")} after ${round} rounds: waits for the owner`,
+        `${plural(open.length, "serious finding")} after ${round} rounds: the owner decides`,
         `Still open in ${commit}:\n\n${list}\n\nThe owner decides from here.`,
       );
     }
     return fails(
       `${plural(open.length, "serious finding")} open`,
-      `Open in ${commit}:\n\n${list}\n\nPush a fix and the next review checks it. If a finding is wrong, say why in a reply on the pull request; it then waits for the owner.`,
+      `Open in ${commit}:\n\n${list}\n\nPush a fix and the next review checks it. If a finding is wrong, say why in a reply on the pull request and add the "${OWNER_LABEL}" label; the owner decides.`,
     );
   }
   const reasons = [
@@ -485,7 +488,7 @@ export const decideGate = (input: GateInput): Gate => {
   ];
   if (reasons.length) {
     return owners(
-      "Reviewed, nothing serious: waits for the owner",
+      "Reviewed, nothing serious: the owner merges this one",
       `Nothing serious is open in ${commit}, but the owner merges this pull request because ${reasons.join(", and ")}.`,
     );
   }
@@ -509,9 +512,10 @@ export type GateRun = {
 
 /**
  * What the gate ends with once its pull request has merged, or null when there is nothing to
- * finish. Only the owner can merge past a gate that is pending or failing, and nothing would write
- * that gate again: it would spin, or keep its red cross, on the pull request's page for good. It
- * finishes as neutral and says what it said before. GitHub counts a neutral check as passed, which
+ * finish. A pull request merged past a gate that is pending or failing, as only an admin can, would
+ * otherwise keep that gate spinning, or its red cross, on its page for good. Gates written before
+ * the owner's lane became neutral were pending too. It finishes as neutral and says what it said
+ * before. GitHub counts a neutral check as passed, which
  * is harmless here: a merged pull request can't merge again, and its commit's changes are already
  * on main. A pull request closed without merging keeps its gate, since it may be reopened, and a
  * neutral gate would let it merge before the gate judged it again.
