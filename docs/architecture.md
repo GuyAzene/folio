@@ -709,7 +709,8 @@ so a pull request merges only once both pass. GitHub counts a neutral check as p
 request in the owner's lane shows every check done, and the owner merges it with GitHub's normal
 merge button. A rule keeps it for the owner: the line never merges it, and never uses auto-merge.
 That includes one still holding serious findings after three rounds, which GitHub's rules would
-let anyone with merge rights merge. A pull request merged past
+let anyone with merge rights merge. Nothing stops an auto-merge someone turns on by hand: a pull
+request that then moves to the owner's lane would merge without the owner, so nobody turns it on. A pull request merged past
 a gate still pending or failing, which only an admin can do, gets its gate finished as neutral,
 saying what it said before, so nothing spins on a merged pull request's page. One closed without
 merging keeps its gate, since a reopened pull request could otherwise merge before the gate judged

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   EXIT,
+  afterRefusal,
   merge,
   failedChecks,
   failedSteps,
@@ -326,6 +327,20 @@ describe("what the waits print", () => {
       throw new Error("Pull request is not mergeable");
     };
     await expect(merge(7, HEAD, refuses)).rejects.toThrow("not mergeable");
+  });
+
+  it("tries a refused merge again twice, then tells the owner why", () => {
+    const waiting = { done: false, waitingFor: "GitHub to let it merge" };
+    expect(afterRefusal(7, 1, "Required status check is expected")).toEqual(waiting);
+    expect(afterRefusal(7, 2, "Required status check is expected")).toEqual(waiting);
+    expect(afterRefusal(7, 3, "Pull request is not mergeable")).toEqual({
+      done: true,
+      outcome: "owner",
+      lines: [
+        "GitHub refused to merge #7: Pull request is not mergeable",
+        "Tell the owner in one line, then stop.",
+      ],
+    });
   });
 
   it("gives each outcome its own exit code", () => {

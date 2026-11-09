@@ -444,24 +444,31 @@ const ship = async (number: string | undefined, minutes: number, answered = "") 
     try {
       await merge(pr.number, pr.head);
     } catch (error) {
-      const why = (error as Error).message.split("\n")[0];
-      // GitHub can take a moment to count a check that just finished.
-      if (++refusals < MERGE_TRIES) {
-        say(`GitHub didn't merge it yet (${why}); trying again in ${POLL / 1000} s.`);
-        return { done: false, waitingFor: "GitHub to let it merge" };
-      }
-      return {
-        done: true,
-        outcome: "owner",
-        lines: [
-          `GitHub refused to merge #${pr.number}: ${why}`,
-          "Tell the owner in one line, then stop.",
-        ],
-      };
+      const why = (error as Error).message.split("\n")[0] ?? "";
+      const next = afterRefusal(pr.number, ++refusals, why);
+      if (!next.done) say(`GitHub didn't merge it yet (${why}); trying again in ${POLL / 1000} s.`);
+      return next;
     }
     return readShip(await pull(number), checks, verdict, note, answered);
   });
 };
+
+/**
+ * What a ship wait does after GitHub refused its merge for the `refusals`th time on this commit.
+ * GitHub can take a moment to count a check that just finished, so it tries again on the next
+ * look; after MERGE_TRIES refusals, the owner hears why.
+ */
+export const afterRefusal = (number: number, refusals: number, why: string): Step =>
+  refusals < MERGE_TRIES
+    ? { done: false, waitingFor: "GitHub to let it merge" }
+    : {
+        done: true,
+        outcome: "owner",
+        lines: [
+          `GitHub refused to merge #${number}: ${why}`,
+          "Tell the owner in one line, then stop.",
+        ],
+      };
 
 /**
  * Merges a pull request at once, squashed, pinned to the commit that passed, so a push in between
