@@ -21,6 +21,7 @@ import {
   reviewOf,
   reviewPrompt,
   reviewedCommit,
+  runName,
   sinceOf,
   type Review,
   type Verdict,
@@ -557,6 +558,7 @@ describe("the Review workflow", () => {
   };
   const raw = readFileSync(".github/workflows/review.yml", "utf8");
   const workflow = parse(raw) as {
+    "run-name": string;
     on: Record<string, unknown>;
     permissions: Record<string, string>;
     concurrency: { group: string; "cancel-in-progress": boolean };
@@ -572,6 +574,13 @@ describe("the Review workflow", () => {
     expect(Object.keys(workflow.on).sort()).toEqual(["workflow_dispatch", "workflow_run"]);
     expect(workflow.on.workflow_run).toMatchObject({ workflows: ["Pull request"] });
     expect(workflow.permissions).toEqual({});
+  });
+
+  it("names each run after its pull request, as the wait looks for it", () => {
+    expect(workflow["run-name"]).toBe(
+      `${runName("")}\${{ github.event.workflow_run.pull_requests[0].number || inputs.pr || github.event.workflow_run.head_branch }}`,
+    );
+    expect(runName(48)).toBe("Review of #48");
   });
 
   it("reviews one commit of a pull request at a time, so a second signal finds it reviewed", () => {

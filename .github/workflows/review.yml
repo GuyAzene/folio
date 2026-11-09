@@ -1,4 +1,6 @@
 name: Review
+# The wait (scripts/wait-for-review.ts) finds a pull request's own runs by this name.
+run-name: "Review of #${{ github.event.workflow_run.pull_requests[0].number || inputs.pr || github.event.workflow_run.head_branch }}"
 
 # Claude's review of every push to a pull request from this repository, posted as one comment.
 # scripts/review.ts does the work, and tests/review.test.ts holds this file to it. It runs from

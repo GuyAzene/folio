@@ -15,6 +15,8 @@ import {
   noSuchPull,
   parseArgs,
   progress,
+  fromView,
+  isDependabot,
   readOnly,
   readRound,
   watcher,
@@ -261,10 +263,28 @@ describe("the wait's looks", () => {
     expect(await look()).toMatchObject({ done: true, outcome: "fix" });
   });
 
-  it("stop on a review that couldn't run once no Review run is under way", async () => {
+  // A retry started a moment ago may not be listed yet, so the first look gives it time.
+  it("stop on a review that couldn't run once a second look still finds no Review run", async () => {
     const { state, github } = fakeGitHub();
     state.comments.push({ user: { login: REVIEWER }, body: renderFailure(7, HEAD, "x") });
-    expect(await watcher(github, "7", () => {})()).toMatchObject({ outcome: "stuck" });
+    const look = watcher(github, "7", () => {});
+    expect(await look()).toEqual({
+      done: false,
+      waitingFor: "a moment, in case the review was just started again",
+    });
+    expect(await look()).toMatchObject({ outcome: "stuck" });
+  });
+
+  it("ask GitHub about this pull request's own Review runs", async () => {
+    const { state, github } = fakeGitHub();
+    state.comments.push({ user: { login: REVIEWER }, body: renderFailure(7, HEAD, "x") });
+    const asked: number[] = [];
+    github.reviewing = async (number) => {
+      asked.push(number);
+      return false;
+    };
+    await watcher(github, "7", () => {})();
+    expect(asked).toEqual([7]);
   });
 
   it("work out the commit to review again when a look failed half way", async () => {
@@ -377,6 +397,36 @@ describe("the wait's command line", () => {
 });
 
 // Agents don't merge unless the owner says so. The wait's gh refuses every command but these.
+describe("what gh says about a pull request", () => {
+  const view = {
+    number: 7,
+    state: "OPEN" as const,
+    isDraft: false,
+    headRefOid: HEAD,
+    isCrossRepository: false,
+    author: { login: "someone" },
+  };
+
+  it("is read as the pull request the wait follows", () => {
+    expect(fromView(view)).toEqual(pull());
+    expect(fromView({ ...view, isDraft: true, state: "MERGED" })).toMatchObject({
+      draft: true,
+      state: "MERGED",
+    });
+  });
+
+  // gh names an app's pull request "app/dependabot"; GitHub's REST API, as review.ts reads it,
+  // "dependabot[bot]". Either way, Claude doesn't review it, so the wait mustn't wait for that.
+  it("marks Dependabot's and a fork's pull requests as ones Claude doesn't review", () => {
+    for (const login of ["app/dependabot", "dependabot[bot]", "dependabot"]) {
+      expect(isDependabot(login), login).toBe(true);
+      expect(fromView({ ...view, author: { login } }).reviewable, login).toBe(false);
+    }
+    expect(isDependabot("dependabot-fan")).toBe(false);
+    expect(fromView({ ...view, isCrossRepository: true }).reviewable).toBe(false);
+  });
+});
+
 describe("the wait's gh", () => {
   it("runs what only reads: pr view, and api with no method or fields", () => {
     for (const args of [

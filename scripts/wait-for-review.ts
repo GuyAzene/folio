@@ -15,6 +15,7 @@ import { promisify } from "node:util";
 import {
   ROUNDS,
   readReviews,
+  runName,
   reviewOf,
   reviewedCommit,
   short,
@@ -211,8 +212,8 @@ export type GitHub = {
     parents: { sha: string }[];
   }>;
   comments: (number: number) => Promise<{ user: { login: string } | null; body: string | null }[]>;
-  /** Whether a run of the Review workflow is queued or under way, for any pull request. */
-  reviewing: () => Promise<boolean>;
+  /** Whether a run of the Review workflow is queued or under way for this pull request. */
+  reviewing: (number: number) => Promise<boolean>;
   /** The commit checked out here, so the wait doesn't ask you to pull your own push. */
   localHead: () => Promise<string>;
 };
@@ -223,6 +224,8 @@ export const watcher = (github: GitHub, number: string, say: (line: string) => v
   let reviewed = "";
   let seen = new Map<string, string>();
   let failed = new Set<string>();
+  /** The commit whose review couldn't run, as the last look already found. */
+  let failedBefore = "";
   return async (): Promise<Step> => {
     const pr = await github.pull(number);
     if (pr.state !== "OPEN") return readRound(pr, [], pr.head, null);
@@ -241,10 +244,37 @@ export const watcher = (github: GitHub, number: string, say: (line: string) => v
     for (const line of progress(seen, checks)) say(line);
     for (const line of failedSteps(failed, await github.jobs(pr.head))) say(line);
     const review = reviewOf(readReviews(await github.comments(pr.number)), reviewed);
-    const reviewing = !!review && !("open" in review) && (await github.reviewing());
-    return readRound(pr, checks, reviewed, review, reviewing);
+    const couldnt = !!review && !("open" in review);
+    const reviewing = couldnt && (await github.reviewing(pr.number));
+    const step = readRound(pr, checks, reviewed, review, reviewing);
+    // GitHub lists a run a few seconds after it's started, so a retry started just now may not
+    // show yet: a review that couldn't run stops the wait only when a second look still finds it.
+    if (couldnt && step.done && step.outcome === "stuck" && failedBefore !== reviewed) {
+      failedBefore = reviewed;
+      return { done: false, waitingFor: "a moment, in case the review was just started again" };
+    }
+    return step;
   };
 };
+
+/** Dependabot as gh names it in `pr view` ("app/dependabot") and as the REST API does. */
+export const isDependabot = (login: string) => /^(app\/)?dependabot(\[bot\])?$/.test(login);
+
+/** A pull request from what `gh pr view --json` says about it. */
+export const fromView = (view: {
+  number: number;
+  state: Pull["state"];
+  isDraft: boolean;
+  headRefOid: string;
+  isCrossRepository: boolean;
+  author: { login: string };
+}): Pull => ({
+  number: view.number,
+  state: view.state,
+  draft: view.isDraft,
+  head: view.headRefOid,
+  reviewable: !view.isCrossRepository && !isDependabot(view.author.login),
+});
 
 // GitHub, through the gh CLI.
 
@@ -276,31 +306,18 @@ const everyItem = async <T>(path: string, jq: string) =>
     .map((line) => JSON.parse(line) as T);
 
 const throughGh: GitHub = {
-  pull: async (number) => {
-    const view = JSON.parse(
-      await gh([
-        "pr",
-        "view",
-        ...(number ? [number] : []),
-        "--json",
-        "number,state,isDraft,headRefOid,isCrossRepository,author",
-      ]),
-    ) as {
-      number: number;
-      state: Pull["state"];
-      isDraft: boolean;
-      headRefOid: string;
-      isCrossRepository: boolean;
-      author: { login: string };
-    };
-    return {
-      number: view.number,
-      state: view.state,
-      draft: view.isDraft,
-      head: view.headRefOid,
-      reviewable: !view.isCrossRepository && view.author.login !== "app/dependabot",
-    };
-  },
+  pull: async (number) =>
+    fromView(
+      JSON.parse(
+        await gh([
+          "pr",
+          "view",
+          ...(number ? [number] : []),
+          "--json",
+          "number,state,isDraft,headRefOid,isCrossRepository,author",
+        ]),
+      ),
+    ),
   checks: async (sha) =>
     (
       await api<{ check_runs: Check[] }>(`commits/${sha}/check-runs?filter=latest&per_page=100`)
@@ -319,12 +336,14 @@ const throughGh: GitHub = {
   commit: (sha) => api(`commits/${sha}`),
   comments: (number) =>
     everyItem(`issues/${number}/comments`, ".[] | {user: {login: .user.login}, body}"),
-  reviewing: async () =>
+  reviewing: async (number) =>
     (
-      await api<{ workflow_runs: { status: string }[] }>(
-        "actions/workflows/review.yml/runs?per_page=20",
+      await api<{ workflow_runs: { status: string; display_title: string }[] }>(
+        "actions/workflows/review.yml/runs?per_page=30",
       )
-    ).workflow_runs.some((run) => run.status !== "completed"),
+    ).workflow_runs.some(
+      (run) => run.status !== "completed" && run.display_title === runName(number),
+    ),
   localHead: async () => {
     try {
       return (await exec("git", ["rev-parse", "HEAD"])).stdout.trim();

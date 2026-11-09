@@ -740,8 +740,9 @@ The agent shipping a change waits for each round with `scripts/wait-for-review.t
 finished, and the review of that commit, or of the one before CI's pictures, is in. It lists the
 failed checks, the serious findings still open and the notes, and ends with an exit code for
 what's next: nothing to fix, something to fix, or stuck. A review that couldn't run counts only
-once no Review run is under way, since that run may be its retry, and a pull request Claude
-doesn't review finishes on its checks alone. It asks GitHub through the gh CLI, prints a line
+once a second look still finds no Review run of that pull request under way (each run is named
+after its pull request), since that run may be its retry. A pull request Claude doesn't review
+finishes on its checks alone. It asks GitHub through the gh CLI, prints a line
 whenever something changes, and never merges: its gh runs only `pr view` and reads through `api`,
 and refuses anything else. The agent fixes what's right and pushes
 again, for three rounds at most, then gives the owner the pull request's link. Agents merge only

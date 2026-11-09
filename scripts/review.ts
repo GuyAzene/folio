@@ -20,6 +20,8 @@ export const CHANGES = { diff: "/tmp/review/changes.diff", commits: "/tmp/review
 export const ROUNDS = 3;
 /** Who the review's comments come from: the Review workflow's own token. */
 export const REVIEWER = "github-actions[bot]";
+/** What review.yml's run-name calls a run for a pull request, so the wait can find its own. */
+export const runName = (pr: number | string) => `Review of #${pr}`;
 /** Commits that change only these pictures (the README's, retaken by CI) need no review. */
 const PICTURES = "docs/images/";
 /** GitHub refuses a comment longer than 65,536 characters. */
