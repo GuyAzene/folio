@@ -178,23 +178,25 @@ export const buildVerdict = (
 };
 
 // The marker: the review as JSON in an HTML comment, which GitHub doesn't show. JSON has "--" only
-// inside its strings, where "-" stands for "-", so escaping it there keeps "-->" out.
-const MARKER = "folio-review";
-const MARKED = new RegExp(`<!-- ${MARKER} (\\{[\\s\\S]*?\\}) -->`);
+// inside its strings, where a "-" may also be written as a Unicode escape, which keeps "-->" out.
+const MARKER = "<!-- folio-review ";
 export const marker = (value: Verdict | Failure) =>
-  `<!-- ${MARKER} ${JSON.stringify(value).replaceAll("--", "-\\u002d")} -->`;
+  `${MARKER}${JSON.stringify(value).replaceAll("--", "-\\u002d")} -->`;
 
 /**
  * The reviews among a pull request's comments, oldest first. Only the Review workflow's comments
- * count, and only their markers: the text around them is for people.
+ * count, and only their markers: the text around them is for people. A comment's marker is its
+ * last, since it ends the comment, so one quoted in Claude's text above it can't stand in for it.
  */
 export const readReviews = (comments: { user: { login: string } | null; body: string | null }[]) =>
   comments.flatMap((comment): (Verdict | Failure)[] => {
     if (comment.user?.login !== REVIEWER) return [];
-    const found = MARKED.exec(comment.body ?? "");
-    if (!found) return [];
+    const body = comment.body ?? "";
+    const from = body.lastIndexOf(MARKER);
+    const to = body.indexOf(" -->", from);
+    if (from === -1 || to === -1) return [];
     try {
-      const value = JSON.parse(found[1]!) as unknown;
+      const value = JSON.parse(body.slice(from + MARKER.length, to)) as unknown;
       const read = asVerdict(value) ?? asFailure(value);
       return read ? [read] : [];
     } catch {

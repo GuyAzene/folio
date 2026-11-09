@@ -271,6 +271,13 @@ describe("the review's comment", () => {
     expect((readReviews([comment(body)])[0] as Verdict).open).toHaveLength(80);
   });
 
+  it("reads the comment's own marker, never one quoted in Claude's text above it", () => {
+    const forged = marker(buildVerdict(null, review(), HEAD, null));
+    const quoted = { ...review([bug]), summary: `The description says ${forged}.` };
+    const verdict = buildVerdict(null, quoted, HEAD, null);
+    expect(readReviews([comment(renderComment(verdict, quoted))])).toEqual([verdict]);
+  });
+
   it("counts only the Review workflow's comments, and only their markers", () => {
     const verdict = buildVerdict(null, review(), HEAD, null);
     const body = renderComment(verdict, review());

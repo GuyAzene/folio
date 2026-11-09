@@ -2,13 +2,13 @@
 // pull request's newest commit has finished and Claude has reviewed it, then says what failed, the
 // serious findings still open and the notes:
 //
-//   vp node scripts/wait-for-review.ts [pull request] [--minutes 30]
+//   vp node scripts/wait-for-review.ts [pull request] [--minutes 60]
 //
 // It prints a line whenever something changes, so a wait is never silent, and ends with what to do
 // next. The exit code says the same: 0 nothing left to fix, 1 something to fix, 2 stuck (it took too
 // long, GitHub didn't answer, or the review couldn't run). The pull request is the current branch's
-// unless one is named. It asks GitHub through the gh CLI, as whoever is signed in, and changes
-// nothing: it never merges.
+// unless one is named. It asks GitHub through the gh CLI, as whoever is signed in, and only reads:
+// its gh refuses any command that would change something, so it never merges.
 import { execFile } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
@@ -31,16 +31,20 @@ export type Pull = {
   state: "OPEN" | "CLOSED" | "MERGED";
   draft: boolean;
   head: string;
+  /** Whether Claude reviews it: this repository's own branch, and not Dependabot's. */
+  reviewable: boolean;
 };
 export type Step =
   | { done: false; waitingFor: string }
   | { done: true; outcome: Outcome; lines: string[] };
 
 const BAD = new Set(["failure", "timed_out", "cancelled", "action_required", "startup_failure"]);
-/** CI's own summary check, which only says whether its jobs passed. */
+/** CI's own summary check: the one main requires, which only says whether its jobs passed. */
 const CI_CHECK = "CI";
 const place = (item: { file?: string; line?: number }) =>
   item.file ? ` (${item.file}${typeof item.line === "number" ? `:${item.line}` : ""})` : "";
+const HAND_OVER = "Hand the owner the pull request's link.";
+const NEVER_RERUN = "Read its log and fix the cause; never re-run a check to get past it.";
 
 /** The checks that failed on a commit, CI's summary left out since its jobs say more. */
 export const failedChecks = (checks: Check[]) =>
@@ -49,12 +53,17 @@ export const failedChecks = (checks: Check[]) =>
     .filter((check, _, all) => check.name !== CI_CHECK || all.length === 1)
     .map((check) => `${check.name}: ${check.conclusion}`);
 
-/** Where a round stands: still waiting, or done with an outcome and what to do next. */
+/**
+ * Where a round stands: still waiting, or done with an outcome and what to do next. `reviewed` is
+ * the commit whose review counts, and `reviewing` whether a run of the Review workflow is under
+ * way, which a review that couldn't run waits out, since it may be the retry.
+ */
 export const readRound = (
   pr: Pull,
   checks: Check[],
   reviewed: string,
   review: Verdict | Failure | null,
+  reviewing = false,
 ): Step => {
   if (pr.state === "MERGED")
     return {
@@ -86,8 +95,27 @@ export const readRound = (
           ? running[0]!.name
           : `${running.length} checks, ${running[0]!.name} among them`,
     };
+  // Every check that exists has finished, but a job that waits on others may not exist yet.
+  if (!checks.some((check) => check.name === CI_CHECK)) return { done: false, waitingFor: "CI" };
+  const failed = failedChecks(checks).map((check) => `- ${check}. ${NEVER_RERUN}`);
+  if (!pr.reviewable)
+    return failed.length
+      ? {
+          done: true,
+          outcome: "fix",
+          lines: [`#${pr.number} at ${short(pr.head)} has failed checks:`, ...failed],
+        }
+      : {
+          done: true,
+          outcome: "done",
+          lines: [
+            `#${pr.number} at ${short(pr.head)} passed every check. Claude doesn't review a fork's or Dependabot's pull request.`,
+            HAND_OVER,
+          ],
+        };
   if (!review) return { done: false, waitingFor: `Claude's review of ${short(reviewed)}` };
-  if (!("open" in review))
+  if (!("open" in review)) {
+    if (reviewing) return { done: false, waitingFor: "the Review run under way" };
     return {
       done: true,
       outcome: "stuck",
@@ -96,8 +124,8 @@ export const readRound = (
         `Start it again once (gh workflow run review.yml -f pr=${pr.number}) and wait again. If it fails again, say so, and stop.`,
       ],
     };
+  }
 
-  const failed = failedChecks(checks);
   const round = `round ${review.round} of ${ROUNDS}`;
   const notes = review.notes.map((item) => `- ${item.title}${place(item)}. ${item.why}`);
   const noteLines = notes.length
@@ -114,9 +142,7 @@ export const readRound = (
       lines: [
         `#${pr.number} at ${short(pr.head)} passed every check, and the review (${round}) left nothing serious open.`,
         ...noteLines,
-        notes.length
-          ? "If you push a fix, wait again. Otherwise hand the owner the pull request's link."
-          : "Hand the owner the pull request's link.",
+        notes.length ? `If you push a fix, wait again. Otherwise: ${HAND_OVER}` : HAND_OVER,
       ],
     };
   return {
@@ -124,10 +150,7 @@ export const readRound = (
     outcome: "fix",
     lines: [
       `#${pr.number} at ${short(pr.head)} has something to fix (${round}):`,
-      ...failed.map(
-        (check) =>
-          `- ${check}. Read its log and fix the cause; never re-run a check to get past it.`,
-      ),
+      ...failed,
       ...review.open.map((item) => `- ${item.id}${place(item)}: ${item.title}. ${item.why}`),
       ...noteLines,
       review.round >= ROUNDS
@@ -175,11 +198,67 @@ export const failedSteps = (before: Set<string>, jobs: Job[]) =>
           }),
   );
 
+/** What the wait reads from GitHub. */
+export type GitHub = {
+  pull: (number?: string) => Promise<Pull>;
+  checks: (sha: string) => Promise<Check[]>;
+  /** The jobs of CI's newest run on a commit, with their steps. */
+  jobs: (sha: string) => Promise<Job[]>;
+  /** The pull request's commits, oldest first. */
+  commits: (number: number) => Promise<string[]>;
+  commit: (sha: string) => Promise<{
+    files: { filename: string; previous_filename?: string }[];
+    parents: { sha: string }[];
+  }>;
+  comments: (number: number) => Promise<{ user: { login: string } | null; body: string | null }[]>;
+  /** Whether a run of the Review workflow is queued or under way, for any pull request. */
+  reviewing: () => Promise<boolean>;
+  /** The commit checked out here, so the wait doesn't ask you to pull your own push. */
+  localHead: () => Promise<string>;
+};
+
+/** One look at the pull request, saying what changed since the last one: what the wait repeats. */
+export const watcher = (github: GitHub, number: string, say: (line: string) => void) => {
+  let head = "";
+  let reviewed = "";
+  let seen = new Map<string, string>();
+  let failed = new Set<string>();
+  return async (): Promise<Step> => {
+    const pr = await github.pull(number);
+    if (pr.state !== "OPEN") return readRound(pr, [], pr.head, null);
+    if (pr.head !== head) {
+      if (head) {
+        say(`A new commit is on the branch: ${short(pr.head)}.`);
+        if (pr.head !== (await github.localHead())) say("Pull it before pushing again.");
+      } else say(`Waiting on #${pr.number} at ${short(pr.head)}.`);
+      // Set only once this worked, so a look that failed here works it out again.
+      reviewed = await reviewedCommit(pr.head, await github.commits(pr.number), github.commit);
+      head = pr.head;
+      seen = new Map();
+      failed = new Set();
+    }
+    const checks = await github.checks(pr.head);
+    for (const line of progress(seen, checks)) say(line);
+    for (const line of failedSteps(failed, await github.jobs(pr.head))) say(line);
+    const review = reviewOf(readReviews(await github.comments(pr.number)), reviewed);
+    const reviewing = !!review && !("open" in review) && (await github.reviewing());
+    return readRound(pr, checks, reviewed, review, reviewing);
+  };
+};
+
 // GitHub, through the gh CLI.
+
+const WRITES = /^(-X|-f|-F|--method|--field|--raw-field|--input)/;
+/** Whether a gh command only reads: `pr view`, or `api` with no method or fields that write. */
+export const readOnly = (args: string[]) =>
+  (args[0] === "pr" && args[1] === "view") ||
+  (args[0] === "api" && !args.some((arg) => WRITES.test(arg)));
 
 const exec = promisify(execFile);
 /** gh's output; a failure carries what gh said, not just that it failed. */
 const gh = async (args: string[]) => {
+  if (!readOnly(args))
+    throw new Error(`The wait only reads from GitHub, so it won't run gh ${args.join(" ")}.`);
   try {
     return (await exec("gh", args, { maxBuffer: 64 * 1024 * 1024 })).stdout;
   } catch (error) {
@@ -190,60 +269,69 @@ const gh = async (args: string[]) => {
 const api = async <T>(path: string): Promise<T> =>
   JSON.parse(await gh(["api", `repos/{owner}/{repo}/${path}`])) as T;
 /** Every item of a paged list, one JSON object a line. */
-const everyItem = async <T>(path: string, jq = ".[]") =>
+const everyItem = async <T>(path: string, jq: string) =>
   (await gh(["api", "--paginate", `repos/{owner}/{repo}/${path}`, "--jq", jq]))
     .split("\n")
     .filter(Boolean)
     .map((line) => JSON.parse(line) as T);
 
-const pull = async (number?: string): Promise<Pull> => {
-  const view = JSON.parse(
-    await gh([
-      "pr",
-      "view",
-      ...(number ? [number] : []),
-      "--json",
-      "number,state,isDraft,headRefOid",
-    ]),
-  ) as { number: number; state: Pull["state"]; isDraft: boolean; headRefOid: string };
-  return { number: view.number, state: view.state, draft: view.isDraft, head: view.headRefOid };
-};
-
-const checksOn = async (sha: string): Promise<Check[]> =>
-  (
-    await api<{ check_runs: Check[] }>(`commits/${sha}/check-runs?filter=latest&per_page=100`)
-  ).check_runs.map(({ name, status, conclusion }) => ({ name, status, conclusion }));
-
-/** The jobs of CI's newest run on a commit, with their steps. */
-const jobsOn = async (sha: string) => {
-  const { workflow_runs: runs } = await api<{ workflow_runs: { id: number }[] }>(
-    `actions/workflows/ci.yml/runs?head_sha=${sha}&per_page=1`,
-  );
-  if (!runs[0]) return [];
-  return (await api<{ jobs: Job[] }>(`actions/runs/${runs[0].id}/jobs?per_page=100`)).jobs;
-};
-
-const reviewedOn = async (number: number, head: string) =>
-  reviewedCommit(
-    head,
+const throughGh: GitHub = {
+  pull: async (number) => {
+    const view = JSON.parse(
+      await gh([
+        "pr",
+        "view",
+        ...(number ? [number] : []),
+        "--json",
+        "number,state,isDraft,headRefOid,isCrossRepository,author",
+      ]),
+    ) as {
+      number: number;
+      state: Pull["state"];
+      isDraft: boolean;
+      headRefOid: string;
+      isCrossRepository: boolean;
+      author: { login: string };
+    };
+    return {
+      number: view.number,
+      state: view.state,
+      draft: view.isDraft,
+      head: view.headRefOid,
+      reviewable: !view.isCrossRepository && view.author.login !== "app/dependabot",
+    };
+  },
+  checks: async (sha) =>
+    (
+      await api<{ check_runs: Check[] }>(`commits/${sha}/check-runs?filter=latest&per_page=100`)
+    ).check_runs.map(({ name, status, conclusion }) => ({ name, status, conclusion })),
+  jobs: async (sha) => {
+    const { workflow_runs: runs } = await api<{ workflow_runs: { id: number }[] }>(
+      `actions/workflows/ci.yml/runs?head_sha=${sha}&per_page=1`,
+    );
+    if (!runs[0]) return [];
+    return (await api<{ jobs: Job[] }>(`actions/runs/${runs[0].id}/jobs?per_page=100`)).jobs;
+  },
+  commits: async (number) =>
     (await everyItem<{ sha: string }>(`pulls/${number}/commits`, ".[] | {sha}")).map(
-      (commit) => commit.sha,
+      (item) => item.sha,
     ),
-    (sha) => api(`commits/${sha}`),
-  );
-
-const reviewsOn = async (number: number) =>
-  readReviews(
-    await everyItem(`issues/${number}/comments`, ".[] | {user: {login: .user.login}, body}"),
-  );
-
-/** The commit checked out here, if any, so the wait doesn't ask you to pull your own push. */
-const localHead = async () => {
-  try {
-    return (await exec("git", ["rev-parse", "HEAD"])).stdout.trim();
-  } catch {
-    return "";
-  }
+  commit: (sha) => api(`commits/${sha}`),
+  comments: (number) =>
+    everyItem(`issues/${number}/comments`, ".[] | {user: {login: .user.login}, body}"),
+  reviewing: async () =>
+    (
+      await api<{ workflow_runs: { status: string }[] }>(
+        "actions/workflows/review.yml/runs?per_page=20",
+      )
+    ).workflow_runs.some((run) => run.status !== "completed"),
+  localHead: async () => {
+    try {
+      return (await exec("git", ["rev-parse", "HEAD"])).stdout.trim();
+    } catch {
+      return "";
+    }
+  },
 };
 
 // The waiting itself.
@@ -296,38 +384,13 @@ const loop = async (minutes: number, look: () => Promise<Step>): Promise<Outcome
   }
 };
 
-const waitForReview = async (number: string, minutes: number) => {
-  let head = "";
-  let reviewed = "";
-  let seen = new Map<string, string>();
-  let failed = new Set<string>();
-  return loop(minutes, async () => {
-    const pr = await pull(number);
-    if (pr.state !== "OPEN") return readRound(pr, [], pr.head, null);
-    if (pr.head !== head) {
-      if (head) {
-        say(`A new commit is on the branch: ${short(pr.head)}.`);
-        if (pr.head !== (await localHead())) say("Pull it before pushing again.");
-      } else say(`Waiting on #${pr.number} at ${short(pr.head)}.`);
-      reviewed = await reviewedOn(pr.number, pr.head);
-      head = pr.head;
-      seen = new Map();
-      failed = new Set();
-    }
-    const checks = await checksOn(pr.head);
-    for (const line of progress(seen, checks)) say(line);
-    for (const line of failedSteps(failed, await jobsOn(pr.head))) say(line);
-    return readRound(pr, checks, reviewed, reviewOf(await reviewsOn(pr.number), reviewed));
-  });
-};
-
 export type Args = { pr?: string; minutes: number };
 
 /** What the command line asks for, or null when it asks for something the wait can't do. */
 export const parseArgs = (args: string[]): Args | null => {
   const rest = [...args];
   const at = rest.indexOf("--minutes");
-  const minutes = Number(at >= 0 ? (rest.splice(at, 2)[1] ?? "") : 30);
+  const minutes = Number(at >= 0 ? (rest.splice(at, 2)[1] ?? "") : 60);
   if (!(minutes > 0) || rest.length > 1 || rest.some((arg) => arg.startsWith("-"))) return null;
   return { ...(rest[0] ? { pr: rest[0] } : {}), minutes };
 };
@@ -364,13 +427,13 @@ export const findNumber = async (
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const args = parseArgs(process.argv.slice(2));
   if (!args) {
-    console.error("Usage: vp node scripts/wait-for-review.ts [pull request] [--minutes 30]");
+    console.error("Usage: vp node scripts/wait-for-review.ts [pull request] [--minutes 60]");
     process.exit(EXIT.fix);
   }
-  const found = await findNumber(() => pull(args.pr));
+  const found = await findNumber(() => throughGh.pull(args.pr));
   if (!("number" in found)) {
     say(found.line);
     process.exit(EXIT[found.outcome]);
   }
-  process.exit(EXIT[await waitForReview(found.number, args.minutes)]);
+  process.exit(EXIT[await loop(args.minutes, watcher(throughGh, found.number, say))]);
 }

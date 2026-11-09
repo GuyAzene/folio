@@ -27,7 +27,9 @@ description: Open the pull request for a proven Folio change, loop on Claude's r
      that shows it.
    - A failed check: read its log and fix the cause. Never re-run a check to get past it.
    - Run the checks, push, and wait again. The next review covers only what changed since the
-     last one, and rechecks the serious findings it left open.
+     last one, and rechecks the serious findings it left open. Bringing `main` in, by a merge or a
+     rebase, gets the whole pull request reviewed again, which counts as a round, so do it only
+     when you need to.
 5. **Stop** when the newest commit passed every check and the review left nothing serious open,
    with each note fixed or answered; after three rounds; or when you're stuck, as when GitHub
    isn't answering or the review couldn't run twice. A run GitHub never started, with none of
