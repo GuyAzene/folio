@@ -1,12 +1,14 @@
 name: Release
 
 # Pushing a tag such as v0.2.0 (`vp run release 0.2.0` makes the commit and the tag) runs every
-# check on the tagged commit, builds Folio for others, and drafts the release with its disk
-# image, a checksum and a build attestation. The draft is published by hand.
+# check on the tagged commit, builds Folio for others, signed with the Developer ID and notarized
+# by Apple, and drafts the release with its disk image, a checksum and a build attestation. The
+# draft is published by hand.
 on:
   push:
     tags: ["v*"]
-  # A rehearsal on any branch: the checks and the build, without attesting or drafting anything.
+  # A rehearsal on any branch: the checks and an ad-hoc build, without the signing environment,
+  # and without attesting or drafting anything.
   workflow_dispatch:
 
 permissions:
@@ -20,15 +22,24 @@ jobs:
   checks:
     name: Checks
     uses: ./.github/workflows/ci.yml
+    # GitHub refuses to start the workflow unless this grants what every CI job asks for, even
+    # jobs that never run here: the nightly's and the README pictures', which run only for a push
+    # to main and for a pull request.
     permissions:
-      # Only what CI's nightly job asks for, which never runs for a tag.
       contents: write
+      actions: write
 
   release:
     name: Build and draft the release
     needs: checks
     runs-on: macos-15
-    timeout-minutes: 30
+    # Apple's notary service usually answers within minutes, twice: the app, then the disk image.
+    timeout-minutes: 60
+    # The Developer ID certificate and Apple's notarization key, which only main and v* tags may
+    # use. No deployment is recorded: nothing is deployed.
+    environment:
+      name: ${{ github.ref_type == 'tag' && 'signing' || '' }}
+      deployment: false
     permissions:
       # Drafts the release and uploads its files.
       contents: write
@@ -61,10 +72,26 @@ jobs:
         uses: ./.github/actions/electron
         with:
           packaging: "true"
+      - name: Apple's notarization key, as the file notarytool reads
+        if: github.ref_type == 'tag'
+        env:
+          KEY: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          if [ -n "$KEY" ]; then
+            printf '%s\n' "$KEY" > "$RUNNER_TEMP/notary-key.p8"
+            echo "APPLE_API_KEY=$RUNNER_TEMP/notary-key.p8" >> "$GITHUB_ENV"
+          fi
+      # A tag's build is signed, notarized and checked as Gatekeeper will check it, or the job
+      # fails. FOLIO_NOTARIZE refuses to build without every secret.
       - name: Package Folio for others
         run: bash .github/scripts/retry-downloads.sh vp run desktop:package
         env:
           FOLIO_DISTRIBUTE: "1"
+          FOLIO_NOTARIZE: ${{ github.ref_type == 'tag' && '1' || '' }}
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
       - name: Open and quit the packaged app
         run: .github/scripts/open-and-quit.sh
       - name: Checksum
@@ -88,8 +115,6 @@ jobs:
           generated=$(gh api -X POST "repos/$GITHUB_REPOSITORY/releases/generate-notes" "${range[@]}" --jq .body)
           cat > notes.md <<EOF
           **Install:** download \`$dmg\` (Apple silicon Macs), open it and drag Folio to Applications.
-
-          **First open:** Folio is not signed with an Apple Developer ID yet, so macOS says it could not verify it. Open **System Settings → Privacy & Security**, scroll down to the line about Folio, and choose **Open Anyway**.
 
           **Check the download:** \`gh attestation verify $dmg --repo $GITHUB_REPOSITORY\` confirms that this repository's release workflow built it from \`$GITHUB_REF_NAME\`, and \`shasum -a 256 -c $dmg.sha256\` that it arrived whole.
 

@@ -113,9 +113,10 @@ repository built. For the newest Folio between releases, the
 [nightly build](https://github.com/GuyAzene/folio/releases/tag/nightly) has
 **[Folio-arm64.dmg](https://github.com/GuyAzene/folio/releases/download/nightly/Folio-arm64.dmg)**.
 
-Folio is not signed with an Apple Developer ID, so the first time you open it macOS says it could
-not verify it. Open **System Settings → Privacy & Security**, scroll down to the line about Folio
-and choose **Open Anyway**. A newer download may ask again.
+Folio is signed with a Developer ID and notarized by Apple, so it opens like any app downloaded
+from the internet. Releases up to 0.2.1 aren't, and the first time you open one, macOS says it
+could not verify it. Open **System Settings → Privacy & Security**, scroll down to the line about
+Folio and choose **Open Anyway**.
 
 **On Windows** (64-bit Windows 10 or 11): Windows builds are nightly for now. Download
 **[Folio-x64-setup.exe](https://github.com/GuyAzene/folio/releases/download/nightly/Folio-x64-setup.exe)**
@@ -159,9 +160,9 @@ development build; quit a development build before opening the app.
 `vp run desktop:package` builds the app and a disk image for Apple silicon,
 `release/Folio-<version>-arm64.dmg`, without installing anything.
 
-The app is signed ad-hoc, so it runs on the Mac that built it. Another Mac may refuse to open it
-until builds are signed with a Developer ID and notarized; `scripts/package.ts` names the
-environment variables that turn both on.
+The app is signed ad-hoc, so it runs on the Mac that built it, and another Mac may refuse to open
+it. Releases and the nightly are signed with a Developer ID and notarized in CI;
+`scripts/package.ts` names the environment variables that do the same on your Mac.
 
 On Windows, `vp run desktop:package` builds `release/win-unpacked/Folio.exe` and its installer,
 `release/Folio-<version>-x64-setup.exe`; run the installer to put Folio in your programs. Quit

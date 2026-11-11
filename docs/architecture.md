@@ -627,7 +627,13 @@ warns before its first run.
   `Info.plist`, and ignore `ELECTRON_RUN_AS_NODE` and `NODE_OPTIONS`. The inspector flags stay on
   so the real-window checks can drive the packaged app (`FOLIO_E2E_APP=…/Folio.app`).
 - On a Mac it is signed ad-hoc with the hardened runtime. `CSC_NAME` or `CSC_LINK` signs it with a
-  Developer ID instead, and Apple's notarization credentials in the environment notarize it.
+  Developer ID instead, the disk image too. That build encrypts its cookies and loads only
+  libraries signed by its own team, which an ad-hoc signature can't do. With an App Store Connect
+  API key in the environment as well, Apple notarizes the app and the disk image, each gets its
+  ticket stapled, and the build checks both as Gatekeeper will on another Mac.
+- CI builds releases and the nightly that way, from secrets in the `signing` environment, which
+  only `main` and `v*` tags may use, so a pull request's build never sees them.
+  `FOLIO_NOTARIZE=1` makes a build fail rather than come out unsigned when a secret is missing.
 
 `vp run desktop:install` then puts the app in /Applications (`scripts/install.ts`). It refuses
 to replace an app with another bundle ID, and to run while a copy of Folio runs from anywhere
@@ -759,8 +765,8 @@ checks that every skill has its link in `.claude/skills/` and that the guide's l
 
 A quit signal (SIGTERM, as the installer sends) quits Folio as ⌘Q does: chats settle first.
 
-Without a Developer ID Folio cannot update itself, so it says when a newer release is out
-(`src/releases.ts`). The window asks the main process a moment after it opens and then every
+Folio can't update itself yet, so it says when a newer release is out (`src/releases.ts`). The
+window asks the main process a moment after it opens and then every
 hour; the main process asks GitHub's public API for the repository's latest release only while
 **Updates** is on in Settings → General and its last answer is a day old, or an hour after a
 check that failed. The switch and the answer are kept together in `release.json`, so the choice

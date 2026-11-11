@@ -4,18 +4,24 @@
 // the pinned devDependency's release, from the cache Electron's installer fills, checked against
 // Electron's published checksums.
 // On a Mac it is signed ad-hoc, to run on this Mac. With CSC_NAME (a Developer ID Application
-// identity in the keychain) or CSC_LINK (a .p12 certificate) set, it is signed with that identity
-// instead, and notarized when APPLE_API_KEY, APPLE_API_KEY_ID and APPLE_API_ISSUER (or APPLE_ID,
-// APPLE_APP_SPECIFIC_PASSWORD and APPLE_TEAM_ID) are set too. On Windows it is not signed unless
-// CSC_LINK names a code-signing certificate, so Windows warns before the first run.
-import { execFileSync, execSync } from "node:child_process";
+// identity in the keychain) or CSC_LINK (a .p12 certificate, opened with CSC_KEY_PASSWORD) set, it
+// is signed with that identity instead, the disk image too. With an App Store Connect API key as
+// well (APPLE_API_KEY, the path of its .p8 file, with APPLE_API_KEY_ID and APPLE_API_ISSUER; or
+// APPLE_KEYCHAIN_PROFILE, the name `xcrun notarytool store-credentials` kept it under), Apple
+// notarizes the app and the disk image, each gets its ticket stapled, and the build checks both
+// as Gatekeeper will on another Mac. FOLIO_NOTARIZE=1, which the release and the nightly set,
+// refuses to build without all of that. On Windows it is not signed unless CSC_LINK names a
+// code-signing certificate, so Windows warns before the first run.
+import { execFileSync, execSync, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { cp, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { createCanvas, loadImage } from "@napi-rs/canvas";
 import { Arch, build, Platform, type Configuration } from "electron-builder";
 import { importedPackages, notices, withDependencies } from "./notices.ts";
+import { signing, unsetEmpty } from "./signing.ts";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const SOURCES = [
@@ -30,11 +36,16 @@ const SOURCES = [
   "tsconfig.app.json",
   "package.json",
 ];
-const developerId = !!(process.env.CSC_NAME || process.env.CSC_LINK);
+const ENTITLEMENTS = resolve(ROOT, "resources/developer-id.entitlements.plist");
+// Throws before anything is built when FOLIO_NOTARIZE=1 lacks a secret: the build would
+// otherwise come out ad-hoc, which other Macs refuse, and be published.
+unsetEmpty(process.env);
+const { developerId, notaryAuth } = signing(process.env, process.platform);
+const notarize = notaryAuth !== undefined;
+const windows = process.platform === "win32";
 // FOLIO_DISTRIBUTE=1 builds the app handed to other people: the inspector flags are off, so
 // nothing can drive it from outside. The real-window checks need them, so they test the default.
 const distribute = process.env.FOLIO_DISTRIBUTE === "1";
-const windows = process.platform === "win32";
 
 /** The renderer and the main process, built from a copy of the current source. */
 async function stage(dir: string): Promise<void> {
@@ -136,6 +147,10 @@ function config(dir: string, icon: string, licenses: string): Configuration {
       enableEmbeddedAsarIntegrityValidation: true,
       onlyLoadAppFromAsar: true,
       grantFileProtocolExtraPrivileges: false,
+      // Cookies are encrypted with a key in the keychain, which macOS gives only to an app signed
+      // as the one that made it. An ad-hoc signature changes with every build, and macOS would
+      // ask the student's permission after each one, so only a Developer ID build encrypts.
+      enableCookieEncryption: developerId,
     },
     mac: {
       target: [{ target: "dmg", arch: ["arm64"] }],
@@ -144,10 +159,17 @@ function config(dir: string, icon: string, licenses: string): Configuration {
       // "-" signs ad-hoc; otherwise electron-builder signs with CSC_NAME or CSC_LINK.
       identity: developerId ? undefined : "-",
       hardenedRuntime: true,
-      // Notarization needs a Developer ID; it then reads Apple's credentials from the environment.
-      notarize: developerId ? undefined : false,
+      // A Developer ID build loads only libraries signed by its own team, which electron-builder
+      // signs every one in the app with. An ad-hoc signature has no team, so there
+      // electron-builder's default entitlements turn that check off.
+      entitlements: developerId ? ENTITLEMENTS : undefined,
+      entitlementsInherit: developerId ? ENTITLEMENTS : undefined,
+      // electron-builder notarizes the app and staples its ticket; the disk image is done after.
+      notarize,
     },
-    dmg: { title: "Folio" },
+    // No blockmap: stapling changes the disk image after electron-builder made it, so one would
+    // describe a different file. Nothing reads it, and updates on a Mac come from a zip.
+    dmg: { title: "Folio", sign: developerId, writeUpdateInfo: false },
     // An installer for the student alone: no administrator, into their own programs folder, with
     // a Start menu entry. Unsigned unless CSC_LINK names a certificate.
     win: { target: [{ target: "nsis", arch: ["x64"] }], icon },
@@ -157,6 +179,101 @@ function config(dir: string, icon: string, licenses: string): Configuration {
       artifactName: "Folio-${version}-x64-setup.${ext}",
     },
   };
+}
+
+/** Apple's notary tool, signed in with the App Store Connect API key, whatever it answers. */
+function notaryTool(args: string[]) {
+  return spawnSync("xcrun", ["notarytool", ...args, ...notaryAuth!], { encoding: "utf8" });
+}
+
+/**
+ * Apple's notary service checks the signed disk image, which holds the app it has already
+ * notarized, and its ticket is stapled to the image, so a Mac that opens it offline finds it.
+ * Apple usually answers within minutes; after 15 the build fails saying so, inside CI's limit.
+ */
+function notarizeDiskImage(dmg: string): void {
+  console.log(`\nNotarizing ${dmg}`);
+  const submitted = notaryTool([
+    "submit",
+    dmg,
+    "--wait",
+    "--timeout",
+    "15m",
+    "--output-format",
+    "json",
+  ]);
+  let answer: { id?: string; status?: string } = {};
+  try {
+    answer = JSON.parse(submitted.stdout) as typeof answer;
+  } catch {
+    // Not JSON: the tool failed before Apple answered, and says why on stderr.
+  }
+  if (submitted.status !== 0 || answer.status !== "Accepted") {
+    const log = answer.id ? notaryTool(["log", answer.id]).stdout : "";
+    throw new Error(
+      `Apple did not notarize the disk image (${answer.status ?? "no answer"}).\n` +
+        `${submitted.stdout}${submitted.stderr}${log}`,
+    );
+  }
+  execFileSync("xcrun", ["stapler", "staple", dmg], { stdio: "inherit" });
+}
+
+/**
+ * Checks the ticket stapled to `path` against Apple's copy, which the stapler downloads. A download
+ * that fails now and then (the stapler says "Error 68") is tried three times, ten seconds apart.
+ */
+async function validateTicket(path: string): Promise<void> {
+  for (let attempt = 1; ; attempt++) {
+    const result = spawnSync("xcrun", ["stapler", "validate", path], { encoding: "utf8" });
+    if (result.status === 0) return;
+    if (attempt === 3)
+      throw new Error(
+        `Apple's ticket on ${path} did not validate:\n${result.stdout}${result.stderr}`,
+      );
+    console.log(`The stapler could not validate ${path}; trying again in 10 seconds.`);
+    await sleep(10_000);
+  }
+}
+
+/**
+ * What another Mac checks before it opens a download, checked here first: the app sealed with a
+ * Developer ID, a secure timestamp and the hardened runtime, the disk image signed too, and, once
+ * notarized, both carrying Apple's ticket and accepted by Gatekeeper.
+ */
+async function checkSignatures(app: string, dmg: string): Promise<void> {
+  execFileSync("codesign", ["--verify", "--deep", "--strict", app]);
+  execFileSync("codesign", ["--verify", "--strict", dmg]);
+  const signed = (path: string) =>
+    spawnSync("codesign", ["--display", "--verbose=2", path], { encoding: "utf8" }).stderr;
+  const expected = [
+    [app, /^Authority=Developer ID Application: /m, "a Developer ID"],
+    [app, /^Timestamp=/m, "a secure timestamp"],
+    [app, /flags=0x\w*\(runtime\)/, "the hardened runtime"],
+    [dmg, /^Authority=Developer ID Application: /m, "a Developer ID"],
+  ] as const;
+  for (const [path, pattern, what] of expected)
+    if (!pattern.test(signed(path))) throw new Error(`${path} is not signed with ${what}.`);
+  if (!notarize) return;
+  for (const path of [app, dmg]) await validateTicket(path);
+  // spctl can only judge where Gatekeeper is on; the ticket and signature checks above still hold.
+  if (
+    !spawnSync("spctl", ["--status"], { encoding: "utf8" }).stdout.includes("assessments enabled")
+  ) {
+    console.log("Gatekeeper is off on this Mac, so it did not assess the app.");
+    return;
+  }
+  const assessments = [
+    [app, ["--type", "execute"]],
+    [dmg, ["--type", "open", "--context", "context:primary-signature"]],
+  ] as const;
+  for (const [path, type] of assessments) {
+    const verdict = spawnSync("spctl", ["--assess", ...type, "--verbose=2", path], {
+      encoding: "utf8",
+    });
+    if (verdict.status !== 0 || !verdict.stderr.includes("source=Notarized Developer ID"))
+      throw new Error(`Gatekeeper refuses ${path}:\n${verdict.stderr}`);
+  }
+  console.log("Gatekeeper accepts the app and the disk image as notarized.");
 }
 
 // The build replaces release/, so a Folio opened from there would lose its files while it runs.
@@ -198,6 +315,12 @@ try {
     resolve(beside, "LICENSES.chromium.html"),
   ])
     if (!existsSync(file)) throw new Error(`The packaged Folio has no ${file}.`);
+  if (developerId && !windows) {
+    const dmg = artifacts.find((path) => path.endsWith(".dmg"));
+    if (!dmg) throw new Error("electron-builder made no disk image.");
+    if (notarize) notarizeDiskImage(dmg);
+    await checkSignatures(app, dmg);
+  }
   console.log(`\nBuilt ${windows ? resolve(app, "Folio.exe") : app}`);
   for (const artifact of artifacts.filter((path) => /\.(dmg|exe)$/.test(path)))
     console.log(`  and ${artifact}`);
