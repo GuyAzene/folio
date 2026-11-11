@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readlinkSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
@@ -59,6 +59,18 @@ function running(app: string): number[] {
         ? [Number(match[1])]
         : [];
     });
+}
+
+/**
+ * Whether the Folio with `pid` has started on `home`. Electron's single-instance lock, which Folio
+ * takes first thing, is a link in the home's browser data that ends in the process ID.
+ */
+function holdsLock(home: string, pid: number): boolean {
+  try {
+    return readlinkSync(resolve(home, "electron/SingletonLock")).endsWith(`-${pid}`);
+  } catch {
+    return false;
+  }
 }
 
 async function until(check: () => boolean, what: string): Promise<void> {
@@ -137,6 +149,9 @@ void describe("installing the packaged app", { skip }, () => {
     started.push(reopened!);
     assert.notEqual(reopened, before, "the old Folio quit and a new one opened");
     assert.deepEqual(running(other), [bystander], "the other Folio kept running");
+    // Started, not only launched: on a Mac that checks the first launch of a new copy, quitting
+    // and deleting it mid-check makes Gatekeeper report it damaged.
+    await until(() => holdsLock(env.FOLIO_HOME!, reopened!), "the reopened Folio to start");
 
     // Quitting by signal finishes like ⌘Q: the process leaves.
     process.kill(reopened!, "SIGTERM");
