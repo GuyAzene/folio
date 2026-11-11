@@ -20,7 +20,7 @@ import { resolve } from "node:path";
 import { createCanvas, loadImage } from "@napi-rs/canvas";
 import { Arch, build, Platform, type Configuration } from "electron-builder";
 import { importedPackages, notices, withDependencies } from "./notices.ts";
-import { signing } from "./signing.ts";
+import { signing, unsetEmpty } from "./signing.ts";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const SOURCES = [
@@ -38,6 +38,7 @@ const SOURCES = [
 const ENTITLEMENTS = resolve(ROOT, "resources/developer-id.entitlements.plist");
 // Throws before anything is built when FOLIO_NOTARIZE=1 lacks a secret: the build would
 // otherwise come out ad-hoc, which other Macs refuse, and be published.
+unsetEmpty(process.env);
 const { developerId, notaryAuth } = signing(process.env, process.platform);
 const notarize = notaryAuth !== undefined;
 const windows = process.platform === "win32";

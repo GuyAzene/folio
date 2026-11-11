@@ -2,6 +2,25 @@
 // acts on it. It sits in a module of its own so the rule that keeps an unsigned build from being
 // published can be tested without building anything.
 
+const VARIABLES = [
+  "CSC_LINK",
+  "CSC_NAME",
+  "CSC_KEY_PASSWORD",
+  "APPLE_API_KEY",
+  "APPLE_API_KEY_ID",
+  "APPLE_API_ISSUER",
+  "APPLE_KEYCHAIN_PROFILE",
+];
+
+/**
+ * Removes the signing variables that are empty, as GitHub passes a secret that isn't set.
+ * electron-builder reads an empty CSC_LINK as a certificate at the current folder and fails; unset,
+ * the build signs ad-hoc, as on a Mac with no secrets.
+ */
+export function unsetEmpty(env: NodeJS.ProcessEnv): void {
+  for (const name of VARIABLES) if (env[name] === "") delete env[name];
+}
+
 export interface Signing {
   /** A Developer ID signs the Mac app and its disk image; without one the Mac build is ad-hoc. */
   developerId: boolean;

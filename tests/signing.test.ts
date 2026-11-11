@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { signing } from "../scripts/signing.ts";
+import { signing, unsetEmpty } from "../scripts/signing.ts";
 
 const certificate = { CSC_LINK: "base64 of a .p12" };
 const apiKey = {
@@ -72,6 +72,15 @@ describe("Signing a build", () => {
     expect(() => signing(unset, "darwin")).toThrow(
       `missing CSC_LINK or CSC_NAME and ${missingKey}.`,
     );
+  });
+
+  it("unsets the empty signing variables GitHub passes for secrets that aren't set", () => {
+    const env = { CSC_LINK: "", CSC_KEY_PASSWORD: "", APPLE_API_KEY_ID: "", PATH: "", HOME: "/x" };
+    unsetEmpty(env);
+    expect(env).toEqual({ PATH: "", HOME: "/x" });
+    const set = { ...certificate, ...apiKey };
+    unsetEmpty(set);
+    expect(set).toEqual({ ...certificate, ...apiKey });
   });
 
   it("with FOLIO_NOTARIZE=1, refuses a Windows build", () => {
