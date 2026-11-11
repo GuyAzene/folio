@@ -17,6 +17,7 @@ import { existsSync } from "node:fs";
 import { cp, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { createCanvas, loadImage } from "@napi-rs/canvas";
 import { Arch, build, Platform, type Configuration } from "electron-builder";
 import { importedPackages, notices, withDependencies } from "./notices.ts";
@@ -218,11 +219,28 @@ function notarizeDiskImage(dmg: string): void {
 }
 
 /**
+ * Checks the ticket stapled to `path` against Apple's copy, which the stapler downloads. A download
+ * that fails now and then (the stapler says "Error 68") is tried three times, ten seconds apart.
+ */
+async function validateTicket(path: string): Promise<void> {
+  for (let attempt = 1; ; attempt++) {
+    const result = spawnSync("xcrun", ["stapler", "validate", path], { encoding: "utf8" });
+    if (result.status === 0) return;
+    if (attempt === 3)
+      throw new Error(
+        `Apple's ticket on ${path} did not validate:\n${result.stdout}${result.stderr}`,
+      );
+    console.log(`The stapler could not validate ${path}; trying again in 10 seconds.`);
+    await sleep(10_000);
+  }
+}
+
+/**
  * What another Mac checks before it opens a download, checked here first: the app sealed with a
  * Developer ID, a secure timestamp and the hardened runtime, the disk image signed too, and, once
  * notarized, both carrying Apple's ticket and accepted by Gatekeeper.
  */
-function checkSignatures(app: string, dmg: string): void {
+async function checkSignatures(app: string, dmg: string): Promise<void> {
   execFileSync("codesign", ["--verify", "--deep", "--strict", app]);
   execFileSync("codesign", ["--verify", "--strict", dmg]);
   const signed = (path: string) =>
@@ -236,7 +254,7 @@ function checkSignatures(app: string, dmg: string): void {
   for (const [path, pattern, what] of expected)
     if (!pattern.test(signed(path))) throw new Error(`${path} is not signed with ${what}.`);
   if (!notarize) return;
-  for (const path of [app, dmg]) execFileSync("xcrun", ["stapler", "validate", path]);
+  for (const path of [app, dmg]) await validateTicket(path);
   // spctl can only judge where Gatekeeper is on; the ticket and signature checks above still hold.
   if (
     !spawnSync("spctl", ["--status"], { encoding: "utf8" }).stdout.includes("assessments enabled")
@@ -301,7 +319,7 @@ try {
     const dmg = artifacts.find((path) => path.endsWith(".dmg"));
     if (!dmg) throw new Error("electron-builder made no disk image.");
     if (notarize) notarizeDiskImage(dmg);
-    checkSignatures(app, dmg);
+    await checkSignatures(app, dmg);
   }
   console.log(`\nBuilt ${windows ? resolve(app, "Folio.exe") : app}`);
   for (const artifact of artifacts.filter((path) => /\.(dmg|exe)$/.test(path)))
