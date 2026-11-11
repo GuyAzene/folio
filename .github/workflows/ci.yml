@@ -332,7 +332,13 @@ jobs:
       github.event_name == 'push' && github.ref == 'refs/heads/main' &&
       needs.changes.outputs.app == 'true'
     runs-on: macos-15
-    timeout-minutes: 20
+    # Apple's notary service usually answers within minutes, twice: the app, then the disk image.
+    timeout-minutes: 45
+    # The Developer ID certificate and Apple's notarization key, which only main and v* tags may
+    # use. No deployment is recorded: nothing is deployed.
+    environment:
+      name: signing
+      deployment: false
     permissions:
       # Moves the nightly tag and replaces the release's disk image.
       contents: write
@@ -349,10 +355,25 @@ jobs:
         uses: ./.github/actions/electron
         with:
           packaging: "true"
+      - name: Apple's notarization key, as the file notarytool reads
+        env:
+          KEY: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          if [ -n "$KEY" ]; then
+            printf '%s\n' "$KEY" > "$RUNNER_TEMP/notary-key.p8"
+            echo "APPLE_API_KEY=$RUNNER_TEMP/notary-key.p8" >> "$GITHUB_ENV"
+          fi
+      # Signed, notarized and checked as Gatekeeper will check it, or the job fails. FOLIO_NOTARIZE
+      # refuses to build without every secret, so an unsigned nightly is never published.
       - name: Package Folio for others
         run: bash .github/scripts/retry-downloads.sh vp run desktop:package
         env:
           FOLIO_DISTRIBUTE: "1"
+          FOLIO_NOTARIZE: "1"
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
       - name: Open and quit the packaged app
         run: .github/scripts/open-and-quit.sh
       - name: Publish the nightly build
@@ -371,8 +392,6 @@ jobs:
           The newest Folio, built from [\`${GITHUB_SHA::7}\`](https://github.com/$GITHUB_REPOSITORY/commit/$GITHUB_SHA) on $(date -u '+%Y-%m-%d %H:%M UTC'). It is rebuilt after every change to \`main\`, so this page always has the latest.
 
           **Install on a Mac:** download \`Folio-arm64.dmg\` (Apple silicon Macs), open it and drag Folio to Applications.
-
-          **First open on a Mac:** Folio is not signed with an Apple Developer ID, so macOS says it could not verify it. Open **System Settings → Privacy & Security**, scroll down to the line about Folio, and choose **Open Anyway**. A newer download may ask again.
 
           **Install on Windows:** download \`Folio-x64-setup.exe\` (64-bit Windows 10 or 11) and run it. It installs Folio for you alone, with no administrator, and opens it. It is built from the same commit and put up a few minutes after the disk image.
 

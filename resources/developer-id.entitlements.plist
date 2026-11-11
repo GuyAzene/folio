@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  What a Folio signed with a Developer ID may do under the hardened runtime: electron-builder's
+  defaults without disable-library-validation, so the app loads only libraries its own team signed.
+  scripts/package.ts uses it for the app and its helpers; an ad-hoc build keeps the defaults.
+-->
+<plist version="1.0">
+  <dict>
+    <!-- V8 compiles JavaScript as it runs. -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+  </dict>
+</plist>

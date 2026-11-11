@@ -6,10 +6,10 @@ import { capped } from "./live-catalog.ts";
 import { urlProblem } from "./mcp/config.ts";
 
 /**
- * Whether a newer Folio is out. Folio is not signed with an Apple Developer ID, so it cannot
- * update itself; instead it asks GitHub for the repository's latest release, at most once a day
- * and only while the student leaves the check on, and the window links to that release's page,
- * which opens in the browser. Nothing is downloaded or installed.
+ * Whether a newer Folio is out. Folio can't update itself yet; instead it asks GitHub for the
+ * repository's latest release, at most once a day and only while the student leaves the check on,
+ * and the window links to that release's page, which opens in the browser. Nothing is downloaded
+ * or installed.
  *
  * The request goes to GitHub's public API with no account and carries nothing about the student:
  * only the name Folio, as GitHub asks every client to send. The answer is kept in
