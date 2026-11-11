@@ -20,6 +20,7 @@ import { resolve } from "node:path";
 import { createCanvas, loadImage } from "@napi-rs/canvas";
 import { Arch, build, Platform, type Configuration } from "electron-builder";
 import { importedPackages, notices, withDependencies } from "./notices.ts";
+import { signing } from "./signing.ts";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const SOURCES = [
@@ -35,34 +36,14 @@ const SOURCES = [
   "package.json",
 ];
 const ENTITLEMENTS = resolve(ROOT, "resources/developer-id.entitlements.plist");
-const developerId = !!(process.env.CSC_NAME || process.env.CSC_LINK);
-// How notarytool signs in to Apple: the API key's file and IDs, or else a keychain profile, in
-// the order electron-builder tries them for the app.
-const { APPLE_API_KEY: key, APPLE_API_KEY_ID: keyId, APPLE_API_ISSUER: issuer } = process.env;
-const profile = process.env.APPLE_KEYCHAIN_PROFILE;
-const notaryAuth =
-  key && keyId && issuer
-    ? ["--key", key, "--key-id", keyId, "--issuer", issuer]
-    : profile
-      ? ["--keychain-profile", profile]
-      : undefined;
+// Throws before anything is built when FOLIO_NOTARIZE=1 lacks a secret: the build would
+// otherwise come out ad-hoc, which other Macs refuse, and be published.
+const { developerId, notaryAuth } = signing(process.env, process.platform);
+const notarize = notaryAuth !== undefined;
 const windows = process.platform === "win32";
-const notarize = !windows && developerId && notaryAuth !== undefined;
 // FOLIO_DISTRIBUTE=1 builds the app handed to other people: the inspector flags are off, so
 // nothing can drive it from outside. The real-window checks need them, so they test the default.
 const distribute = process.env.FOLIO_DISTRIBUTE === "1";
-// A missing secret would otherwise build an ad-hoc app, which other Macs refuse, and publish it.
-if (process.env.FOLIO_NOTARIZE === "1" && !notarize) {
-  const missing = [
-    ...(developerId ? [] : ["CSC_LINK or CSC_NAME"]),
-    ...(notaryAuth ? [] : ["APPLE_API_KEY, APPLE_API_KEY_ID and APPLE_API_ISSUER"]),
-  ];
-  throw new Error(
-    windows
-      ? "FOLIO_NOTARIZE=1 is for a Mac build."
-      : `FOLIO_NOTARIZE=1 needs a Developer ID and Apple's notarization key; missing ${missing.join(" and ")}.`,
-  );
-}
 
 /** The renderer and the main process, built from a copy of the current source. */
 async function stage(dir: string): Promise<void> {
@@ -184,7 +165,9 @@ function config(dir: string, icon: string, licenses: string): Configuration {
       // electron-builder notarizes the app and staples its ticket; the disk image is done after.
       notarize,
     },
-    dmg: { title: "Folio", sign: developerId },
+    // No blockmap: stapling changes the disk image after electron-builder made it, so one would
+    // describe a different file. Nothing reads it, and updates on a Mac come from a zip.
+    dmg: { title: "Folio", sign: developerId, writeUpdateInfo: false },
     // An installer for the student alone: no administrator, into their own programs folder, with
     // a Start menu entry. Unsigned unless CSC_LINK names a certificate.
     win: { target: [{ target: "nsis", arch: ["x64"] }], icon },
@@ -204,6 +187,7 @@ function notaryTool(args: string[]) {
 /**
  * Apple's notary service checks the signed disk image, which holds the app it has already
  * notarized, and its ticket is stapled to the image, so a Mac that opens it offline finds it.
+ * Apple usually answers within minutes; after 15 the build fails saying so, inside CI's limit.
  */
 function notarizeDiskImage(dmg: string): void {
   console.log(`\nNotarizing ${dmg}`);
@@ -212,7 +196,7 @@ function notarizeDiskImage(dmg: string): void {
     dmg,
     "--wait",
     "--timeout",
-    "30m",
+    "15m",
     "--output-format",
     "json",
   ]);

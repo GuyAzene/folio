@@ -22,9 +22,12 @@ jobs:
   checks:
     name: Checks
     uses: ./.github/workflows/ci.yml
+    # GitHub refuses to start the workflow unless this grants what every CI job asks for, even
+    # jobs that never run here: the nightly's and the README pictures', which run only for a push
+    # to main and for a pull request.
     permissions:
-      # Only what CI's nightly job asks for, which never runs for a tag.
       contents: write
+      actions: write
 
   release:
     name: Build and draft the release
