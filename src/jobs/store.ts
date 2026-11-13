@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { chmod } from "node:fs/promises";
 import { resolve } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 import type {
   AgentNodeView,
   AgentRole,
@@ -11,7 +11,7 @@ import type {
   PageCoverageView,
   StepOutcome,
 } from "../desktop/api.ts";
-import { privateDirectory } from "../files.ts";
+import { openDatabase, privateDirectory } from "../files.ts";
 import type { RejectedReply } from "../ingest/models.ts";
 
 export class JobError extends Error {}
@@ -131,7 +131,7 @@ export class JobStore {
   static async open(home: string): Promise<JobStore> {
     await privateDirectory(home, "data", JobError);
     const file = resolve(home, "jobs.sqlite");
-    const db = new DatabaseSync(file);
+    const db = openDatabase(file);
     db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 2000;");
     db.exec(SCHEMA);
     // Stores from before step outcomes were recorded gain the column; old rows stay null.

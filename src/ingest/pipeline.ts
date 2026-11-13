@@ -253,6 +253,8 @@ export class IngestRunner {
   readonly #runs = new Map<string, Promise<void>>();
   readonly #limit: <T>(line: string, task: () => Promise<T>, priority?: number) => Promise<T>;
   #filling: Promise<void> = Promise.resolve();
+  /** Set by close(), after which nothing more starts. */
+  #closed = false;
 
   /**
    * Which model plays each role. A ChatGPT model is named by its bare ID, as studies always
@@ -430,6 +432,24 @@ export class IngestRunner {
     return this.#emit(id);
   }
 
+  /**
+   * Stops every running job and resolves once each has really stopped and nothing more will
+   * start, so the stores the runner writes to can close. The jobs stay as they were, like jobs
+   * interrupted by a quit, for recover() to pick up.
+   */
+  async close(): Promise<void> {
+    this.#closed = true;
+    // A pass over the queue already under way may still read the store, and each job that stops
+    // adds a pass of its own: wait for those too.
+    for (;;) {
+      for (const controller of this.#running.values()) controller.abort();
+      await this.#filling;
+      const runs = [...this.#runs.values()];
+      if (!runs.length) return;
+      await Promise.allSettled(runs);
+    }
+  }
+
   /** True while a document has a job that is queued, running or waiting on the plan. */
   #active(documentId: string): boolean {
     return this.#options.store
@@ -444,6 +464,7 @@ export class IngestRunner {
   /** Starts queued jobs, in order, while there is room and ChatGPT is connected. */
   #fill(): void {
     this.#filling = this.#filling.then(async () => {
+      if (this.#closed) return;
       const { store } = this.#options;
       const queued = store
         .jobs()
@@ -454,6 +475,7 @@ export class IngestRunner {
         );
       if (!queued.length) return;
       const connected = (await this.#options.connected?.().catch(() => false)) ?? true;
+      if (this.#closed) return;
       for (const job of queued) {
         const waitingFor = connected ? null : "connection";
         if (job.waitingFor !== waitingFor) {

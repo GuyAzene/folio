@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { chmod, lstat, mkdir, open, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, extname, resolve } from "node:path";
 import lockfile from "proper-lockfile";
-import { privateDirectory, writeAtomic } from "../files.ts";
+import { flush, privateDirectory, writeAtomic } from "../files.ts";
 import {
   patchAssignment,
   validAssignment,
@@ -546,7 +546,7 @@ export class LibraryStore {
       const handle = await open(original, "wx", 0o600);
       try {
         await handle.writeFile(data);
-        await handle.sync();
+        await flush(handle);
       } finally {
         await handle.close();
       }

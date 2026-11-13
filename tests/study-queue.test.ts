@@ -67,7 +67,7 @@ async function setup(options: { connected?: boolean } = {}) {
   settles.push(async () => {
     gate = Promise.resolve();
     open();
-    await runner.withdraw(() => true);
+    await runner.close();
   });
   const started = () =>
     lectures.filter((lecture) => prepared.includes(lecture.sha256)).map((lecture) => lecture.id);
@@ -149,6 +149,24 @@ describe("studying on its own", () => {
     expect(removed).toEqual([job.id]);
   });
 
+  it("closes only once its studies have stopped, then starts and reads nothing more", async () => {
+    const { runner, course, lectures, started, store, release } = await setup();
+    // Two studies at a time: the third waits in the queue.
+    for (const lecture of lectures) await runner.queue(course.id, [lecture.id], "upload");
+    await vi.waitFor(() => expect(started()).toHaveLength(2));
+    let closed = false;
+    const closing = runner.close().then(() => (closed = true));
+    await new Promise((settle) => setTimeout(settle, 20));
+    expect(closed).toBe(false);
+    release();
+    await closing;
+    // Its store can close now: nothing the runner started comes back to it.
+    const reads = vi.spyOn(store, "jobs");
+    await new Promise((settle) => setTimeout(settle, 50));
+    expect(reads).not.toHaveBeenCalled();
+    expect(started()).toHaveLength(2);
+  });
+
   it("picks up interrupted studies after a restart, and leaves paused ones paused", async () => {
     const { runner, course, lectures, store, started } = await setup({ connected: false });
     await runner.queue(course.id, [lectures[0]!.id], "upload");
@@ -168,6 +186,7 @@ describe("studying on its own", () => {
       publish: async () => 1,
       connected: async () => false,
     });
+    settles.push(() => restarted.close());
     restarted.recover();
     await vi.waitFor(() => expect(store.job(interrupted.id).status).toBe("queued"));
     expect(store.job(paused.id).status).toBe("stopped");

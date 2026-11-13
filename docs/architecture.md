@@ -602,7 +602,9 @@ Everything lives in `~/.folio/` (or `FOLIO_HOME`), with directories `0700` and f
 | `workspace.json` | Open tabs and their panes |
 
 Writes are atomic: a complete file is written and flushed beside the old one, renamed over it,
-and the folder flushed too, so the rename survives a crash. Windows can't flush a folder, and
+and the folder flushed too, so the rename survives a crash. Every flush goes through
+`src/files.ts`: `flush` for a file, and `openDatabase` for a SQLite database that waits for the
+disk on every commit. Windows can't flush a folder, and
 journals the rename itself, so there the folder is left alone. Windows also refuses the rename
 while anything has either file open, such as an antivirus scan or another reader, so there Folio
 tries again for about three seconds, checking the file again before each try. Revision and hash checks refuse
@@ -654,7 +656,11 @@ real-window checks, then the same checks on the packaged app and the install che
 (`tests/electron/install.e2e.ts`). On Windows it runs the unit tests and the real-window checks
 on a fresh build, and packages Folio to run the same packaging checks as on macOS on
 `Folio.exe`, then opens it and asks it to close. Both are part of the CI check, so nothing merges
-before Windows passes too. Tests that write many small files run several
+before Windows passes too. The unit tests don't wait for the disk after each write
+(`FOLIO_FLUSH=off`, set in `tests/setup.ts`), except the ones that check the flushing itself. On
+GitHub's Windows runners the temporary folder is on a disk where one flush takes about 4 ms, and
+the thousands of flushes, most of them SQLite commits, took most of the tests' time and ran some
+past their limits. Tests that write many small files still run several
 times slower there, so a test gets 20 seconds on Windows, and checks of a file's permissions
 look only at whether it may be written (`tests/fixtures/modes.ts`), which is all Windows keeps.
 A test's wait for background work gets three seconds, five on Windows (`tests/setup.ts`), since
