@@ -1780,13 +1780,15 @@ let previewUpdates = true;
 let previewUpdate: UpdateView = { step: "available" };
 let previewDownload: ReturnType<typeof setInterval> | undefined;
 function previewRelease(): ReleaseView {
+  // A downloaded update shows even with the check off, as in Folio, since quitting installs it.
+  const shown = previewUpdates || previewUpdate.step === "ready";
   return {
     version: "0.1.0",
     on: previewUpdates,
-    newer: previewUpdates
+    newer: shown
       ? { version: "0.2.0", url: "https://github.com/GuyAzene/folio/releases/latest" }
       : null,
-    update: previewUpdates ? previewUpdate : null,
+    update: shown ? previewUpdate : null,
   };
 }
 function setPreviewUpdate(update: UpdateView): void {

@@ -190,47 +190,50 @@
                     {@const newer = folio.release.newer}
                     {@const update = folio.release.update}
                     {@const action = "font-medium text-text hover:underline"}
-                    <div class="mt-1 flex flex-wrap items-center gap-x-2 text-[12px]">
+                    <div class="mt-1 flex items-start gap-2 text-[12px]">
                       <span
-                        class="size-1.5 shrink-0 rounded-full bg-highlight ring-2 ring-highlight/30"
+                        class="mt-[6px] size-1.5 shrink-0 rounded-full bg-highlight ring-2 ring-highlight/30"
                       ></span>
-                      {#if update?.step === "downloading"}
-                        <span class="text-text-2" role="status"
-                          >{update.percent < 100
-                            ? `Downloading Folio ${newer.version}, ${update.percent}%`
-                            : `Getting Folio ${newer.version} ready`}</span
+                      <!-- A line that wraps starts under the text, not under the dot. -->
+                      <div class="flex min-w-0 flex-wrap items-center gap-x-2">
+                        {#if update?.step === "downloading"}
+                          <span class="text-text-2" role="status"
+                            >{update.percent < 100
+                              ? `Downloading Folio ${newer.version}, ${update.percent}%`
+                              : `Getting Folio ${newer.version} ready`}</span
+                          >
+                        {:else if update?.step === "ready"}
+                          <span class="text-text-2"
+                            >Folio {newer.version} is downloaded, and installs when Folio quits.</span
+                          >
+                          <button
+                            class={action}
+                            onclick={() => folio.restartToUpdate(newer.version)}
+                            >Restart to update</button
+                          >
+                        {:else if update}
+                          <span class="text-text-2"
+                            >{update.step === "failed"
+                              ? `Couldn't update to Folio ${newer.version}.`
+                              : `Folio ${newer.version} is out.`}</span
+                          >
+                          <button class={action} onclick={() => void folio.updateFolio(newer.version)}
+                            >{update.step === "failed" ? "Try again" : "Update"}</button
+                          >
+                        {:else}
+                          <span class="text-text-2">Folio {newer.version} is out.</span>
+                        {/if}
+                        <a
+                          href={newer.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          class="flex items-center gap-0.5 {update
+                            ? 'text-text-3 hover:text-text'
+                            : action} no-underline hover:underline"
+                          >See what's new
+                          <ArrowUpRight size={12} strokeWidth={2} class="text-text-3" /></a
                         >
-                      {:else if update?.step === "ready"}
-                        <span class="text-text-2"
-                          >Folio {newer.version} is downloaded, and installs when Folio quits.</span
-                        >
-                        <button
-                          class={action}
-                          onclick={() => folio.restartToUpdate(newer.version)}
-                          >Restart to update</button
-                        >
-                      {:else if update}
-                        <span class="text-text-2"
-                          >{update.step === "failed"
-                            ? `Couldn't update to Folio ${newer.version}.`
-                            : `Folio ${newer.version} is out.`}</span
-                        >
-                        <button class={action} onclick={() => void folio.updateFolio(newer.version)}
-                          >{update.step === "failed" ? "Try again" : "Update"}</button
-                        >
-                      {:else}
-                        <span class="text-text-2">Folio {newer.version} is out.</span>
-                      {/if}
-                      <a
-                        href={newer.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        class="flex items-center gap-0.5 {update
-                          ? 'text-text-3 hover:text-text'
-                          : action} no-underline hover:underline"
-                        >See what's new
-                        <ArrowUpRight size={12} strokeWidth={2} class="text-text-3" /></a
-                      >
+                      </div>
                     </div>
                   {/if}
                 </div>
