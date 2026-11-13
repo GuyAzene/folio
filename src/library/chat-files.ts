@@ -1,5 +1,6 @@
 import { chmod, lstat, mkdir, open, readFile } from "node:fs/promises";
 import { basename, extname, resolve } from "node:path";
+import { flush } from "../files.ts";
 import { pdfPageCount } from "./pdf.ts";
 import { LibraryError, LibraryIntegrityError, sha256 } from "./store.ts";
 
@@ -79,7 +80,7 @@ export class ChatFiles {
     if (!handle) return file;
     try {
       await handle.writeFile(data);
-      await handle.sync();
+      await flush(handle);
     } finally {
       await handle.close();
     }

@@ -44,6 +44,7 @@ async function makeHome(): Promise<string> {
 
 afterEach(async () => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
   await Promise.all(homes.splice(0).map((home) => rm(home, { recursive: true, force: true })));
 });
 
@@ -306,6 +307,8 @@ describe("Folio's API keys", () => {
 
   it("survive a crash right after a save, because their folder is flushed too", async () => {
     const home = await makeHome();
+    // The tests skip flushing (tests/setup.ts); this one checks it.
+    vi.stubEnv("FOLIO_FLUSH", "on");
     flushed.length = 0;
     // Creating the store saves the installation record in connection.json first.
     const { store } = await createFolioModels({ home });

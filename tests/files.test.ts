@@ -2,8 +2,8 @@ import { randomUUID } from "node:crypto";
 import { mkdtemp, open, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
-import { describe, expect, it } from "vitest";
-import { replaceFile, syncDirectory, writeAtomic } from "../src/files.ts";
+import { describe, expect, it, vi } from "vitest";
+import { openDatabase, replaceFile, syncDirectory, writeAtomic } from "../src/files.ts";
 
 const refused = () =>
   Object.assign(new Error("EPERM: operation not permitted, rename"), { code: "EPERM" });
@@ -106,6 +106,31 @@ describe("flushing a folder after a rename", () => {
     try {
       await expect(syncDirectory(folder)).resolves.toBeUndefined();
     } finally {
+      await rm(folder, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("waiting for the disk", () => {
+  it("waits on every commit to Folio's databases, unless the tests turned that off", async () => {
+    const folder = await mkdtemp(resolve(tmpdir(), "folio-flush-"));
+    const synchronous = (file: string) => {
+      const db = openDatabase(resolve(folder, file));
+      try {
+        return (db.prepare("PRAGMA synchronous").get() as { synchronous: number }).synchronous;
+      } finally {
+        db.close();
+      }
+    };
+    try {
+      // Folio itself: FULL, a flush on every commit.
+      vi.stubEnv("FOLIO_FLUSH", undefined);
+      expect(synchronous("folio.sqlite")).toBe(2);
+      // The unit tests (tests/setup.ts): OFF.
+      vi.stubEnv("FOLIO_FLUSH", "off");
+      expect(synchronous("tests.sqlite")).toBe(0);
+    } finally {
+      vi.unstubAllEnvs();
       await rm(folder, { recursive: true, force: true });
     }
   });

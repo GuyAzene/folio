@@ -32,8 +32,11 @@ import { forWork } from "./windows.ts";
 
 const homes: string[] = [];
 const stores: JobStore[] = [];
+const runners: IngestRunner[] = [];
 
 afterEach(async () => {
+  // A test that failed may leave its runner working: it stops before its store closes.
+  for (const runner of runners.splice(0)) await runner.close();
   stores.splice(0).forEach((store) => store.close());
   for (const home of homes.splice(0)) await rm(home, { recursive: true, force: true });
 });
@@ -431,6 +434,7 @@ async function setup(
     removed: (id) => removed.push(id),
     ...extra,
   });
+  runners.push(runner);
   const finished = (id: string) =>
     vi.waitFor(
       () => {
@@ -1056,6 +1060,7 @@ describe("ingestion pipeline", () => {
       emit: () => {},
       publish: async (bundle) => (published.push(bundle), published.length),
     });
+    runners.push(runner);
     const job = await runner.start(course.id, [lecture.id, broken.id]);
     await vi.waitFor(() => expect(["failed", "done"]).toContain(store.job(job.id).status), {
       timeout: forWork(5_000),

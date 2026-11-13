@@ -1,9 +1,36 @@
 import { randomUUID } from "node:crypto";
-import { chmod, lstat, mkdir, open, realpath, rename, rm } from "node:fs/promises";
+import { chmod, lstat, mkdir, open, realpath, rename, rm, type FileHandle } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+
+/**
+ * Whether Folio waits for the disk to keep what it writes before it goes on, so that a crash or
+ * a power cut right after a save loses nothing. It always does unless FOLIO_FLUSH is "off". The
+ * unit tests set that (tests/setup.ts), except where they check the flushing itself. They check
+ * what Folio writes, not what a disk keeps through a power cut, and on GitHub's runners waiting
+ * for the disk took most of their time.
+ */
+function flushing(): boolean {
+  return process.env.FOLIO_FLUSH !== "off";
+}
+
+/** Waits until the disk has kept what was written to an open file. */
+export async function flush(handle: FileHandle): Promise<void> {
+  if (flushing()) await handle.sync();
+}
+
+/**
+ * Opens a SQLite database for writing. SQLite waits for the disk on every commit, unless
+ * flushing is off.
+ */
+export function openDatabase(file: string): DatabaseSync {
+  const db = new DatabaseSync(file);
+  if (!flushing()) db.exec("PRAGMA synchronous = OFF");
+  return db;
+}
 
 type ErrorClass = new (message: string) => Error;
 
@@ -42,7 +69,7 @@ export async function writeAtomic(
     const handle = await open(temporary, "wx", options.mode ?? 0o600);
     try {
       await handle.writeFile(contents);
-      await handle.sync();
+      await flush(handle);
     } finally {
       await handle.close();
     }
@@ -102,7 +129,7 @@ export async function syncDirectory(
   if (platform === "win32") return;
   const handle = await open(path, "r");
   try {
-    await handle.sync();
+    await flush(handle);
   } finally {
     await handle.close();
   }

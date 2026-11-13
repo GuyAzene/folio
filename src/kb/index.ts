@@ -1,4 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
+import { openDatabase } from "../files.ts";
 import { linkedPrerequisites, type Knowledge, type KnowledgeBlock } from "./knowledge.ts";
 import { matchQuery, normalizeText, NORMALIZE_VERSION, strippedForms, words } from "./normalize.ts";
 
@@ -53,7 +54,7 @@ export interface BlockText {
 }
 
 export function buildIndex(file: string, knowledge: Knowledge, generation: number): void {
-  const db = new DatabaseSync(file);
+  const db = openDatabase(file);
   try {
     db.exec(SCHEMA);
     const meta = db.prepare("INSERT INTO meta (key, value) VALUES (?, ?)");

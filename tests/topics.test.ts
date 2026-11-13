@@ -28,10 +28,11 @@ import { forWork } from "./windows.ts";
 // Synthetic sessions only: a lecture and a recitation that both teach breadth-first search.
 
 const homes: string[] = [];
-const closers: (() => void)[] = [];
+/** Closed newest first, so a runner stops before the stores it writes to close. */
+const closers: (() => unknown)[] = [];
 
 afterEach(async () => {
-  closers.splice(0).forEach((close) => close());
+  for (const close of closers.splice(0).reverse()) await close();
   for (const home of homes.splice(0)) await rm(home, { recursive: true, force: true });
 });
 
@@ -274,6 +275,7 @@ describe("regrouping existing notes", () => {
       knowledge: (courseId) => store.knowledge(courseId),
       regroup: (courseId) => store.regroup(courseId),
     });
+    closers.push(() => runner.close());
     const job = await runner.regroup(course.id);
     await vi.waitFor(() => expect(jobs.job(job.id).status).toBe("done"), {
       timeout: forWork(5_000),

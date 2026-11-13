@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, open, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 import type { DraftBundle } from "../ingest/pipeline.ts";
 import { coursePrefix } from "../ingest/pipeline.ts";
-import { privateDirectory, syncDirectory } from "../files.ts";
+import { flush, openDatabase, privateDirectory, syncDirectory } from "../files.ts";
 import { checkId, LibraryError, type LibraryStore } from "../library/store.ts";
 import { buildIndex, KnowledgeIndex } from "./index.ts";
 import {
@@ -54,7 +54,7 @@ export class KnowledgeStore {
     library: LibraryStore,
     options: { topics?: TopicModel } = {},
   ): Promise<KnowledgeStore> {
-    const db = new DatabaseSync(resolve(library.root, "kb.sqlite"));
+    const db = openDatabase(resolve(library.root, "kb.sqlite"));
     db.exec(`PRAGMA journal_mode = WAL;
       CREATE TABLE IF NOT EXISTS generations (
         course_id TEXT NOT NULL, generation INTEGER NOT NULL, status TEXT NOT NULL,
@@ -402,7 +402,7 @@ async function syncTree(path: string): Promise<void> {
       // Windows flushes only a file opened for writing.
       const handle = await open(child, process.platform === "win32" ? "r+" : "r");
       try {
-        await handle.sync();
+        await flush(handle);
       } finally {
         await handle.close();
       }
