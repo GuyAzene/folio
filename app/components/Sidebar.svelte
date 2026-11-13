@@ -5,6 +5,7 @@
     Highlighter,
     House,
     ListChecks,
+    LoaderCircle,
     MessagesSquare,
     NotebookPen,
     Plug,
@@ -103,6 +104,11 @@
     folio.navigate(location, { newTab: event.metaKey || event.ctrlKey, fill: true });
   }
 </script>
+
+{#snippet dot()}
+  <span class="mx-[4.5px] size-1.5 shrink-0 rounded-full bg-highlight ring-2 ring-highlight/30"
+  ></span>
+{/snippet}
 
 <aside class="flex h-full w-[260px] flex-col select-none">
   <!-- The sidebar button itself is pinned by the window controls (App), so it never moves. -->
@@ -332,29 +338,74 @@
     {/if}
     {#if folio.announcedRelease}
       {@const release = folio.announcedRelease}
-      <!-- Links to the release's page, which opens in the browser; Folio never downloads it. -->
+      {@const update = folio.release?.update ?? null}
+      {@const line =
+        "flex h-full min-w-0 flex-1 items-center gap-2.5 rounded-md px-2 text-left font-medium text-text no-underline"}
+      {@const downloading = update?.step === "downloading"}
+      <!-- Where Folio can update itself, the line downloads the release when clicked, then
+      restarts into it; elsewhere it links to the release's page, which opens in the browser. -->
       <div
         class="group relative flex h-8 items-center rounded-md transition-colors hover:bg-hover"
       >
-        <a
-          href={release.url}
-          target="_blank"
-          rel="noopener noreferrer"
-          title="See what's new, in your browser"
-          class="flex h-full min-w-0 flex-1 items-center gap-2.5 rounded-md px-2 pr-8 font-medium text-text no-underline"
-        >
-          <span
-            class="mx-[4.5px] size-1.5 shrink-0 rounded-full bg-highlight ring-2 ring-highlight/30"
-          ></span>
-          <span class="min-w-0 flex-1 truncate">Folio {release.version} is out</span>
-        </a>
-        <IconButton
-          label="Hide until the next release"
-          onclick={() => folio.dismissRelease(release.version)}
-          class="absolute right-1 size-6 opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
-        >
-          <X size={13} strokeWidth={2} />
-        </IconButton>
+        {#if !update}
+          <a
+            href={release.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="See what's new, in your browser"
+            class="{line} pr-8"
+          >
+            {@render dot()}
+            <span class="min-w-0 flex-1 truncate">Folio {release.version} is out</span>
+          </a>
+        {:else if update.step === "downloading"}
+          <div class="{line} cursor-default" role="status">
+            <span class="flex w-[15px] shrink-0 justify-center">
+              <LoaderCircle size={12} strokeWidth={2.5} class="animate-spin text-text-3" />
+            </span>
+            {#if update.percent < 100}
+              <span class="min-w-0 flex-1 truncate">Downloading Folio {release.version}</span>
+              <span class="shrink-0 text-[12px] text-text-3 tabular-nums">{update.percent}%</span>
+            {:else}
+              <span class="min-w-0 flex-1 truncate">Getting Folio {release.version} ready</span>
+            {/if}
+          </div>
+        {:else if update.step === "ready"}
+          <button
+            class="{line} pr-8"
+            title="Quitting Folio installs it too"
+            onclick={() => folio.restartToUpdate(release.version)}
+          >
+            {@render dot()}
+            <span class="min-w-0 flex-1 truncate">Restart to update to {release.version}</span>
+          </button>
+        {:else}
+          {@const failed = update.step === "failed"}
+          <button
+            class="{line} pr-8"
+            title={failed
+              ? "The update didn't finish downloading or installing"
+              : `Download Folio ${release.version}, then restart into it`}
+            onclick={() => void folio.updateFolio(release.version)}
+          >
+            {@render dot()}
+            <span class="min-w-0 flex-1 truncate"
+              >{failed ? `Couldn't update to ${release.version}` : `Folio ${release.version} is out`}</span
+            >
+            <span class="shrink-0 text-[12px] text-text-3 group-hover:text-text-2"
+              >{failed ? "Try again" : "Update"}</span
+            >
+          </button>
+        {/if}
+        {#if !downloading}
+          <IconButton
+            label="Hide until the next release"
+            onclick={() => folio.dismissRelease(release.version)}
+            class="absolute right-1 size-6 opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+          >
+            <X size={13} strokeWidth={2} />
+          </IconButton>
+        {/if}
       </div>
     {/if}
     <button

@@ -8,6 +8,8 @@ import {
   LATEST_RELEASE,
   parseVersion,
   ReleaseCheck,
+  RELEASE_DOWNLOADS,
+  releaseDownloads,
   releaseSource,
   RETRY_MS,
 } from "../src/releases.ts";
@@ -160,6 +162,22 @@ describe("a newer release", () => {
       version: "0.2.0+build.7",
       url: "https://github.com/GuyAzene/folio/releases/tag/v0.2.0%2Bbuild.7",
     });
+    // The tag itself, which names the folder Folio downloads an update from.
+    expect(await check.newer()).toEqual({ version: "0.2.0+build.7", tag: "v0.2.0+build.7" });
+  });
+
+  it("names no release to update to while the check is off or nothing is newer", async () => {
+    const home = await makeHome();
+    const fetch = github(() => release("v0.2.0")).fetch;
+    const check = new ReleaseCheck({ home, version: "0.1.0", fetch });
+    expect(await check.newer()).toBeNull();
+    await check.check();
+    expect(await check.newer()).toEqual({ version: "0.2.0", tag: "v0.2.0" });
+    await check.setOn(false);
+    expect(await check.newer()).toBeNull();
+    const current = new ReleaseCheck({ home: await makeHome(), version: "0.2.0", fetch });
+    await current.check();
+    expect(await current.newer()).toBeNull();
   });
 
   it("is kept in Folio's home, readable only by the student, and shown after a restart without asking", async () => {
@@ -459,6 +477,20 @@ describe("a newer release", () => {
     expect(releaseSource("http://127.0.0.1:8123/latest")).toBe("http://127.0.0.1:8123/latest");
     expect(releaseSource("https://releases.example/latest")).toBe(
       "https://releases.example/latest",
+    );
+  });
+
+  it("downloads updates from GitHub, or another https folder or this Mac", () => {
+    expect(RELEASE_DOWNLOADS).toBe("https://github.com/GuyAzene/folio/releases/download/");
+    expect(releaseDownloads(undefined)).toBe(RELEASE_DOWNLOADS);
+    expect(releaseDownloads("")).toBe(RELEASE_DOWNLOADS);
+    expect(releaseDownloads("http://downloads.example/")).toBe(RELEASE_DOWNLOADS);
+    expect(releaseDownloads("not a url")).toBe(RELEASE_DOWNLOADS);
+    expect(releaseDownloads("http://127.0.0.1:8123/download")).toBe(
+      "http://127.0.0.1:8123/download/",
+    );
+    expect(releaseDownloads("https://downloads.example/folio/")).toBe(
+      "https://downloads.example/folio/",
     );
   });
 });

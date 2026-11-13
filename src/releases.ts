@@ -6,10 +6,10 @@ import { capped } from "./live-catalog.ts";
 import { urlProblem } from "./mcp/config.ts";
 
 /**
- * Whether a newer Folio is out. Folio can't update itself yet; instead it asks GitHub for the
- * repository's latest release, at most once a day and only while the student leaves the check on,
- * and the window links to that release's page, which opens in the browser. Nothing is downloaded
- * or installed.
+ * Whether a newer Folio is out. Folio asks GitHub for the repository's latest release, at most
+ * once a day and only while the student leaves the check on. Where Folio can update itself
+ * (`src/self-update.ts`), the window offers to download that release; elsewhere it links to the
+ * release's page, which opens in the browser.
  *
  * The request goes to GitHub's public API with no account and carries nothing about the student:
  * only the name Folio, as GitHub asks every client to send. The answer is kept in
@@ -21,6 +21,8 @@ import { urlProblem } from "./mcp/config.ts";
 export const LATEST_RELEASE = "https://api.github.com/repos/GuyAzene/folio/releases/latest";
 /** A release's page, by its tag: built here, never taken from GitHub's answer. */
 export const RELEASE_PAGE = "https://github.com/GuyAzene/folio/releases/tag/";
+/** The folder of a release's files, by its tag, where Folio downloads an update from. */
+export const RELEASE_DOWNLOADS = "https://github.com/GuyAzene/folio/releases/download/";
 
 /** How old the kept answer may be before GitHub is asked again. */
 export const CHECK_EVERY_MS = 24 * 3_600_000;
@@ -80,6 +82,15 @@ export function releaseSource(value: string | undefined): string | null {
   if (value === undefined || value === "") return LATEST_RELEASE;
   if (value === "off" || urlProblem(value)) return null;
   return value;
+}
+
+/** What the check knows; the main process adds how far Folio is in updating itself. */
+export type CheckView = Omit<ReleaseView, "update">;
+
+/** Where release files are downloaded from: GitHub, or another https folder (tests). */
+export function releaseDownloads(value: string | undefined): string {
+  if (!value || urlProblem(value)) return RELEASE_DOWNLOADS;
+  return value.endsWith("/") ? value : `${value}/`;
 }
 
 /** What is kept on disk: the student's switch and GitHub's last answer. */
@@ -167,23 +178,29 @@ export class ReleaseCheck {
     return this.#loaded;
   }
 
-  /**
-   * This Folio's version, whether the check is on, and the kept latest release when it is newer
-   * and the check is on. Never asks GitHub.
-   */
-  async view(): Promise<ReleaseView> {
+  /** The kept latest release when it is newer than this Folio and the check is on. */
+  async newer(): Promise<{ version: string; tag: string } | null> {
     await this.#load();
     const { on, answer } = this.#kept;
     const tag = on ? answer?.tag : null;
     const latest = tag ? parseVersion(tag) : null;
-    const newer = !!latest && !!this.#current && compareVersions(latest, this.#current) > 0;
+    if (!tag || !latest || !this.#current || compareVersions(latest, this.#current) <= 0)
+      return null;
+    return { version: tag.replace(/^v/, ""), tag };
+  }
+
+  /**
+   * This Folio's version, whether the check is on, and the kept latest release when it is newer
+   * and the check is on. Never asks GitHub.
+   */
+  async view(): Promise<CheckView> {
+    const newer = await this.newer();
     return {
       version: this.#version,
-      on,
-      newer:
-        newer && tag
-          ? { version: tag.replace(/^v/, ""), url: RELEASE_PAGE + encodeURIComponent(tag) }
-          : null,
+      on: this.#kept.on,
+      newer: newer
+        ? { version: newer.version, url: RELEASE_PAGE + encodeURIComponent(newer.tag) }
+        : null,
     };
   }
 
@@ -191,7 +208,7 @@ export class ReleaseCheck {
    * Turns the check on or off, kept in Folio's home. Off, nothing is asked: a request under way
    * is stopped, and an answer that still arrives is dropped.
    */
-  async setOn(on: boolean): Promise<ReleaseView> {
+  async setOn(on: boolean): Promise<CheckView> {
     // Stopped before anything is awaited, so a check that has not reached GitHub never does. A
     // check asked for once it is on again starts afresh, not waiting on the stopped one.
     if (!on) {
@@ -208,7 +225,7 @@ export class ReleaseCheck {
    * Asks GitHub when the check is on and the kept answer is a day old, or an hour after a check
    * that failed, then returns the view. It never throws: offline or refused, the kept answer stays.
    */
-  async check(): Promise<ReleaseView> {
+  async check(): Promise<CheckView> {
     if (!this.#checking) {
       const checking = this.#ask().finally(() => {
         if (this.#checking === checking) this.#checking = undefined;

@@ -1917,6 +1917,31 @@ class FolioState {
     if (on) await this.checkRelease();
   }
 
+  /** Downloads the newer release; release events then carry its progress. */
+  async updateFolio(version: string): Promise<void> {
+    try {
+      this.release = await this.#api!.updateFolio(version);
+    } catch (error) {
+      this.error = message(error);
+    }
+  }
+
+  /** Restarts into the downloaded release, asking first while a reply is still being written. */
+  restartToUpdate(version: string): void {
+    const restart = () => this.#api!.restartToUpdate(version);
+    const writing = this.chats.filter((chat) => chat.status === "running").length;
+    if (!writing) {
+      restart().catch((error: unknown) => (this.error = message(error)));
+      return;
+    }
+    this.confirming = {
+      title: `Restart to update to Folio ${version}?`,
+      body: `${writing === 1 ? "A reply is" : `${writing} replies are`} still being written. Restarting stops ${writing === 1 ? "it" : "them"}, and you can ask again once Folio reopens.`,
+      action: "Restart",
+      run: restart,
+    };
+  }
+
   dismissRelease(version: string): void {
     this.dismissedRelease = version;
     try {
@@ -2186,6 +2211,8 @@ class FolioState {
       this.mcp = event.mcp;
     } else if (event.type === "approvals") {
       this.approvals = event.approvals;
+    } else if (event.type === "release") {
+      this.release = event.release;
     } else {
       this.error = event.message;
     }
