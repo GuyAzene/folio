@@ -724,7 +724,10 @@ export interface ReleaseView {
   version: string;
   /** Whether Folio asks GitHub; off only when the student turns it off. */
   on: boolean;
-  /** None while the check is off. `url` is the release's page, which opens in the browser. */
+  /**
+   * None while the check is off, unless an update is downloaded and waiting. `url` is the
+   * release's page, which opens in the browser.
+   */
   newer: { version: string; url: string } | null;
   /**
    * How far Folio is in updating itself to `newer`. None without a newer release, and where Folio

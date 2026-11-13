@@ -22,7 +22,13 @@ import { SIGN_OUT_UNCONFIRMED } from "../chatgpt-sign-in.ts";
 import { FolioConfig, studyRoles } from "../config.ts";
 import { checkKey, cleanKey, modelCatalog } from "../connections.ts";
 import { LiveCatalog, liveSource } from "../live-catalog.ts";
-import { type CheckView, ReleaseCheck, releaseDownloads, releaseSource } from "../releases.ts";
+import {
+  type CheckView,
+  RELEASE_PAGE,
+  ReleaseCheck,
+  releaseDownloads,
+  releaseSource,
+} from "../releases.ts";
 import { privateDirectory, writeAtomic } from "../files.ts";
 import { IngestRunner, trialRoles } from "../ingest/pipeline.ts";
 import { piComplete } from "../ingest/pi-complete.ts";
@@ -211,10 +217,18 @@ function selfUpdate(): Promise<SelfUpdate> {
     );
   return updater;
 }
-/** What the check found, and how far Folio is in updating itself to it. */
+/**
+ * What the check found, and how far Folio is in updating itself to it. A downloaded update shows
+ * even while the check is off, since quitting installs it.
+ */
 async function releaseView(found?: CheckView): Promise<ReleaseView> {
   const check = found ?? (await releases.view());
-  return { ...check, update: (await selfUpdate()).view(check.newer?.version ?? null) };
+  const update = await selfUpdate();
+  const ready = update.ready();
+  const newer =
+    check.newer ??
+    (ready ? { version: ready.version, url: RELEASE_PAGE + encodeURIComponent(ready.tag) } : null);
+  return { ...check, newer, update: update.view(newer?.version ?? null) };
 }
 const resolveModel = (id: string, provider = "openai") => {
   const model = folioModel(catalog, id, provider);

@@ -201,7 +201,9 @@
                             : `Getting Folio ${newer.version} ready`}</span
                         >
                       {:else if update?.step === "ready"}
-                        <span class="text-text-2">Folio {newer.version} is downloaded.</span>
+                        <span class="text-text-2"
+                          >Folio {newer.version} is downloaded, and installs when Folio quits.</span
+                        >
                         <button
                           class={action}
                           onclick={() => folio.restartToUpdate(newer.version)}

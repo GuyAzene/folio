@@ -23,9 +23,9 @@ import { basename, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { createCanvas, loadImage } from "@napi-rs/canvas";
 import { Arch, build, Platform, type Configuration } from "electron-builder";
-import { parse } from "yaml";
 import { importedPackages, notices, withDependencies } from "./notices.ts";
 import { signing, unsetEmpty } from "./signing.ts";
+import { updateFilesProblem } from "./update-files.ts";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const SOURCES = [
@@ -298,17 +298,14 @@ async function checkUpdateFiles(zip: string): Promise<void> {
   const { version } = JSON.parse(await readFile(resolve(ROOT, "package.json"), "utf8")) as {
     version: string;
   };
-  const info = parse(await readFile(resolve(ROOT, "release/latest-mac.yml"), "utf8")) as {
-    version?: string;
-    files?: { url?: string; sha512?: string }[];
-  };
   const sha512 = createHash("sha512")
     .update(await readFile(zip))
     .digest("base64");
-  const [file, ...others] = info.files ?? [];
-  if (info.version !== version || others.length || file?.url !== basename(zip))
-    throw new Error(`release/latest-mac.yml does not name ${basename(zip)} as Folio ${version}.`);
-  if (file.sha512 !== sha512) throw new Error(`release/latest-mac.yml has another checksum.`);
+  const problem = updateFilesProblem(
+    await readFile(resolve(ROOT, "release/latest-mac.yml"), "utf8"),
+    { version, zip: basename(zip), sha512 },
+  );
+  if (problem) throw new Error(problem);
   const dir = await mkdtemp(resolve(tmpdir(), "folio-update-check-"));
   try {
     execFileSync("ditto", ["-x", "-k", zip, dir]);

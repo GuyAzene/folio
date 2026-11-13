@@ -29,8 +29,8 @@ export interface Installer {
 }
 
 type State =
-  | { version: string; step: "downloading"; percent: number; stop: AbortController }
-  | { version: string; step: "ready" | "failed" };
+  | { version: string; tag: string; step: "downloading"; percent: number; stop: AbortController }
+  | { version: string; tag: string; step: "ready" | "failed" };
 
 export class SelfUpdate {
   readonly #installer: Installer | null;
@@ -56,6 +56,15 @@ export class SelfUpdate {
     return this.#installer !== null;
   }
 
+  /**
+   * The release downloaded and waiting to install, which quitting installs too. The window keeps
+   * showing it after the student turns updates off, so it never installs unseen.
+   */
+  ready(): { version: string; tag: string } | null {
+    const state = this.#state;
+    return state?.step === "ready" ? { version: state.version, tag: state.tag } : null;
+  }
+
   /** How far Folio is in updating to `version`, the newer release; null when it can't. */
   view(version: string | null): UpdateView | null {
     if (!this.#installer || !version) return null;
@@ -78,6 +87,7 @@ export class SelfUpdate {
     if (previous?.step === "downloading") previous.stop.abort();
     const state: State = {
       version: release.version,
+      tag: release.tag,
       step: "downloading",
       percent: 0,
       stop: new AbortController(),
@@ -93,7 +103,7 @@ export class SelfUpdate {
     };
     const settle = (step: "ready" | "failed") => {
       if (this.#state !== state) return;
-      this.#state = { version: release.version, step };
+      this.#state = { version: release.version, tag: release.tag, step };
       this.#changed();
     };
     installer

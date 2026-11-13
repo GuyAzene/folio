@@ -79,6 +79,7 @@ describe("Folio updating itself", () => {
       { step: "ready" },
     ]);
     expect(installs()).toBe(0);
+    expect(update.ready()).toEqual(RELEASE);
     update.restart(RELEASE.version);
     expect(installs()).toBe(1);
   });
@@ -105,6 +106,7 @@ describe("Folio updating itself", () => {
     downloads[0]!.fail(new Error("The code signature did not match."));
     await settled();
     expect(update.view(RELEASE.version)).toEqual({ step: "failed" });
+    expect(update.ready()).toBeNull();
     expect(() => update.restart(RELEASE.version)).toThrow("isn't downloaded yet");
     update.start(RELEASE);
     expect(downloads).toHaveLength(2);
@@ -134,6 +136,8 @@ describe("Folio updating itself", () => {
     await settled();
     update.stop();
     expect(update.view(RELEASE.version)).toEqual({ step: "ready" });
+    // The window keeps showing it, though the check that found it is off.
+    expect(update.ready()).toEqual(RELEASE);
     update.restart(RELEASE.version);
     expect(installs()).toBe(1);
   });

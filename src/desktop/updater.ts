@@ -39,47 +39,60 @@ export async function macInstaller(): Promise<Installer | null> {
   autoUpdater.allowDowngrade = false;
   autoUpdater.logger = null;
 
+  // electron-updater is one updater for the whole app, with one feed, one download and one proxy
+  // for macOS's updater. A download starts only once the one before it has settled, as a stopped
+  // one does a moment after it is stopped.
+  let previous: Promise<unknown> = Promise.resolve();
+
+  const downloadOne: Installer["download"] = async (feed, version, progress, signal) => {
+    signal.throwIfAborted();
+    autoUpdater.setFeedURL({ provider: "generic", url: feed });
+    const found = await autoUpdater.checkForUpdates();
+    if (!found?.isUpdateAvailable || found.updateInfo.version !== version)
+      throw new Error(`The release's files are not Folio ${version}.`);
+    signal.throwIfAborted();
+    // macOS's updater says when it has checked and unpacked the update, after electron-updater
+    // hands it the zip; listening before the download starts catches either answer.
+    let settle: { done: () => void; fail: (error: Error) => void } | undefined;
+    const unpacked = new Promise<void>((done, fail) => (settle = { done, fail }));
+    // Handled where it is awaited; a refusal while the download itself fails is that failure.
+    unpacked.catch(() => undefined);
+    const ready = () => settle!.done();
+    const refused = (error: Error) => settle!.fail(error);
+    squirrel.once("update-downloaded", ready);
+    squirrel.once("error", refused);
+    const moved = (info: { percent: number }) => progress(info.percent);
+    autoUpdater.on("download-progress", moved);
+    const token = new CancellationToken();
+    const stop = () => {
+      token.cancel();
+      settle!.fail(new Error("Stopped."));
+    };
+    signal.addEventListener("abort", stop, { once: true });
+    let slow: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await autoUpdater.downloadUpdate(token);
+      progress(100);
+      // A Mac takes seconds to check and unpack it; one that never answers fails, so the
+      // student can try again rather than wait on "Getting ready" for good.
+      slow = setTimeout(() => settle!.fail(new Error("macOS didn't answer.")), UNPACK_MS);
+      await unpacked;
+    } finally {
+      clearTimeout(slow);
+      signal.removeEventListener("abort", stop);
+      autoUpdater.off("download-progress", moved);
+      squirrel.off("update-downloaded", ready);
+      squirrel.off("error", refused);
+    }
+  };
+
   return {
-    async download(feed, version, progress, signal) {
-      signal.throwIfAborted();
-      autoUpdater.setFeedURL({ provider: "generic", url: feed });
-      const found = await autoUpdater.checkForUpdates();
-      if (!found?.isUpdateAvailable || found.updateInfo.version !== version)
-        throw new Error(`The release's files are not Folio ${version}.`);
-      signal.throwIfAborted();
-      // macOS's updater says when it has checked and unpacked the update, after electron-updater
-      // hands it the zip; listening before the download starts catches either answer.
-      let settle: { done: () => void; fail: (error: Error) => void } | undefined;
-      const unpacked = new Promise<void>((done, fail) => (settle = { done, fail }));
-      // Handled where it is awaited; a refusal while the download itself fails is that failure.
-      unpacked.catch(() => undefined);
-      const ready = () => settle!.done();
-      const refused = (error: Error) => settle!.fail(error);
-      squirrel.once("update-downloaded", ready);
-      squirrel.once("error", refused);
-      const moved = (info: { percent: number }) => progress(info.percent);
-      autoUpdater.on("download-progress", moved);
-      const token = new CancellationToken();
-      const stop = () => {
-        token.cancel();
-        settle!.fail(new Error("Stopped."));
-      };
-      signal.addEventListener("abort", stop, { once: true });
-      let slow: ReturnType<typeof setTimeout> | undefined;
-      try {
-        await autoUpdater.downloadUpdate(token);
-        progress(100);
-        // A Mac takes seconds to check and unpack it; one that never answers fails, so the
-        // student can try again rather than wait on "Getting ready" for good.
-        slow = setTimeout(() => settle!.fail(new Error("macOS didn't answer.")), UNPACK_MS);
-        await unpacked;
-      } finally {
-        clearTimeout(slow);
-        signal.removeEventListener("abort", stop);
-        autoUpdater.off("download-progress", moved);
-        squirrel.off("update-downloaded", ready);
-        squirrel.off("error", refused);
-      }
+    download(feed, version, progress, signal) {
+      const download = previous
+        .catch(() => undefined)
+        .then(() => downloadOne(feed, version, progress, signal));
+      previous = download;
+      return download;
     },
     install() {
       // Closes the window, quits through before-quit (which settles running replies), and macOS
