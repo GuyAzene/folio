@@ -724,9 +724,28 @@ export interface ReleaseView {
   version: string;
   /** Whether Folio asks GitHub; off only when the student turns it off. */
   on: boolean;
-  /** None while the check is off. The release's page opens in the browser; Folio never downloads it. */
+  /**
+   * None while the check is off, unless an update is downloaded and waiting. `url` is the
+   * release's page, which opens in the browser.
+   */
   newer: { version: string; url: string } | null;
+  /**
+   * How far Folio is in updating itself to `newer`. None without a newer release, and where Folio
+   * can't update itself (on Windows, run from the checkout or from a disk image): there the
+   * window links to the release's page instead.
+   */
+  update: UpdateView | null;
 }
+
+/** Folio updating itself to the newer release: downloaded on the student's click, never before. */
+export type UpdateView =
+  | { step: "available" }
+  /** Whole percents; at 100, macOS is checking and unpacking it. */
+  | { step: "downloading"; percent: number }
+  /** Restarting, or quitting, installs it. */
+  | { step: "ready" }
+  /** The download or macOS's check failed; the student can try again. */
+  | { step: "failed" };
 
 export interface DesktopBootstrap {
   models: ModelsView;
@@ -782,6 +801,8 @@ export type DesktopEvent =
   | { type: "mcp"; mcp: McpView }
   /** Calls to services that wait for the student, in every chat. */
   | { type: "approvals"; approvals: ApprovalView[] }
+  /** A newer release was found, or Folio moved on in updating itself to it. */
+  | { type: "release"; release: ReleaseView }
   | { type: "error"; chatId: string | null; message: string };
 
 export interface FolioApi {
@@ -955,8 +976,15 @@ export interface FolioApi {
   release(): Promise<ReleaseView>;
   /** Asks GitHub for the latest release when the check is on and the last answer is a day old; never throws. */
   checkRelease(): Promise<ReleaseView>;
-  /** Turns the check on or off, in Folio's home; off stops a check under way. */
+  /** Turns the check on or off, in Folio's home; off stops a check, or a download, under way. */
   setUpdateChecks(on: boolean): Promise<ReleaseView>;
+  /**
+   * Starts downloading the newer release, which must still be `version`; progress arrives as
+   * release events. Refused where Folio can't update itself.
+   */
+  updateFolio(version: string): Promise<ReleaseView>;
+  /** Quits and reopens as `version`, once it is downloaded. */
+  restartToUpdate(version: string): Promise<void>;
   /** Hands a demo to the main process and returns the address its sealed frame loads. */
   registerArtifact(input: { source: string }): Promise<{ url: string }>;
   /** Saves a file the student made (a diagram as SVG) where they choose; false if they cancel. */

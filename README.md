@@ -126,8 +126,9 @@ Folio is not signed with a code-signing certificate, so Windows says it protecte
 **More info**, then **Run anyway**.
 
 The nightly build is rebuilt after every change to `main`, so it is the newest Folio and may be
-rougher than a release. Folio can't update itself: when a newer release is out, a line in the
-sidebar links to its page.
+rougher than a release. When a newer release is out, a line in Folio's sidebar says so. On a Mac,
+from 0.2.3 on, clicking it downloads the update, and restarting installs it. On Windows the line
+links to the release's page.
 
 ## Getting started
 
@@ -218,8 +219,8 @@ added. Signing out, or removing a key, removes it
 and keeps everything else. API keys stay in `keys.json`, apart from `config.json`, which never
 holds one. MCP servers you connect get only what the tutor writes into a call, which you see
 before you allow it; their settings and keys stay in `mcp.json`. Once a day Folio asks GitHub
-whether a newer release is out; the request carries nothing about you, Folio only links to the
-release and never downloads it, and **Settings → General** turns it off. See [docs/architecture.md](docs/architecture.md#on-disk) for the layout.
+whether a newer release is out. The request carries nothing about you, Folio downloads the
+release only when you click to update, and **Settings → General** turns the check off. See [docs/architecture.md](docs/architecture.md#on-disk) for the layout.
 
 ## Roadmap
 
@@ -263,7 +264,9 @@ ships: run `vp run chat`, and `vp run chat --help` for its options.
 
 `FOLIO_E2E_APP=release/mac-arm64/Folio.app vp run test:electron` runs the real-window checks
 against the packaged app instead of a fresh build; on Windows, name
-`release/win-unpacked/Folio.exe`.
+`release/win-unpacked/Folio.exe`. On a Mac with a Developer ID, name a signed Folio.app there and,
+in `FOLIO_E2E_UPDATE`, the `release/` folder of a newer signed build, and
+`tests/electron/self-update.e2e.ts` updates the one to the other.
 
 Read [AGENTS.md](AGENTS.md) for how changes are made and checked, and
 [docs/architecture.md](docs/architecture.md) for how the pieces fit together.

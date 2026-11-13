@@ -19,6 +19,7 @@ import type {
   ProposalView,
   ReleaseView,
   SendInput,
+  UpdateView,
   ApprovalDecision,
   ApprovalView,
   McpServerView,
@@ -1771,16 +1772,28 @@ function take<T>(list: T[], match: (item: T) => boolean): T[] {
 
 // ── Connections and models: ChatGPT and an OpenRouter key, synthetic ─────
 
-/** The preview's Folio is a release behind, so the sidebar's line and Settings show one. */
+/**
+ * The preview's Folio is a release behind and can update itself, so the sidebar's line and
+ * Settings show one. Update downloads it over a few seconds; Restart starts over.
+ */
 let previewUpdates = true;
+let previewUpdate: UpdateView = { step: "available" };
+let previewDownload: ReturnType<typeof setInterval> | undefined;
 function previewRelease(): ReleaseView {
+  // A downloaded update shows even with the check off, as in Folio, since quitting installs it.
+  const shown = previewUpdates || previewUpdate.step === "ready";
   return {
     version: "0.1.0",
     on: previewUpdates,
-    newer: previewUpdates
+    newer: shown
       ? { version: "0.2.0", url: "https://github.com/GuyAzene/folio/releases/latest" }
       : null,
+    update: shown ? previewUpdate : null,
   };
+}
+function setPreviewUpdate(update: UpdateView): void {
+  previewUpdate = update;
+  emit({ type: "release", release: previewRelease() });
 }
 
 const previewConnected = new Set(["chatgpt", "openrouter"]);
@@ -3052,7 +3065,28 @@ export const previewApi: FolioApi = {
   },
   async setUpdateChecks(on) {
     previewUpdates = on;
+    if (!on && previewUpdate.step === "downloading") {
+      clearInterval(previewDownload);
+      previewUpdate = { step: "available" };
+    }
     return previewRelease();
+  },
+  async updateFolio() {
+    if (previewUpdate.step === "downloading" || previewUpdate.step === "ready")
+      return previewRelease();
+    let percent = 0;
+    previewUpdate = { step: "downloading", percent };
+    previewDownload = setInterval(() => {
+      percent = Math.min(100, percent + 7);
+      if (percent < 100) return setPreviewUpdate({ step: "downloading", percent });
+      clearInterval(previewDownload);
+      setPreviewUpdate({ step: "downloading", percent: 100 });
+      setTimeout(() => setPreviewUpdate({ step: "ready" }), 1_200);
+    }, 250);
+    return previewRelease();
+  },
+  async restartToUpdate() {
+    setPreviewUpdate({ step: "available" });
   },
   async registerArtifact() {
     return { url: "" };

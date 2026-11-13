@@ -22,7 +22,13 @@ import { SIGN_OUT_UNCONFIRMED } from "../chatgpt-sign-in.ts";
 import { FolioConfig, studyRoles } from "../config.ts";
 import { checkKey, cleanKey, modelCatalog } from "../connections.ts";
 import { LiveCatalog, liveSource } from "../live-catalog.ts";
-import { ReleaseCheck, releaseSource } from "../releases.ts";
+import {
+  type CheckView,
+  RELEASE_PAGE,
+  ReleaseCheck,
+  releaseDownloads,
+  releaseSource,
+} from "../releases.ts";
 import { privateDirectory, writeAtomic } from "../files.ts";
 import { IngestRunner, trialRoles } from "../ingest/pipeline.ts";
 import { piComplete } from "../ingest/pi-complete.ts";
@@ -100,8 +106,11 @@ import {
   type SyllabusDraft,
   type ApprovalView,
   type McpView,
+  type ReleaseView,
 } from "./api.ts";
 import { ChatService, errorMessage } from "./chat-service.ts";
+import { macInstaller } from "./updater.ts";
+import { SelfUpdate } from "../self-update.ts";
 import { PageReader } from "../library/page-reader.ts";
 import { ASSET_SCHEME } from "../library/asset-names.ts";
 import { NoteAssets } from "../library/note-assets.ts";
@@ -191,6 +200,36 @@ const releases = new ReleaseCheck({
   version: folioVersion(),
   source: releaseSource(process.env.FOLIO_RELEASES),
 });
+// Folio updating itself to that release on a Mac, downloaded when the student clicks
+// (self-update.ts, desktop/updater.ts). Made when the window first asks, once Electron is ready.
+// FOLIO_RELEASE_DOWNLOADS names another folder of release files (tests).
+let updater: Promise<SelfUpdate> | undefined;
+function selfUpdate(): Promise<SelfUpdate> {
+  updater ??= macInstaller()
+    .catch(() => null)
+    .then(
+      (installer) =>
+        new SelfUpdate({
+          installer,
+          downloads: releaseDownloads(process.env.FOLIO_RELEASE_DOWNLOADS),
+          changed: () => void releaseView().then((release) => emit({ type: "release", release })),
+        }),
+    );
+  return updater;
+}
+/**
+ * What the check found, and how far Folio is in updating itself to it. A downloaded update shows
+ * even while the check is off, since quitting installs it.
+ */
+async function releaseView(found?: CheckView): Promise<ReleaseView> {
+  const check = found ?? (await releases.view());
+  const update = await selfUpdate();
+  const ready = update.ready();
+  const newer =
+    check.newer ??
+    (ready ? { version: ready.version, url: RELEASE_PAGE + encodeURIComponent(ready.tag) } : null);
+  return { ...check, newer, update: update.view(newer?.version ?? null) };
+}
 const resolveModel = (id: string, provider = "openai") => {
   const model = folioModel(catalog, id, provider);
   if (!model) throw new Error(`Model '${id}' is not in Pi's catalog.`);
@@ -1441,11 +1480,24 @@ const handlers: Record<InvokeMethod, (...args: unknown[]) => Promise<unknown>> =
     for (const entry of await trash.list()) await trash.discard(entry.id);
     emit({ type: "trash" });
   },
-  release: () => releases.view(),
-  checkRelease: () => releases.check(),
+  release: () => releaseView(),
+  checkRelease: async () => releaseView(await releases.check()),
   async setUpdateChecks(on) {
     if (typeof on !== "boolean") throw new Error("Updates are either on or off.");
-    return releases.setOn(on);
+    const found = await releases.setOn(on);
+    if (!on) (await selfUpdate()).stop();
+    return releaseView(found);
+  },
+  async updateFolio(version) {
+    const newer = await releases.newer();
+    if (!newer || newer.version !== version)
+      throw new Error("That release is no longer the newest; check again in Settings.");
+    (await selfUpdate()).start(newer);
+    return releaseView();
+  },
+  async restartToUpdate(version) {
+    if (typeof version !== "string") throw new Error("Which release?");
+    (await selfUpdate()).restart(version);
   },
   async registerArtifact(input) {
     const { source } = (input ?? {}) as Record<string, unknown>;

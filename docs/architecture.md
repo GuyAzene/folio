@@ -33,6 +33,7 @@ src/desktop/main.ts           the main process
 | `tests/` | Deterministic test suites; `tests/fixtures/` builds synthetic PDFs and courses; `tests/electron/` checks Folio in a real window (`vp run test:electron`). |
 | `scripts/desktop.ts` | Runs the app from the dev server or from the production build. |
 | `src/releases.ts` | Whether a newer Folio is out: GitHub's latest release, asked at most once a day. |
+| `src/self-update.ts`, `src/desktop/updater.ts` | Folio updating itself to that release on a Mac when the student clicks, through electron-updater and macOS's own updater. |
 | `scripts/package.ts`, `scripts/install.ts`, `resources/` | Builds `Folio.app` and its disk image (`vp run desktop:package`) and installs it (`vp run desktop:install`); the app icon. |
 
 ## What the window may do
@@ -634,6 +635,11 @@ warns before its first run.
 - CI builds releases and the nightly that way, from secrets in the `signing` environment, which
   only `main` and `v*` tags may use, so a pull request's build never sees them.
   `FOLIO_NOTARIZE=1` makes a build fail rather than come out unsigned when a secret is missing.
+- A Developer ID build also makes `Folio-<version>-arm64-mac.zip` and `latest-mac.yml`, the
+  update an earlier Folio downloads, and checks them: the file names the zip with this version
+  and its checksum, and the app inside is signed, and once notarized carries its ticket. The
+  release workflow attaches both to the release. `tests/electron/self-update.e2e.ts` installs a
+  real update between two such builds made on one Mac.
 
 `vp run desktop:install` then puts the app in /Applications (`scripts/install.ts`). It refuses
 to replace an app with another bundle ID, and to run while a copy of Folio runs from anywhere
@@ -765,7 +771,7 @@ checks that every skill has its link in `.claude/skills/` and that the guide's l
 
 A quit signal (SIGTERM, as the installer sends) quits Folio as ⌘Q does: chats settle first.
 
-Folio can't update itself yet, so it says when a newer release is out (`src/releases.ts`). The
+Folio says when a newer release is out (`src/releases.ts`). The
 window asks the main process a moment after it opens and then every
 hour; the main process asks GitHub's public API for the repository's latest release only while
 **Updates** is on in Settings → General and its last answer is a day old, or an hour after a
@@ -773,12 +779,36 @@ check that failed. The switch and the answer are kept together in `release.json`
 is the main process's, not the window's: turned off, a request under way is stopped and an
 answer that still arrives is dropped. The request has no account and carries nothing about
 the student. The answer's tag must be a semantic version, and is compared with the app's own,
-from `package.json` (a packaged app reports it; a run from the checkout reads the file). The
-sidebar's line links to the release's page on GitHub, built from the tag, and opens in the
-system browser; nothing is downloaded. GitHub's latest release is never a pre-release, so the
-nightly, which carries the version of the release it follows, hears of the next release and never
-of newer nightlies. `FOLIO_RELEASES` names another source, or `off`, as the real-window checks
-set it.
+from `package.json` (a packaged app reports it; a run from the checkout reads the file). GitHub's
+latest release is never a pre-release, so the nightly, which carries the version of the release it
+follows, hears of the next release and never of newer nightlies. `FOLIO_RELEASES` names another
+source, or `off`, as the real-window checks set it.
+
+On a Mac, a release or nightly build updates itself when the student asks (`src/self-update.ts`):
+
+- The sidebar's line reads "Folio 0.3.0 is out · Update". Nothing downloads before that click.
+  The click downloads the release, the line shows the percentage, and then it reads "Restart to
+  update". Restarting, or simply quitting, installs it. Settings → General shows the same steps,
+  with a link to the release's page.
+- `src/desktop/updater.ts` hands the download to electron-updater, pointed at the folder of the
+  release the check found: `releases/download/<tag>/` on GitHub, built from the tag
+  (`FOLIO_RELEASE_DOWNLOADS` names another folder, for the checks). It reads the release's
+  `latest-mac.yml`, refuses one that names another version, and downloads the zip it names,
+  checked against the checksum there. macOS's own updater (Squirrel.Mac, under Electron's
+  autoUpdater) then installs the app in the zip only if it is signed by the same Developer ID as
+  the running Folio. That signature is what keeps another app out, since the checksum comes from
+  the same release.
+- The download goes through Electron's network stack in a session of its own, with no cookie or
+  account, and carries nothing about the student. It is the whole zip each time.
+- Restart quits as ⌘Q does, so running replies settle as interrupted first; the window asks
+  before restarting while one is being written. Turning **Updates** off stops a download under
+  way; one already downloaded still installs when Folio quits.
+- Only a Developer ID build updates itself. `scripts/package.ts` gives it `app-update.yml` and
+  makes the zip and `latest-mac.yml` beside the disk image, and the release workflow publishes
+  them. Folio also has to replace itself where it is, which it can't from the disk image or from
+  a copy macOS runs from elsewhere because it was opened in Downloads. On Windows, from the
+  checkout, or in an ad-hoc build, the line links to the release's page instead, which opens in
+  the system browser.
 
 The packaged app keeps its data where the development build does, in `~/.folio` (or `FOLIO_HOME`).
 One Folio runs on a home at a time: opened while another runs there, Folio quits before it opens

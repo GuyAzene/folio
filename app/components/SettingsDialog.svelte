@@ -182,22 +182,59 @@
                   <span class="font-medium">Updates</span>
                   <span class="text-[12px] text-text-3"
                     >{folio.release ? `Folio ${folio.release.version}. ` : ""}Checks
-                    GitHub once a day for a newer release; nothing about you is sent.</span
+                    GitHub once a day for a newer release{folio.release?.update
+                      ? ", and downloads it when you click Update"
+                      : ""}; nothing about you is sent.</span
                   >
                   {#if folio.release?.newer}
                     {@const newer = folio.release.newer}
-                    <a
-                      href={newer.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      class="mt-1 flex w-fit items-center gap-2 text-[12px] font-medium text-text no-underline hover:underline"
-                    >
+                    {@const update = folio.release.update}
+                    {@const action = "font-medium text-text hover:underline"}
+                    <div class="mt-1 flex items-start gap-2 text-[12px]">
                       <span
-                        class="size-1.5 shrink-0 rounded-full bg-highlight ring-2 ring-highlight/30"
+                        class="mt-[6px] size-1.5 shrink-0 rounded-full bg-highlight ring-2 ring-highlight/30"
                       ></span>
-                      Folio {newer.version} is out. See what's new
-                      <ArrowUpRight size={12} strokeWidth={2} class="text-text-3" />
-                    </a>
+                      <!-- A line that wraps starts under the text, not under the dot. -->
+                      <div class="flex min-w-0 flex-wrap items-center gap-x-2">
+                        {#if update?.step === "downloading"}
+                          <span class="text-text-2" role="status"
+                            >{update.percent < 100
+                              ? `Downloading Folio ${newer.version}, ${update.percent}%`
+                              : `Getting Folio ${newer.version} ready`}</span
+                          >
+                        {:else if update?.step === "ready"}
+                          <span class="text-text-2"
+                            >Folio {newer.version} is downloaded, and installs when Folio quits.</span
+                          >
+                          <button
+                            class={action}
+                            onclick={() => folio.restartToUpdate(newer.version)}
+                            >Restart to update</button
+                          >
+                        {:else if update}
+                          <span class="text-text-2"
+                            >{update.step === "failed"
+                              ? `Couldn't update to Folio ${newer.version}.`
+                              : `Folio ${newer.version} is out.`}</span
+                          >
+                          <button class={action} onclick={() => void folio.updateFolio(newer.version)}
+                            >{update.step === "failed" ? "Try again" : "Update"}</button
+                          >
+                        {:else}
+                          <span class="text-text-2">Folio {newer.version} is out.</span>
+                        {/if}
+                        <a
+                          href={newer.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          class="flex items-center gap-0.5 {update
+                            ? 'text-text-3 hover:text-text'
+                            : action} no-underline hover:underline"
+                          >See what's new
+                          <ArrowUpRight size={12} strokeWidth={2} class="text-text-3" /></a
+                        >
+                      </div>
+                    </div>
                   {/if}
                 </div>
                 <ToggleGroup.Root

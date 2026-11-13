@@ -10,18 +10,22 @@
 // APPLE_KEYCHAIN_PROFILE, the name `xcrun notarytool store-credentials` kept it under), Apple
 // notarizes the app and the disk image, each gets its ticket stapled, and the build checks both
 // as Gatekeeper will on another Mac. FOLIO_NOTARIZE=1, which the release and the nightly set,
-// refuses to build without all of that. On Windows it is not signed unless CSC_LINK names a
+// refuses to build without all of that. A Developer ID build can also update itself: beside the
+// disk image come a zip of the app and latest-mac.yml, which a release publishes for Folio to
+// download. On Windows it is not signed unless CSC_LINK names a
 // code-signing certificate, so Windows warns before the first run.
 import { execFileSync, execSync, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { cp, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { createCanvas, loadImage } from "@napi-rs/canvas";
 import { Arch, build, Platform, type Configuration } from "electron-builder";
 import { importedPackages, notices, withDependencies } from "./notices.ts";
 import { signing, unsetEmpty } from "./signing.ts";
+import { updateFilesProblem } from "./update-files.ts";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const SOURCES = [
@@ -43,6 +47,9 @@ unsetEmpty(process.env);
 const { developerId, notaryAuth } = signing(process.env, process.platform);
 const notarize = notaryAuth !== undefined;
 const windows = process.platform === "win32";
+// Only a Developer ID build updates itself: macOS installs an update signed by the same identity
+// as the running app, and an ad-hoc signature changes with every build.
+const updates = developerId && !windows;
 // FOLIO_DISTRIBUTE=1 builds the app handed to other people: the inspector flags are off, so
 // nothing can drive it from outside. The real-window checks need them, so they test the default.
 const distribute = process.env.FOLIO_DISTRIBUTE === "1";
@@ -120,8 +127,12 @@ function config(dir: string, icon: string, licenses: string): Configuration {
     // The canvas module ships prebuilt for Electron's Node; nothing is compiled.
     npmRebuild: false,
     extraMetadata: { main: "dist-desktop/desktop-main.mjs", author: "Guy Azene" },
-    // No update channel yet, so the app carries no update feed.
-    publish: null,
+    // A build that updates itself carries app-update.yml, and latest-mac.yml comes beside its zip.
+    // Folio points the updater at the release it found (src/desktop/updater.ts), so this address
+    // is only the default the file records.
+    publish: updates
+      ? { provider: "generic", url: "https://github.com/GuyAzene/folio/releases/latest/download" }
+      : null,
     // The main process, its preload and the renderer; production dependencies are added on their
     // own, and the renderer's libraries are already in its bundle.
     files: [
@@ -153,6 +164,7 @@ function config(dir: string, icon: string, licenses: string): Configuration {
       enableCookieEncryption: developerId,
     },
     mac: {
+      // The disk image; build() below adds the zip for a build that updates itself.
       target: [{ target: "dmg", arch: ["arm64"] }],
       category: "public.app-category.education",
       icon,
@@ -276,6 +288,39 @@ async function checkSignatures(app: string, dmg: string): Promise<void> {
   console.log("Gatekeeper accepts the app and the disk image as notarized.");
 }
 
+/**
+ * The update a release publishes, checked as Folio will on another Mac: latest-mac.yml names the
+ * zip with this version and the zip's checksum, and the app in the zip is sealed with the Developer
+ * ID, which macOS's updater requires to match the running Folio's, and once notarized carries
+ * Apple's ticket.
+ */
+async function checkUpdateFiles(zip: string): Promise<void> {
+  const { version } = JSON.parse(await readFile(resolve(ROOT, "package.json"), "utf8")) as {
+    version: string;
+  };
+  const sha512 = createHash("sha512")
+    .update(await readFile(zip))
+    .digest("base64");
+  const problem = updateFilesProblem(
+    await readFile(resolve(ROOT, "release/latest-mac.yml"), "utf8"),
+    { version, zip: basename(zip), sha512 },
+  );
+  if (problem) throw new Error(problem);
+  const dir = await mkdtemp(resolve(tmpdir(), "folio-update-check-"));
+  try {
+    execFileSync("ditto", ["-x", "-k", zip, dir]);
+    const app = resolve(dir, "Folio.app");
+    execFileSync("codesign", ["--verify", "--deep", "--strict", app]);
+    const signed = spawnSync("codesign", ["--display", "--verbose=2", app], { encoding: "utf8" });
+    if (!/^Authority=Developer ID Application: /m.test(signed.stderr))
+      throw new Error(`The app in ${zip} is not signed with a Developer ID.`);
+    if (notarize) await validateTicket(app);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+  console.log(`The update in ${basename(zip)} matches latest-mac.yml and is signed.`);
+}
+
 // The build replaces release/, so a Folio opened from there would lose its files while it runs.
 // Windows refuses to delete a running program's files, so there the build stops on its own.
 if (
@@ -300,7 +345,7 @@ try {
     projectDir: ROOT,
     targets: windows
       ? Platform.WINDOWS.createTarget("nsis", Arch.x64)
-      : Platform.MAC.createTarget("dmg", Arch.arm64),
+      : Platform.MAC.createTarget(updates ? ["dmg", "zip"] : "dmg", Arch.arm64),
     config: configuration,
     publish: "never",
   });
@@ -320,9 +365,12 @@ try {
     if (!dmg) throw new Error("electron-builder made no disk image.");
     if (notarize) notarizeDiskImage(dmg);
     await checkSignatures(app, dmg);
+    const zip = artifacts.find((path) => path.endsWith(".zip"));
+    if (!zip) throw new Error("electron-builder made no zip for updates.");
+    await checkUpdateFiles(zip);
   }
   console.log(`\nBuilt ${windows ? resolve(app, "Folio.exe") : app}`);
-  for (const artifact of artifacts.filter((path) => /\.(dmg|exe)$/.test(path)))
+  for (const artifact of artifacts.filter((path) => /\.(dmg|exe|zip)$/.test(path)))
     console.log(`  and ${artifact}`);
 } finally {
   await rm(dir, { recursive: true, force: true });

@@ -99,8 +99,11 @@ void describe("a newer Folio", () => {
     await kept.waitFor({ state: "detached" });
     await page.keyboard.press("ControlOrMeta+Comma");
     await page.getByText(`Folio ${current}. Checks GitHub once a day`).waitFor();
-    const settingsLink = page.getByRole("link", { name: `Folio ${next} is out. See what's new` });
+    await page.getByText(`Folio ${next} is out.`).waitFor();
+    const settingsLink = page.getByRole("link", { name: "See what's new" });
     assert.equal(await settingsLink.getAttribute("href"), releasePage);
+    // Run from the checkout, Folio can't update itself, so it offers no download.
+    assert.equal(await page.getByRole("button", { name: /^(Update|Folio .* is out)/ }).count(), 0);
 
     // Turned off, Folio no longer mentions it, and after a restart asks nothing.
     await page.getByRole("group", { name: "Check for updates" }).getByText("Off").click();
