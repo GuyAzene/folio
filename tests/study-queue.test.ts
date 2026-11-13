@@ -167,6 +167,81 @@ describe("studying on its own", () => {
     expect(started()).toHaveLength(2);
   });
 
+  it("closes only once a pass over the queue still asking about ChatGPT is over, and starts nothing", async () => {
+    const { store, library, course, lectures } = await setup();
+    let answer!: (connected: boolean) => void;
+    const connected = new Promise<boolean>((done) => (answer = done));
+    let asked = 0;
+    const prepared: string[] = [];
+    const runner = new IngestRunner({
+      store,
+      library,
+      complete: async () => {
+        throw new Error("No model in these tests.");
+      },
+      prepare: async (_data, sha256) => {
+        prepared.push(sha256);
+        return new Promise<never>(() => undefined);
+      },
+      emit: () => undefined,
+      publish: async () => 1,
+      connected: () => (asked++, connected),
+    });
+    settles.push(() => runner.close());
+    await runner.queue(course.id, [lectures[0]!.id], "upload");
+    await vi.waitFor(() => expect(asked).toBe(1));
+    let closed = false;
+    const closing = runner.close().then(() => (closed = true));
+    await new Promise((settle) => setTimeout(settle, 20));
+    expect(closed).toBe(false);
+    answer(true);
+    await closing;
+    expect(prepared).toEqual([]);
+    expect(store.jobs().map((job) => [job.status, job.waitingFor])).toEqual([["queued", null]]);
+  });
+
+  it("closes only once a running regroup has stopped, then leaves its store alone", async () => {
+    const { store, library, course } = await setup();
+    let finish!: () => void;
+    const regrouped = new Promise<void>((done) => (finish = done));
+    let regroups = 0;
+    const runner = new IngestRunner({
+      store,
+      library,
+      complete: async () => {
+        throw new Error("No model in these tests.");
+      },
+      prepare: async () => {
+        throw new Error("Not read in this test.");
+      },
+      emit: () => undefined,
+      publish: async () => 1,
+      knowledge: async () => null,
+      regroup: async () => {
+        regroups++;
+        await regrouped;
+        return null;
+      },
+    });
+    settles.push(() => runner.close());
+    const job = await runner.regroup(course.id);
+    await vi.waitFor(() => expect(regroups).toBe(1));
+    let closed = false;
+    const closing = runner.close().then(() => (closed = true));
+    await new Promise((settle) => setTimeout(settle, 20));
+    expect(closed).toBe(false);
+    finish();
+    await closing;
+    // What a test that closes its store now would have run into: "database is not open".
+    const touched = (["jobs", "job", "view", "updateJob", "setNode"] as const).map((name) =>
+      vi.spyOn(store, name),
+    );
+    await new Promise((settle) => setTimeout(settle, 50));
+    for (const spy of touched) expect(spy).not.toHaveBeenCalled();
+    // Stopped, not finished: recover() picks it up after a restart.
+    expect(store.job(job.id).status).toBe("running");
+  });
+
   it("picks up interrupted studies after a restart, and leaves paused ones paused", async () => {
     const { runner, course, lectures, store, started } = await setup({ connected: false });
     await runner.queue(course.id, [lectures[0]!.id], "upload");

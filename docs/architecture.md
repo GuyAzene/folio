@@ -604,7 +604,8 @@ Everything lives in `~/.folio/` (or `FOLIO_HOME`), with directories `0700` and f
 Writes are atomic: a complete file is written and flushed beside the old one, renamed over it,
 and the folder flushed too, so the rename survives a crash. Every flush goes through
 `src/files.ts`: `flush` for a file, and `openDatabase` for a SQLite database that waits for the
-disk on every commit. Windows can't flush a folder, and
+disk on every commit. `FOLIO_FLUSH=off` skips that waiting, so a crash or a power cut can lose
+the last writes. Only the unit tests set it. Windows can't flush a folder, and
 journals the rename itself, so there the folder is left alone. Windows also refuses the rename
 while anything has either file open, such as an antivirus scan or another reader, so there Folio
 tries again for about three seconds, checking the file again before each try. Revision and hash checks refuse
