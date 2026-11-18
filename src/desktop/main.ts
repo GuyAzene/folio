@@ -175,10 +175,10 @@ protocol.registerSchemesAsPrivileged([
 let window: BrowserWindow | undefined;
 const emit = (event: DesktopEvent) => window?.webContents.send(CHANNELS.event, event);
 
-// OpenRouter's models Pi published since its release, kept in Folio's home and checked again every
-// four hours. FOLIO_MODEL_CATALOG names another source (tests), or "off". It is fetched like the
-// model requests themselves, with Node's fetch: Electron's net goes through the window's session,
-// which refuses every web request.
+// The models Pi published since its release for OpenRouter, OpenAI and the ChatGPT plan, kept in
+// Folio's home and checked again every four hours. FOLIO_MODEL_CATALOG names another source
+// (tests), or "off". It is fetched like the model requests themselves, with Node's fetch:
+// Electron's net goes through the window's session, which refuses every web request.
 const live = new LiveCatalog({ home, source: liveSource(process.env.FOLIO_MODEL_CATALOG) });
 const liveLoaded = live.load();
 const catalog = modelCatalog(live);
@@ -673,7 +673,7 @@ const service = Promise.all([
       streamFn,
       resolveModel,
       model: () => settings.roles.teaching,
-      offered: (ref) => offered(ref, settings.openrouter),
+      offered: (ref) => offered(catalog, ref, settings.openrouter),
       connected: async (needed) => (await connected()).has(needed.id),
       emit,
       courseRuntime: runtimes.course,

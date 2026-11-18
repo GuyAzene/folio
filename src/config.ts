@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 import type { Models } from "@earendil-works/pi-ai";
 import { IMAGE_ROLES, MODEL_ROLES, type ModelRole } from "./desktop/api.ts";
 import { EditableFile } from "./editable-file.ts";
-import { DEFAULT_OPENROUTER, modelFor, modelName, offered } from "./model-choices.ts";
+import { DEFAULT_OPENROUTER, modelFor, modelName, newestInLine, offered } from "./model-choices.ts";
 import { formatRef, parseRef, studyModel } from "./model-refs.ts";
 import { NO_SWITCHES, type SkillSwitches } from "./skills/library.ts";
 import { DEFAULT_MODEL } from "./agents.ts";
@@ -26,8 +26,9 @@ import {
 const chatgpt = (id: string) => formatRef("chatgpt", id);
 
 /**
- * Today's assignments, all on the ChatGPT plan: what config.json leaves out keeps these. Studying
- * keeps the models its own defaults name.
+ * The assignments as of the models built into Pi, all on the ChatGPT plan. Studying keeps the
+ * models its own defaults name. What config.json leaves out follows each to the newest model of
+ * its line the plan offers (`defaultRoles`).
  */
 export const DEFAULT_ROLES: Record<ModelRole, string> = {
   teaching: chatgpt(DEFAULT_MODEL),
@@ -41,6 +42,21 @@ export const DEFAULT_ROLES: Record<ModelRole, string> = {
   topics: chatgpt("gpt-6.1-terra"),
   syllabus: chatgpt(DEFAULT_MODEL),
 };
+
+/**
+ * What config.json leaves out: each of `DEFAULT_ROLES` moved to the newest model of its line the
+ * ChatGPT plan offers, such as GPT-6.2 Sol for GPT-6.1 Sol, when that model can do the role.
+ */
+export function defaultRoles(catalog: Models): Record<ModelRole, string> {
+  const roles = { ...DEFAULT_ROLES };
+  for (const role of MODEL_ROLES) {
+    const parsed = parseRef(roles[role]);
+    if (parsed?.connection.id !== "chatgpt") continue;
+    const newest = chatgpt(newestInLine(catalog, parsed.id));
+    if (!roleProblem(catalog, role, newest, [])) roles[role] = newest;
+  }
+  return roles;
+}
 
 /** Studying's roles as the pipeline names them, from the config's; each step keeps its effort. */
 export function studyRoles(roles: Record<ModelRole, string>): RoleModels {
@@ -117,7 +133,7 @@ export function roleProblem(
   const name = modelName(model);
   if (IMAGE_ROLES.includes(role) && !model.input.includes("image"))
     return `${name} reads text only, and ${WORK[role]} needs page images`;
-  if (role === "teaching" && !offered(ref as string, openrouter))
+  if (role === "teaching" && !offered(catalog, ref as string, openrouter))
     return parsed.connection.id === "openrouter"
       ? `add ${name} to the composer's OpenRouter models first`
       : `${name} isn't one of the composer's models`;
@@ -126,7 +142,8 @@ export function roleProblem(
 
 /** Applies config.json to the defaults; `raw` is the parsed file, or undefined without one. */
 export function readConfig(catalog: Models, raw: unknown): ConfigState {
-  const roles = { ...DEFAULT_ROLES };
+  const usual = defaultRoles(catalog);
+  const roles = { ...usual };
   const problems: string[] = [];
   const defaults = readCategories(undefined).categories;
   if (raw === undefined)
@@ -180,7 +197,7 @@ export function readConfig(catalog: Models, raw: unknown): ConfigState {
     const section = raw[group];
     if (section === undefined) continue;
     if (!isRecord(section)) {
-      problems.push(`${group}: write an object, such as { "${key}": "${DEFAULT_ROLES[role]}" }.`);
+      problems.push(`${group}: write an object, such as { "${key}": "${usual[role]}" }.`);
       continue;
     }
     const value = section[key];

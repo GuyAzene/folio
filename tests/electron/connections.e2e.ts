@@ -115,21 +115,23 @@ void describe("connections and models", () => {
       resolve(seeded.home, "config.json"),
       JSON.stringify({ version: 1, studying: { reader: ref } }),
     );
-    const live = await startCatalog([
-      {
-        type: "chat",
-        id,
-        name: "Synthetic Lab: Synthetic Reader",
-        api: "openai-completions",
-        baseUrl: "https://openrouter.ai/api/v1",
-        provider: "openrouter",
-        input: ["text", "image"],
-        reasoning: true,
-        cost: { input: 1, output: 4, cacheRead: 0.1, cacheWrite: 0 },
-        contextWindow: 1_000_000,
-        maxTokens: 64_000,
-      },
-    ]);
+    const live = await startCatalog({
+      openrouter: [
+        {
+          type: "chat",
+          id,
+          name: "Synthetic Lab: Synthetic Reader",
+          api: "openai-completions",
+          baseUrl: "https://openrouter.ai/api/v1",
+          provider: "openrouter",
+          input: ["text", "image"],
+          reasoning: true,
+          cost: { input: 1, output: 4, cacheRead: 0.1, cacheWrite: 0 },
+          contextWindow: 1_000_000,
+          maxTokens: 64_000,
+        },
+      ],
+    });
     catalogs.push(live);
     const app = await launch(seeded.home, { FOLIO_MODEL_CATALOG: live.url });
     running.push(app);
@@ -177,10 +179,73 @@ void describe("connections and models", () => {
     assert.equal(boot.models.roles.reader, ref);
     assert.deepEqual(boot.models.problems, []);
   });
+
+  void it("offers a ChatGPT model Pi published since its release, and starts new chats on it", async () => {
+    const seeded = await seedHome("A synthetic reply.");
+    // A synthetic Sol newer than any Pi lists, for the ChatGPT plan and in OpenAI's catalog.
+    const sol = (provider: string, api: string, baseUrl: string) => ({
+      type: "chat",
+      id: "gpt-9.1-sol",
+      name: "GPT-9.1 Sol",
+      api,
+      baseUrl,
+      provider,
+      input: ["text", "image"],
+      reasoning: true,
+      cost: { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 },
+      contextWindow: 272_000,
+      maxTokens: 128_000,
+    });
+    const live = await startCatalog({
+      openai: [sol("openai", "openai-responses", "https://api.openai.com/v1")],
+      "openai-codex": [
+        sol("openai-codex", "openai-codex-responses", "https://chatgpt.com/backend-api"),
+      ],
+    });
+    catalogs.push(live);
+    const app = await launch(seeded.home, { FOLIO_MODEL_CATALOG: live.url });
+    running.push(app);
+    const { page } = app;
+    await page.waitForFunction(() => "folio" in window);
+
+    // Once the lists arrive, new chats start on the newest Sol.
+    const teaching = () =>
+      page.evaluate(async () => (await window.folio.bootstrap()).models.roles.teaching);
+    assert.equal(await teaching(), "chatgpt/gpt-6.1-sol");
+    for (let waited = 0; (await teaching()) !== "chatgpt/gpt-9.1-sol"; waited += 100) {
+      assert.ok(waited < 15_000, "the live lists never arrived");
+      await new Promise((ready) => setTimeout(ready, 100));
+    }
+    const boot = await page.evaluate(() => window.folio.bootstrap());
+    const offers = (connection: string) =>
+      boot.models.groups.find((group) => group.connection === connection)!.models;
+    assert.deepEqual(offers("chatgpt")[0], {
+      ref: "chatgpt/gpt-9.1-sol",
+      name: "GPT-9.1 Sol",
+      images: true,
+    });
+    assert.equal(
+      offers("chatgpt").find((model) => model.ref === "chatgpt/gpt-6.1-sol")?.older,
+      true,
+    );
+    assert.equal(offers("openai")[0]?.ref, "openai/gpt-9.1-sol");
+    assert.deepEqual(boot.models.problems, []);
+
+    // A new chat's composer names it, and its menu lists it first under ChatGPT. The saved chat
+    // the window reopens keeps its own model.
+    await page.getByRole("button", { name: "New chat" }).first().click();
+    const picker = page.getByRole("button", { name: "Choose a model" }).first();
+    await picker.filter({ hasText: "GPT-9.1 Sol" }).waitFor();
+    await picker.click();
+    const items = page.getByRole("menuitem");
+    await items.filter({ hasText: "GPT-9.1 Sol" }).first().waitFor();
+    assert.match((await items.first().textContent()) ?? "", /GPT-9\.1 Sol/);
+    await page.keyboard.press("Escape");
+  });
 });
 
-/** A synthetic pi.dev on this Mac, serving one list of OpenRouter models. */
-async function startCatalog(models: unknown[]): Promise<{
+/** A synthetic pi.dev on this Mac, serving a list for each provider named; the others have none. */
+async function startCatalog(lists: Record<string, unknown[]>): Promise<{
   url: string;
   requests: URL[];
   close: () => Promise<void>;
@@ -189,7 +254,11 @@ async function startCatalog(models: unknown[]): Promise<{
   const server = createServer((request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     requests.push(url);
-    if (url.pathname !== "/api/models/providers/openrouter") {
+    const prefix = "/api/models/providers/";
+    const models = url.pathname.startsWith(prefix)
+      ? lists[url.pathname.slice(prefix.length)]
+      : undefined;
+    if (!models) {
       response.writeHead(404).end();
       return;
     }

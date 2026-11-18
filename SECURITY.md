@@ -2,7 +2,7 @@
 
 Folio keeps your courses, notes and chats on your own computer. On your behalf it talks to the
 model services you connect (your ChatGPT plan, or providers you give an API key), to pi.dev for
-Pi's list of OpenRouter's models (the request names only the provider and Folio's Pi release),
+Pi's lists of OpenRouter's, OpenAI's and the ChatGPT plan's models (each request names only the provider and Folio's Pi release),
 to GitHub once a day to see whether a newer Folio is out, and to download it when you click to
 update (neither carries anything about you; turn the check off in Settings → General), and, when you add them, to MCP servers you choose: programs that run on your Mac with your permissions, or remote
 services. Folio asks before each call to a server until you allow it, and keeps their settings and

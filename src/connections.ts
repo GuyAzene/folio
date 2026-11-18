@@ -1,6 +1,8 @@
 import {
   createModels,
+  type Api,
   type ApiKeyAuth,
+  type Model,
   type Models,
   type MutableModels,
   type Provider,
@@ -8,6 +10,7 @@ import {
 import { anthropicProvider } from "@earendil-works/pi-ai/providers/anthropic";
 import { googleProvider } from "@earendil-works/pi-ai/providers/google";
 import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
+import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-codex";
 import { openrouterProvider } from "@earendil-works/pi-ai/providers/openrouter";
 import type { LiveCatalog } from "./live-catalog.ts";
 import { connectionById, type Connection } from "./model-refs.ts";
@@ -31,27 +34,37 @@ function storedKey(name: string): ApiKeyAuth {
  * models under their own provider, so Pi sends them to the API with the key and never takes them
  * for a ChatGPT sign-in.
  */
-function openaiApiProvider(): Provider {
-  const openai = openaiProvider();
-  const models = openai.getModels().map((model) => ({ ...model, provider: "openai-api" }));
+function openaiApiProvider(openai: Provider): Provider {
+  // Copied again only when OpenAI's list changes, as it does when a newer live list arrives.
+  let source: readonly Model<Api>[] | undefined;
+  let models: Model<Api>[] = [];
+  const list = (): Model<Api>[] => {
+    const current = openai.getModels();
+    if (current !== source) {
+      source = current;
+      models = current.map((model) => ({ ...model, provider: "openai-api" }));
+    }
+    return models;
+  };
   return {
     ...openai,
     id: "openai-api",
     name: "OpenAI API",
     auth: { apiKey: storedKey("OpenAI API key") },
-    getModels: () => models,
-    getAllModels: () => models,
+    getModels: list,
+    getAllModels: list,
     filterModels: undefined,
     filterAllModels: undefined,
     classify: undefined,
   };
 }
 
-/** With `live`, OpenRouter also lists the models Pi published since its release. */
+/** With `live`, OpenAI and OpenRouter also list the models Pi published since its release. */
 export function keyProviders(live?: LiveCatalog): Provider[] {
   const openrouter = { ...openrouterProvider(), auth: { apiKey: storedKey("OpenRouter API key") } };
+  const openai = openaiProvider();
   return [
-    openaiApiProvider(),
+    openaiApiProvider(live ? live.wrap(openai) : openai),
     { ...anthropicProvider(), auth: { apiKey: storedKey("Anthropic API key") } },
     { ...googleProvider(), auth: { apiKey: storedKey("Gemini API key") } },
     live ? live.wrap(openrouter) : openrouter,
@@ -61,13 +74,21 @@ export function keyProviders(live?: LiveCatalog): Provider[] {
 /**
  * Every provider's models, with no credentials: for looking models up, never for requests. A
  * request needs only its model's provider, so a model from the live list is sent like any other.
+ *
+ * `openai-codex` is Pi's list of the models the ChatGPT plan serves (`CHATGPT_PLAN`). Folio sends
+ * the plan's requests through `openai` and never through it; it is here only to be read.
  */
 export function modelCatalog(live?: LiveCatalog): Models {
   const catalog: MutableModels = createModels();
-  catalog.setProvider(openaiProvider());
+  const lists = (provider: Provider) => (live ? live.wrap(provider) : provider);
+  catalog.setProvider(lists(openaiProvider()));
+  catalog.setProvider(lists(openaiCodexProvider()));
   for (const provider of keyProviders(live)) catalog.setProvider(provider);
   return catalog;
 }
+
+/** The provider whose models, in Pi's catalog, are the ones the ChatGPT plan serves. */
+export const CHATGPT_PLAN = "openai-codex";
 
 /** A request that lists models or describes the key: free, and refused for a bad key. */
 const CHECKS: Record<string, (key: string) => { url: string; headers: Record<string, string> }> = {
