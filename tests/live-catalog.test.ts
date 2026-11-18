@@ -525,6 +525,68 @@ describe("the ChatGPT plan's live list", () => {
     );
   });
 
+  it("keeps the lists that arrive when another fails, and asks again for the one that failed", async () => {
+    const home = await makeHome();
+    let planDown = true;
+    const { fetch, requests } = piDev(({ url }) => {
+      const provider = url.pathname.split("/").at(-1)!;
+      if (provider === "openrouter") return list([entry()]);
+      if (provider === "openai-codex" && planDown) return new Response("busy", { status: 503 });
+      return list(lists[provider as keyof typeof lists]);
+    });
+    const live = new LiveCatalog({ home, fetch });
+    await live.load();
+    const catalog = modelCatalog(live);
+    expect(await live.refresh()).toBe(true);
+    expect(live.models("openrouter").map((model) => model.id)).toEqual([NEW_ID]);
+    // OpenAI's list arrived, but not the plan's: a key reaches the new model, the plan doesn't offer it.
+    expect(modelFor(catalog, `openai/${SOL}`)?.id).toBe(SOL);
+    expect(offerFor(catalog, "chatgpt", [])).toEqual(offerFor(modelCatalog(), "chatgpt", []));
+    expect(defaultRoles(catalog).teaching).toBe("chatgpt/gpt-6.1-sol");
+
+    // The failed list was never kept, so the next check asks for it, and only for it.
+    planDown = false;
+    expect(await live.refresh()).toBe(true);
+    expect(askedFor(requests, "openai-codex")).toHaveLength(2);
+    expect(askedFor(requests, "openai")).toHaveLength(1);
+    expect(offerFor(catalog, "chatgpt", []).models[0]).toBe(SOL);
+  });
+
+  it("stops offering a plan model OpenAI's list drops, and says so where config.json names it", async () => {
+    const home = await makeHome();
+    await writeFile(
+      resolve(home, "config.json"),
+      JSON.stringify({ version: 1, teaching: { model: `chatgpt/${NOVA}` } }),
+    );
+    let openai = lists.openai;
+    const live = new LiveCatalog({
+      home,
+      fetch: piDev(({ url }) => {
+        const provider = url.pathname.split("/").at(-1)!;
+        if (provider === "openai") return list(openai);
+        return provider === "openai-codex" ? list(lists[provider]) : list([]);
+      }).fetch,
+    });
+    await live.load();
+    const catalog = modelCatalog(live);
+    const config = await FolioConfig.open(home, catalog);
+    await live.refresh();
+    await config.reload();
+    expect(config.roles.teaching).toBe(`chatgpt/${NOVA}`);
+    expect(config.problems).toEqual([]);
+
+    // pi.dev still lists Nova for the plan, but OpenAI's list no longer has it: Folio can't send it.
+    openai = lists.openai.filter((each) => each.id !== NOVA);
+    expect(await live.refresh({ force: true })).toBe(true);
+    expect(await config.reload()).toBe(true);
+    const plan = offerFor(catalog, "chatgpt", []);
+    expect([...plan.models, ...plan.older]).not.toContain(NOVA);
+    expect(config.roles.teaching).toBe(`chatgpt/${SOL}`);
+    expect(config.problems).toEqual([
+      `teaching.model: ${NOVA} isn't one of the ChatGPT plan's models in Folio.`,
+    ]);
+  });
+
   it("refuses an entry shaped like another provider's", () => {
     const bases = new Map([["openai-responses", "https://api.openai.com/v1"]]);
     const sol = openaiEntry("openai", SOL, "GPT-9.1 Sol");
