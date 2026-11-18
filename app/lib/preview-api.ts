@@ -1798,7 +1798,7 @@ function setPreviewUpdate(update: UpdateView): void {
 
 const previewConnected = new Set(["chatgpt", "openrouter"]);
 const previewRoles: ModelsView["roles"] = {
-  teaching: "chatgpt/gpt-6.1-sol",
+  teaching: "chatgpt/gpt-6.2-sol",
   research: "chatgpt/gpt-6.1-terra",
   planner: "chatgpt/gpt-6-sol",
   reader: "chatgpt/gpt-6.1-sol",
@@ -1831,6 +1831,17 @@ let previewOpenRouter = [
   "deepseek/deepseek-v4-pro",
   "moonshotai/kimi-k3",
 ];
+/** The plan's models as pi.dev lists them: the newest of each line, then the older ones. */
+function openaiModels(connection: "chatgpt" | "openai"): ModelView[] {
+  const current = ["6.2-sol", "6.2-astra", "6.1-terra", "6-luna"];
+  const older = ["6.1-sol", "6-sol", "6-astra", "5.6-sol", "5.6-luna", "5.6-terra"];
+  const view = (id: string, isOlder: boolean): ModelView => {
+    const [version, line] = id.split("-");
+    const name = `GPT-${version} ${line!.charAt(0).toUpperCase()}${line!.slice(1)}`;
+    return { ref: `${connection}/gpt-${id}`, name, images: true, ...(isOlder && { older: true }) };
+  };
+  return [...current.map((id) => view(id, false)), ...older.map((id) => view(id, true))];
+}
 const PREVIEW_GROUPS: {
   connection: string;
   name: string;
@@ -1841,24 +1852,13 @@ const PREVIEW_GROUPS: {
     connection: "chatgpt",
     name: "ChatGPT",
     kind: "plan",
-    models: [
-      { ref: "chatgpt/gpt-6.1-sol", name: "GPT-6.1 Sol", images: true },
-      { ref: "chatgpt/gpt-6.1-terra", name: "GPT-6.1 Terra", images: true },
-      { ref: "chatgpt/gpt-6-astra", name: "GPT-6 Astra", images: true },
-      { ref: "chatgpt/gpt-6-luna", name: "GPT-6 Luna", images: true },
-      { ref: "chatgpt/gpt-6-sol", name: "GPT-6 Sol", images: true, older: true },
-      { ref: "chatgpt/gpt-5.6-sol", name: "GPT-5.6 Sol", images: true, older: true },
-    ],
+    models: openaiModels("chatgpt"),
   },
   {
     connection: "openai",
     name: "OpenAI",
     kind: "key",
-    models: [
-      { ref: "openai/gpt-6.1-sol", name: "GPT-6.1 Sol", images: true },
-      { ref: "openai/gpt-6-astra", name: "GPT-6 Astra", images: true },
-      { ref: "openai/gpt-6-luna", name: "GPT-6 Luna", images: true },
-    ],
+    models: openaiModels("openai"),
   },
   {
     connection: "anthropic",

@@ -22,7 +22,7 @@ src/desktop/main.ts           the main process
 | `app/` | The renderer: `views/` (Home, course, reader, notes, study notes, chats, Studying, Trash), `components/`, and `lib/` (app state, Markdown and math rendering, text direction, the note editor in `lib/editor/`); `capture.ts` is the hidden page that draws a note for the tutor to look at. |
 | `src/desktop/` | The Electron main process, the preload bridge, the IPC contract (`api.ts`) and the chat service. |
 | `src/conversation.ts`, `src/session-store.ts`, `src/transcript.ts`, `src/agents.ts` | Conversations on Pi: saving and resuming, cancellation, leases, and what history the model sees. |
-| `src/auth.ts`, `src/chatgpt-sign-in.ts`, `src/connections.ts`, `src/model-refs.ts`, `src/model-choices.ts`, `src/live-catalog.ts`, `src/config.ts` | Connections and models: the ChatGPT sign-in and API keys, the models each connection offers, Pi's live list of OpenRouter's models, and which model does what (`config.json`). |
+| `src/auth.ts`, `src/chatgpt-sign-in.ts`, `src/connections.ts`, `src/model-refs.ts`, `src/model-choices.ts`, `src/live-catalog.ts`, `src/config.ts` | Connections and models: the ChatGPT sign-in and API keys, the models each connection offers, Pi's live lists of OpenRouter's, OpenAI's and the ChatGPT plan's models, and which model does what (`config.json`). |
 | `src/library/` | Courses and documents with their categories, numbers and names, the operations that change them, PDF pages and page images, notes with their history, the Trash, the tutor's tools and teaching rules, and attachments. |
 | `src/ingest/` | Studying a lecture: page inventory, reading, drafting, reconciling and publishing study notes. |
 | `src/kb/` | Each course's knowledge base: immutable published versions, a search index and the tutor's study-note tools. |
@@ -315,24 +315,29 @@ of the plan makes the next sign-in ask for consent. Pi renews the tokens.
 
 A model is named by a reference, `connection/model` (`chatgpt/gpt-6.1-sol`,
 `openrouter/deepseek/deepseek-v4-pro`), and a chat saves its provider and model and keeps them.
-The composer offers, per connection, the plan's checked models, a short list of current models
-for each key, and the OpenRouter models the student picked, grouped by lab; a model that reads
-text only is marked, and the tutor on one gets a note where a page image would be. The main
-process refuses any other model, and asks for the connection a chat's model needs before it
-sends.
+The composer offers, per connection, the ChatGPT plan's models, the same models for an OpenAI key,
+a short list of current models for each other key, and the OpenRouter models the student picked,
+grouped by lab; a model that reads text only is marked, and the tutor on one gets a note where a
+page image would be. The plan's models are the ones Pi lists for it in its `openai-codex`
+provider, which Folio reads and never sends a request through, so a model OpenAI's catalog has
+but the plan refuses stays out. A model's line is the name after its version: `gpt-6.2-sol` is
+version 6.2 of Sol. The newest model of each line comes first, Sol leading, and the earlier ones
+go under "Older models". The main process refuses any other model, and asks for the connection a
+chat's model needs before it sends.
 
-OpenRouter adds models faster than Pi releases, so Folio also reads Pi's live list, as Pi's own
-app does (`src/live-catalog.ts`): pi.dev publishes each provider's models between releases, and
+Providers add models faster than Pi releases, so Folio also reads Pi's live lists, as Pi's own app
+does (`src/live-catalog.ts`): pi.dev publishes each provider's models between releases, and
 answers a request naming Folio's Pi release with a list that release can use. Folio asks for
-OpenRouter's a moment after the window opens and again when its copy is four hours old, with the
-copy's ETag; the copy is kept in `catalog/openrouter.json` and read before `config.json`, so a
-model picked from it is known offline. The list is used only while it is newer than the one built
-into Pi, and a live entry replaces the built-in one with its ID, as in Pi. It comes from outside
-Folio, so each entry is checked against Pi's own schemas and kept only as a chat model on an API
-the built-in OpenRouter provider speaks, at the address its built-in models use; its headers and
-anything else are dropped. Every request still goes to OpenRouter with the student's key and
-nothing more; the request to pi.dev names only the provider and Folio's Pi release. Offline or refused, the
-copy stays; when the list changes, `config.json` is read again and the window is told. It is
+OpenRouter's, OpenAI's and the ChatGPT plan's a moment after the window opens and again when its
+copy is four hours old, with the copy's ETag; each copy is kept in `catalog/<provider>.json` and
+read before `config.json`, so a model picked from it is known offline. A list is used only while
+it is newer than the one built into Pi, and a live entry replaces the built-in one with its ID, as
+in Pi. It comes from outside Folio, so each entry is checked against Pi's own schemas and kept
+only as a chat model on an API the built-in provider speaks, at the address its built-in models
+use, with an ID shaped like that provider's; its headers and anything else are dropped. Every
+request still goes to the provider with the student's sign-in or key and nothing more; the
+request to pi.dev names only the provider and Folio's Pi release. Offline or refused, the copy
+stays; when a list changes, `config.json` is read again and the window is told. It is
 fetched with Node's fetch, like model requests: Electron's `net` goes through the window's
 session, which refuses every web request. `FOLIO_MODEL_CATALOG` names another source (an https
 address, or one on this Mac) or turns it off, as the window tests do.
@@ -343,7 +348,9 @@ checker, recheck, topics) and reading a syllabus. Folio checks every entry in co
 on its connection, and the steps that read slides must see images. An entry it can't use is
 listed in Settings and its default applies; the file is never rewritten behind the student's
 back, a change from Settings is refused when the file changed outside Folio, and hand edits are
-picked up as they are saved. Defaults are the ChatGPT models studying always used, and nothing
+picked up as they are saved. Defaults come from the two ChatGPT lines studying always used, Sol
+and Terra. Each default is the newest model of its line the plan offers, if that model can do the
+role. Nothing
 falls back from one connection to another, so a key is billed only for what the student assigned
 to it. Study steps name a ChatGPT model by its bare ID, as before, so saved steps are still
 reused. Every answer tool is forced as its API names it ("required", or "any" for Anthropic and
@@ -584,7 +591,7 @@ Everything lives in `~/.folio/` (or `FOLIO_HOME`), with directories `0700` and f
 | `connection.json` | The ChatGPT sign-in, Folio's registration with ChatGPT, and the installation ID |
 | `keys.json` | API keys, each checked with its provider before it was kept |
 | `config.json` | Which model does what, the OpenRouter models the composer offers, the student's categories and naming patterns, and which routines are on; never a key |
-| `catalog/openrouter.json` | Pi's live list of OpenRouter's models, as last checked, with its ETag |
+| `catalog/<provider>.json` | Pi's live list of OpenRouter's, OpenAI's or the ChatGPT plan's models, as last checked, with its ETag |
 | `release.json` | Whether Folio checks for a newer release, and GitHub's latest release as last checked |
 | `skills/<name>/SKILL.md` | The student's own routines |
 | `mcp.json` | The student's MCP servers, with their settings and headers, and which tools run without asking |

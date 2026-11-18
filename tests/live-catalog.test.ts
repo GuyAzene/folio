@@ -3,10 +3,12 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { getBuiltinModelDataGeneratedAt } from "@earendil-works/pi-ai/providers/all";
 import { afterEach, describe, expect, it } from "vite-plus/test";
-import { FolioConfig } from "../src/config.ts";
+import type { Model, Api } from "@earendil-works/pi-ai";
+import { defaultRoles, FolioConfig } from "../src/config.ts";
 import { modelCatalog } from "../src/connections.ts";
 import {
   CHECK_EVERY_MS,
+  LIVE_PROVIDERS,
   LiveCatalog,
   liveModel,
   liveModels,
@@ -15,7 +17,7 @@ import {
   PI_LIST_MADE,
   PI_VERSION,
 } from "../src/live-catalog.ts";
-import { modelFor, openrouterCatalog } from "../src/model-choices.ts";
+import { modelFor, modelGroups, offerFor, openrouterCatalog } from "../src/model-choices.ts";
 import { expectMode } from "./fixtures/modes.ts";
 
 const homes: string[] = [];
@@ -91,6 +93,10 @@ const list = (entries: unknown[], headers: Record<string, string> = {}) =>
   new Response(JSON.stringify(entries), {
     headers: { etag: '"one"', "last-modified": AFTER_PI, ...headers },
   });
+
+/** The requests for one provider's list. */
+const askedFor = <Request extends { url: URL }>(requests: Request[], provider: string) =>
+  requests.filter((request) => request.url.pathname === `/api/models/providers/${provider}`);
 
 describe("an entry from the live list", () => {
   it("is used in the shape Folio's Pi release knows, at OpenRouter's own address", () => {
@@ -250,23 +256,23 @@ describe("the live list", () => {
     const home = await makeHome();
     let now = PI_LIST_MADE + 10 * 86_400_000;
     let answer: Response = list([entry()]);
-    const { fetch, requests } = piDev(() => answer);
+    const { fetch, requests } = piDev(() => answer.clone());
     const live = new LiveCatalog({ home, fetch, now: () => now });
     await live.load();
     await live.refresh();
     now += CHECK_EVERY_MS - 1;
     expect(await live.refresh()).toBe(false);
-    expect(requests).toHaveLength(1);
+    expect(askedFor(requests, "openrouter")).toHaveLength(1);
 
     now += 2;
     answer = new Response(null, { status: 304 });
     expect(await live.refresh()).toBe(false);
-    expect(requests).toHaveLength(2);
-    expect(requests[1]!.headers["if-none-match"]).toBe('"one"');
+    expect(askedFor(requests, "openrouter")).toHaveLength(2);
+    expect(askedFor(requests, "openrouter")[1]!.headers["if-none-match"]).toBe('"one"');
     expect(live.models("openrouter")).toHaveLength(1);
     // The check is remembered: no request until four hours from it.
     expect(await live.refresh()).toBe(false);
-    expect(requests).toHaveLength(2);
+    expect(requests).toHaveLength(2 * LIVE_PROVIDERS.length);
 
     answer = list([entry({ name: "Synthetic Lab: Renamed" })], { etag: '"two"' });
     expect(await live.refresh({ force: true })).toBe(true);
@@ -327,7 +333,8 @@ describe("the live list", () => {
     await live.load();
     const [first, second] = await Promise.all([live.refresh(), live.refresh()]);
     expect([first, second]).toEqual([true, true]);
-    expect(requests).toHaveLength(1);
+    expect(requests).toHaveLength(LIVE_PROVIDERS.length);
+    expect(askedFor(requests, "openrouter")).toHaveLength(1);
   });
 
   it("checks what it reads back: an edited or broken file is no list, or only its usable part", async () => {
@@ -384,5 +391,147 @@ describe("the live list", () => {
     expect(await config.reload()).toBe(true);
     expect(config.roles.reader).toBe(NEW_REF);
     expect(config.problems).toEqual([]);
+  });
+});
+
+/** A synthetic OpenAI model in the shape pi.dev publishes for `provider`, from Pi's 6.1 Sol. */
+function openaiEntry(
+  provider: "openai" | "openai-codex",
+  id: string,
+  name: string,
+  fields: Partial<Model<Api>> = {},
+): Record<string, unknown> {
+  const template = modelCatalog().getModel(provider, "gpt-6.1-sol")!;
+  return { ...structuredClone(template), type: "chat", id, name, ...fields };
+}
+
+/** A pi.dev with a list for each provider; the ones not given have none. */
+function piDevLists(lists: Record<string, unknown[]>) {
+  return piDev(({ url }) => {
+    const provider = url.pathname.split("/").at(-1)!;
+    return lists[provider] ? list(lists[provider]) : new Response("no list", { status: 404 });
+  });
+}
+
+describe("the ChatGPT plan's live list", () => {
+  // Synthetic models, newer than any Pi lists: a Sol, a line of its own, a model OpenAI's catalog
+  // has but Pi doesn't list for the plan, and one listed for the plan with no OpenAI entry.
+  const SOL = "gpt-9.1-sol";
+  const NOVA = "gpt-9.1-nova";
+  const lists = {
+    openai: [
+      openaiEntry("openai", SOL, "GPT-9.1 Sol"),
+      openaiEntry("openai", NOVA, "GPT-9.1 Nova"),
+      openaiEntry("openai", "gpt-9.1-cyber", "GPT-9.1 Cyber"),
+    ],
+    "openai-codex": [
+      openaiEntry("openai-codex", SOL, "GPT-9.1 Sol"),
+      openaiEntry("openai-codex", NOVA, "GPT-9.1 Nova"),
+      openaiEntry("openai-codex", "gpt-9.1-orbit", "GPT-9.1 Orbit"),
+    ],
+  };
+
+  it("offers the plan's new models, newest of each line first, and moves the rest under Older", async () => {
+    const home = await makeHome();
+    const { fetch, requests } = piDevLists(lists);
+    const live = new LiveCatalog({ home, fetch });
+    await live.load();
+    const catalog = modelCatalog(live);
+    expect(offerFor(catalog, "chatgpt", []).models[0]).toBe("gpt-6.1-sol");
+
+    expect(await live.refresh()).toBe(true);
+    for (const provider of LIVE_PROVIDERS)
+      expect(askedFor(requests, provider)[0]!.url.searchParams.get("pi-version")).toBe(PI_VERSION);
+    const plan = offerFor(catalog, "chatgpt", []);
+    expect(plan.models).toEqual([SOL, NOVA, "gpt-6.1-terra", "gpt-6-astra", "gpt-6-luna"]);
+    expect(plan.older[0]).toBe("gpt-6.1-sol");
+    // The plan offers only what Pi lists for it that Folio can send.
+    expect([...plan.models, ...plan.older]).not.toContain("gpt-9.1-cyber");
+    expect([...plan.models, ...plan.older]).not.toContain("gpt-9.1-orbit");
+    expect(modelFor(catalog, "chatgpt/gpt-9.1-cyber")).toBeUndefined();
+    expect(modelFor(catalog, `chatgpt/${SOL}`)).toMatchObject({
+      provider: "openai",
+      name: "GPT-9.1 Sol",
+    });
+
+    // An OpenAI key offers the same models, sent to the API with the key; it still reaches the rest.
+    expect(offerFor(catalog, "openai", []).models.slice(0, 2)).toEqual([SOL, NOVA]);
+    expect(modelFor(catalog, `openai/${SOL}`)?.provider).toBe("openai-api");
+    expect(modelFor(catalog, "openai/gpt-9.1-cyber")?.id).toBe("gpt-9.1-cyber");
+
+    const chatgpt = modelGroups(catalog, new Set(["chatgpt"]), []).find(
+      (group) => group.connection === "chatgpt",
+    )!;
+    expect(chatgpt.models[0]).toEqual({ ref: `chatgpt/${SOL}`, name: "GPT-9.1 Sol", images: true });
+    expect(chatgpt.models.find((model) => model.ref === "chatgpt/gpt-6.1-sol")?.older).toBe(true);
+
+    // Kept apart, and read back offline.
+    await expectMode(resolve(home, "catalog/openai-codex.json"), 0o600);
+    const offline = new LiveCatalog({ home, source: null });
+    await offline.load();
+    expect(offerFor(modelCatalog(offline), "chatgpt", []).models[0]).toBe(SOL);
+  });
+
+  it("moves the defaults to the newest of their line, and keeps what config.json names", async () => {
+    const home = await makeHome();
+    await writeFile(
+      resolve(home, "config.json"),
+      JSON.stringify({ version: 1, studying: { reader: "chatgpt/gpt-6.1-sol" } }),
+    );
+    const live = new LiveCatalog({ home, fetch: piDevLists(lists).fetch });
+    await live.load();
+    const catalog = modelCatalog(live);
+    const config = await FolioConfig.open(home, catalog);
+    expect(config.roles.teaching).toBe("chatgpt/gpt-6.1-sol");
+
+    await live.refresh();
+    expect(await config.reload()).toBe(true);
+    expect(config.roles.teaching).toBe(`chatgpt/${SOL}`);
+    expect(config.roles.writer).toBe(`chatgpt/${SOL}`);
+    expect(config.roles.reader).toBe("chatgpt/gpt-6.1-sol");
+    // No newer Terra: Terra's roles stay.
+    expect(config.roles.research).toBe("chatgpt/gpt-6.1-terra");
+    expect(config.problems).toEqual([]);
+  });
+
+  it("keeps a role on its model when the newer one can't do it", async () => {
+    const home = await makeHome();
+    const textOnly = { input: ["text" as const] };
+    const live = new LiveCatalog({
+      home,
+      fetch: piDevLists({
+        openai: [openaiEntry("openai", SOL, "GPT-9.1 Sol", textOnly)],
+        "openai-codex": [openaiEntry("openai-codex", SOL, "GPT-9.1 Sol", textOnly)],
+      }).fetch,
+    });
+    await live.load();
+    await live.refresh();
+    const roles = defaultRoles(modelCatalog(live));
+    expect(roles.teaching).toBe(`chatgpt/${SOL}`);
+    // Reading slides needs page images.
+    expect(roles.reader).toBe("chatgpt/gpt-6.1-sol");
+  });
+
+  it("keeps the plan's built-in models when pi.dev lists fewer", async () => {
+    const home = await makeHome();
+    const live = new LiveCatalog({
+      home,
+      fetch: piDevLists({ openai: [], "openai-codex": [] }).fetch,
+    });
+    await live.load();
+    await live.refresh();
+    expect(offerFor(modelCatalog(live), "chatgpt", [])).toEqual(
+      offerFor(modelCatalog(), "chatgpt", []),
+    );
+  });
+
+  it("refuses an entry shaped like another provider's", () => {
+    const bases = new Map([["openai-responses", "https://api.openai.com/v1"]]);
+    const sol = openaiEntry("openai", SOL, "GPT-9.1 Sol");
+    expect(liveModel(sol, "openai", bases)?.id).toBe(SOL);
+    expect(liveModel({ ...sol, id: "openai/gpt-9.1-sol" }, "openai", bases)).toBeUndefined();
+    expect(liveModel({ ...sol, provider: "openai-codex" }, "openai", bases)).toBeUndefined();
+    expect(liveModel(sol, "openai-codex", bases)).toBeUndefined();
+    expect(liveModel(entry(), "openai", bases)).toBeUndefined();
   });
 });

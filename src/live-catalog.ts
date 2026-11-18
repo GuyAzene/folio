@@ -7,6 +7,8 @@ import {
   ModelInputLimitsSchema,
   ThinkingLevelMapSchema,
 } from "@earendil-works/pi-ai/providers/model-schema";
+import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
+import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-codex";
 import { openrouterProvider } from "@earendil-works/pi-ai/providers/openrouter";
 import type { TSchema } from "typebox";
 import Value from "typebox/value";
@@ -16,9 +18,10 @@ import { urlProblem } from "./mcp/config.ts";
 /**
  * Pi's live model list. Between releases pi.dev publishes the models each provider offers, and
  * Pi's own app adds them to the list built into its release; Folio does the same for OpenRouter,
- * the one connection whose whole catalog the student chooses from. The list is kept in
- * `catalog/openrouter.json` in Folio's home, checked again when it is four hours old, and used
- * only while it is newer than the list built into Pi.
+ * whose whole catalog the student chooses from, and for OpenAI. Pi's `openai-codex` list names the
+ * models the ChatGPT plan serves. Folio never sends a request through that provider; it reads the
+ * list to know what the plan offers. Each list is kept in `catalog/<provider>.json` in Folio's home, checked again
+ * when it is four hours old, and used only while it is newer than the list built into Pi.
  *
  * It comes from outside Folio, so an entry is used only in the shape Folio's Pi release knows,
  * checked against Pi's own schemas: a chat model on an API the built-in provider speaks, at the
@@ -33,7 +36,7 @@ export const PI_VERSION = "1.4.0";
 export const PI_LIST_MADE = Date.parse("2026-10-21T22:33:24.994Z");
 
 export const PI_CATALOG = "https://pi.dev";
-export const LIVE_PROVIDERS = ["openrouter"] as const;
+export const LIVE_PROVIDERS = ["openrouter", "openai", "openai-codex"] as const;
 
 /** How old the kept list may be before it is checked again, as Pi's own app does. */
 export const CHECK_EVERY_MS = 4 * 3_600_000;
@@ -41,9 +44,18 @@ const TIMEOUT_MS = 15_000;
 const MAX_BYTES = 8 * 1024 * 1024;
 const MAX_MODELS = 2_000;
 
-/** Built-in models of each provider the live list adds to: the shape a live entry must match. */
-const BUILT_IN: Record<string, () => readonly Model<Api>[]> = {
-  openrouter: () => openrouterProvider().getModels(),
+/**
+ * Each provider the live list adds to: its built-in models, the shape a live entry must match,
+ * and how its model IDs look. OpenRouter's name the lab first (`lab/model`); OpenAI's don't.
+ */
+const OPENAI_ID = /^[A-Za-z0-9][\w.:-]*$/;
+const BUILT_IN: Record<string, { models: () => readonly Model<Api>[]; id: RegExp }> = {
+  openrouter: {
+    models: () => openrouterProvider().getModels(),
+    id: /^~?[A-Za-z0-9][\w.-]*\/[\w.:+-]+$/,
+  },
+  openai: { models: () => openaiProvider().getModels(), id: OPENAI_ID },
+  "openai-codex": { models: () => openaiCodexProvider().getModels(), id: OPENAI_ID },
 };
 
 /** A provider's live list as kept on disk. */
@@ -61,7 +73,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-const ID = /^~?[A-Za-z0-9][\w.-]*\/[\w.:+-]+$/;
 const CONTROL = /\p{Cc}/u;
 
 const count = (value: unknown): value is number =>
@@ -86,19 +97,21 @@ function checked(schema: TSchema, value: unknown): unknown {
 
 /**
  * One live entry as a model Folio can use, or undefined when it isn't one: a chat model on an
- * API in `bases`, at the base URL given there for it. Only the fields Folio's Pi release reads are
- * kept, each checked; the address comes from `bases`, never from the entry.
+ * API in `bases`, at the base URL given there for it, with an ID shaped like the provider's.
+ * Only the fields Folio's Pi release reads are kept, each checked; the address comes from
+ * `bases`, never from the entry.
  */
 export function liveModel(
   entry: unknown,
   provider: string,
   bases: ReadonlyMap<string, string>,
 ): Model<Api> | undefined {
+  const shape = BUILT_IN[provider]?.id;
   if (!isRecord(entry)) return undefined;
   const { type, id, name, api, input, reasoning, contextWindow, maxTokens } = entry;
   if (type !== undefined && type !== "chat") return undefined;
   if (entry.provider !== undefined && entry.provider !== provider) return undefined;
-  if (typeof id !== "string" || id.length > 200 || !ID.test(id)) return undefined;
+  if (typeof id !== "string" || id.length > 200 || !shape?.test(id)) return undefined;
   if (typeof name !== "string" || !name.trim() || name.length > 200 || CONTROL.test(name))
     return undefined;
   const base = typeof api === "string" ? bases.get(api) : undefined;
@@ -142,7 +155,7 @@ export function liveModel(
 
 /** The usable models among a provider's live entries, the first of each ID. */
 export function liveModels(provider: string, entries: readonly unknown[]): Model<Api>[] {
-  const builtIn = BUILT_IN[provider]?.() ?? [];
+  const builtIn = BUILT_IN[provider]?.models() ?? [];
   const bases = new Map<string, string>();
   for (const model of builtIn)
     if (isModelType(model, "chat") && !bases.has(model.api)) bases.set(model.api, model.baseUrl);
