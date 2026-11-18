@@ -202,8 +202,14 @@ describe("which model does what", () => {
       }
       changed.mockClear();
       await edit("chatgpt/gpt-6-luna");
-      await vi.waitFor(() => expect(changed).toHaveBeenCalled(), { timeout: 3_000 });
-      expect(config.roles.teaching).toBe("chatgpt/gpt-6-luna");
+      // A notice that read the file half written isn't this edit, so both are checked together.
+      await vi.waitFor(
+        () => {
+          expect(changed).toHaveBeenCalled();
+          expect(config.roles.teaching).toBe("chatgpt/gpt-6-luna");
+        },
+        { timeout: 3_000 },
+      );
     } finally {
       stop();
     }
