@@ -189,11 +189,19 @@ describe("which model does what", () => {
     const config = await FolioConfig.open(home, catalog);
     const changed = vi.fn();
     const stop = config.watch(changed);
+    const edit = (model: string) =>
+      writeFile(config.path, JSON.stringify({ version: 1, teaching: { model } }));
     try {
-      await writeFile(
-        config.path,
-        JSON.stringify({ version: 1, teaching: { model: "chatgpt/gpt-6-luna" } }),
-      );
+      // On macOS, fs.watch returns before the folder's event stream has started on another
+      // thread, and a change made before then is never reported. So a first edit is repeated
+      // until Folio notices it, and the edit checked below lands on a watcher that's running.
+      for (let waited = 0; !changed.mock.calls.length; waited += 500) {
+        expect(waited, "Folio never noticed an edit").toBeLessThan(3_000);
+        await edit("chatgpt/gpt-6.1-terra");
+        await new Promise((ready) => setTimeout(ready, 500));
+      }
+      changed.mockClear();
+      await edit("chatgpt/gpt-6-luna");
       await vi.waitFor(() => expect(changed).toHaveBeenCalled(), { timeout: 3_000 });
       expect(config.roles.teaching).toBe("chatgpt/gpt-6-luna");
     } finally {
