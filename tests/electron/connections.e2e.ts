@@ -150,10 +150,12 @@ void describe("connections and models", () => {
     }
     assert.equal(live.requests[0]?.searchParams.get("pi-version"), "1.4.0");
     // config.json is read again once its model is known.
-    await page.waitForFunction(
-      (wanted) => window.folio.bootstrap().then((boot) => boot.models.roles.reader === wanted),
-      ref,
-    );
+    const reader = () =>
+      page.evaluate(async () => (await window.folio.bootstrap()).models.roles.reader);
+    for (let waited = 0; (await reader()) !== ref; waited += 100) {
+      assert.ok(waited < 15_000, "config.json wasn't read again once its model was known");
+      await new Promise((ready) => setTimeout(ready, 100));
+    }
     const kept = JSON.parse(
       await readFile(resolve(seeded.home, "catalog/openrouter.json"), "utf8"),
     );
