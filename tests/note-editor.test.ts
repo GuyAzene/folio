@@ -31,13 +31,21 @@ function note(doc: string, options: { cursor?: number; live?: boolean; focus?: b
     livePreview.of(options.live ?? true),
     livePreviewExtension(),
   ];
-  const state = EditorState.create({
-    doc,
-    extensions,
-    selection: EditorSelection.cursor(options.cursor ?? 0),
-  });
-  ensureSyntaxTree(state, state.doc.length, 5000);
-  return state;
+  return parsed(
+    EditorState.create({ doc, extensions, selection: EditorSelection.cursor(options.cursor ?? 0) }),
+  );
+}
+
+/**
+ * The state with its whole note parsed, as the editor has it once its background parse is done.
+ * A new state keeps only what its parser finished in 20 ms, and on a loaded machine that can end
+ * partway through a short note. ensureSyntaxTree finishes the parse but leaves the state's tree
+ * as it was, so an empty update takes the finished tree in, as forceParsing does for a view.
+ */
+function parsed(state: EditorState): EditorState {
+  if (!ensureSyntaxTree(state, state.doc.length, 5000))
+    throw new Error("The note did not finish parsing in 5 seconds");
+  return state.update({}).state;
 }
 
 /** Math the editor's parser finds, as the TeX inside the delimiters. */
